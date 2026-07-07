@@ -23,21 +23,34 @@ const schema = defineSchema(
 
     // the users table is the default users table that is brought in by the authTables
     users: defineTable({
-      name: v.optional(v.string()), // name of the user. do not remove
-      image: v.optional(v.string()), // image of the user. do not remove
-      email: v.optional(v.string()), // email of the user. do not remove
-      emailVerificationTime: v.optional(v.number()), // email verification time. do not remove
-      isAnonymous: v.optional(v.boolean()), // is the user anonymous. do not remove
+      name: v.optional(v.string()),
+      image: v.optional(v.string()),
+      email: v.optional(v.string()),
+      emailVerificationTime: v.optional(v.number()),
+      isAnonymous: v.optional(v.boolean()),
+      role: v.optional(roleValidator),
+    }).index("email", ["email"]),
 
-      role: v.optional(roleValidator), // role of the user. do not remove
-    }).index("email", ["email"]), // index for the email. do not remove or modify
+    // MikWeb customer portal sessions
+    // Stores authenticated sessions with httpOnly cookie
+    mikwebSessions: defineTable({
+      sessionToken: v.string(),         // Unique session token (stored in httpOnly cookie)
+      cpf: v.string(),                   // Normalized CPF
+      customerId: v.string(),            // MikWeb customer ID
+      customerName: v.string(),          // Customer name (cached)
+      contacts: v.array(v.object({       // Available contacts for this customer
+        id: v.string(),
+        phone: v.string(),
+        label: v.optional(v.string()),
+      })),
+      selectedContactId: v.optional(v.string()), // Which contact was used for auth
+      createdAt: v.number(),             // Session creation timestamp
+      expiresAt: v.number(),             // Session expiration timestamp
+      lastActivityAt: v.number(),        // Last activity timestamp
+    }).index("by_sessionToken", ["sessionToken"])
+      .index("by_cpf", ["cpf"]),
 
-    // add other tables here
-
-    // tableName: defineTable({
-    //   ...
-    //   // table fields
-    // }).index("by_field", ["field"])
+    // Add other tables here if needed
   },
   {
     schemaValidation: false,
