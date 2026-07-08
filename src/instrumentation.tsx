@@ -1,11 +1,10 @@
 /**
  * Instrumentation — catches runtime errors and reports to Vly.
  *
- * Does NOT use a React ErrorBoundary. React 19's concurrent rendering
- * can produce transient "removeChild" DOMExceptions during route transitions
- * that are harmless — an ErrorBoundary would try to unmount the tree in
- * response, which creates cascading errors. Instead we only listen to
- * window-level error events for logging/reporting.
+ * Uses a minimal ErrorBoundary that catches render-phase errors but
+ * CONTINUES rendering children (instead of rendering null). This prevents
+ * cascading "removeChild" DOMErrors during Vite HMR, where Vite replaces
+ * a module and React tries to reconcile against already-removed DOM nodes.
  */
 
 import React from "react";
@@ -33,6 +32,40 @@ async function reportToVly(message: string, stack?: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Error Boundary — logs but continues rendering children
+// ---------------------------------------------------------------------------
+
+type EBProps = { children: React.ReactNode };
+type EBState = { hasError: boolean };
+
+class ErrorBoundary extends React.Component<EBProps, EBState> {
+  constructor(props: EBProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error("[ErrorBoundary]", error.message);
+    reportToVly(error.message, error.stack);
+    // Clear the error state after a tick so the next render re-tries children.
+    // The "removeChild" error from HMR is transient — on the next commit cycle
+    // the DOM is stable again and rendering succeeds.
+    setTimeout(() => this.setState({ hasError: false }), 0);
+  }
+
+  render() {
+    // Always render children — even after catching an error.
+    // This prevents React from trying to unmount the tree (which would
+    // trigger more "removeChild" errors if DOM nodes were already removed).
+    return this.props.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Instrumentation Provider
 // ---------------------------------------------------------------------------
 
@@ -41,8 +74,6 @@ export function InstrumentationProvider({ children }: { children: React.ReactNod
     const handleError = (event: ErrorEvent) => {
       console.error("[Instrumentation]", event.message);
       reportToVly(event.message, event.error?.stack);
-      // DO NOT call setState or manipulate the DOM here —
-      // that would trigger re-renders during a broken commit phase.
     };
 
     const handleRejection = (event: PromiseRejectionEvent) => {
@@ -62,8 +93,7 @@ export function InstrumentationProvider({ children }: { children: React.ReactNod
     };
   }, []);
 
-  // No ErrorBoundary here — just render children directly.
-  return <>{children}</>;
+  return <ErrorBoundary>{children}</ErrorBoundary>;
 }
 
 export default InstrumentationProvider;
