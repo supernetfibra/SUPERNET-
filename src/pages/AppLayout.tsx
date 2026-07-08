@@ -1,6 +1,7 @@
 /**
  * App Layout — Sidebar navigation wrapper for authenticated pages.
  * Minimalist design with clean sidebar and header.
+ * Uses CSS transitions instead of framer-motion to avoid React 19 reconciliation conflicts.
  */
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { motion } from "framer-motion";
 import {
   LayoutDashboard,
   FileText,
@@ -51,22 +51,17 @@ export default function AppLayout() {
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/20 md:hidden"
+          className="fixed inset-0 z-40 bg-black/20 md:hidden animate-[fadeIn_0.2s_ease-out]"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
-      <motion.aside
-        initial={false}
-        animate={{
-          x: sidebarOpen ? 0 : -280,
-        }}
-        transition={{ duration: 0.2, ease: "easeInOut" }}
-        className="fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card md:relative md:translate-x-0 md:block"
-        style={{ x: sidebarOpen ? 0 : undefined }}
+      {/* Sidebar — uses CSS transform for mobile slide */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-border bg-card transition-transform duration-200 ease-in-out md:relative md:translate-x-0 md:block ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
       >
-        {/* Only use motion for mobile; on desktop always show */}
         <div className="flex flex-col h-full md:block">
           {/* Logo */}
           <div className="h-14 flex items-center gap-2 px-5 border-b border-border">
@@ -147,7 +142,7 @@ export default function AppLayout() {
             </DropdownMenu>
           </div>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -171,14 +166,9 @@ export default function AppLayout() {
 
         {/* Page content */}
         <main className="flex-1 p-6 md:p-8 lg:p-10 overflow-y-auto">
-          <motion.div
-            key={location.pathname}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-          >
+          <div key={location.pathname} className="animate-[fadeIn_0.25s_ease-out]">
             <Outlet />
-          </motion.div>
+          </div>
         </main>
       </div>
     </div>

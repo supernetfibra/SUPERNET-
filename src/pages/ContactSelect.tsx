@@ -1,8 +1,7 @@
 /**
  * Contact Selection Page
- *
  * Shown when a CPF has multiple phone contacts registered.
- * Displays masked phone numbers and asks the user to select the correct one.
+ * Uses CSS animations instead of framer-motion.
  */
 
 import { Button } from "@/components/ui/button";
@@ -13,7 +12,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { motion } from "framer-motion";
 import { Phone, Loader2, AlertCircle, Wifi, ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router";
@@ -77,12 +75,7 @@ export default function ContactSelect() {
 
       {/* Main */}
       <div className="flex-1 flex items-center justify-center px-4 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="w-full max-w-md"
-        >
+        <div className="w-full max-w-md animate-[slideUp_0.4s_ease-out]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-6 text-center">
               <div className="flex justify-center mb-4">
@@ -102,11 +95,10 @@ export default function ContactSelect() {
 
             <CardContent className="space-y-3">
               {contacts.map((contact, index) => (
-                <motion.div
+                <div
                   key={contact.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.08, duration: 0.3 }}
+                  className="animate-[slideUp_0.3s_ease-out]"
+                  style={{ animationDelay: `${index * 0.08}s` }}
                 >
                   <button
                     onClick={() => handleSelect(contact.id)}
@@ -128,18 +120,14 @@ export default function ContactSelect() {
                       <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />
                     )}
                   </button>
-                </motion.div>
+                </div>
               ))}
 
               {error && (
-                <motion.p
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex items-start gap-2 text-xs text-destructive pt-2"
-                >
+                <p className="flex items-start gap-2 text-xs text-destructive pt-2 animate-[fadeIn_0.2s_ease-out]">
                   <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>{error}</span>
-                </motion.p>
+                </p>
               )}
             </CardContent>
           </Card>
@@ -151,7 +139,7 @@ export default function ContactSelect() {
             <ArrowLeft className="h-3 w-3" />
             Voltar ao login
           </button>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

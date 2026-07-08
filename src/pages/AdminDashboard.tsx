@@ -2,8 +2,8 @@
  * Admin Dashboard — API configuration, connection test,
  * and audit log viewer (login attempts, errors, etc.).
  *
- * Uses CSS animations instead of framer-motion to avoid DOM reconciliation
- * conflicts with React 19 during route transitions.
+ * Passes the admin session token via query params as a fallback for
+ * when Secure cookies are rejected by the browser (HTTP dev env).
  */
 
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,32 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
+
+// ---------------------------------------------------------------------------
+// Token helper — reads from localStorage and appends as query param
+// ---------------------------------------------------------------------------
+
+const ADMIN_TOKEN_KEY = "mikweb_admin_token";
+
+function getAdminToken(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Append ?token=... to a URL for admin API calls */
+function withAdminToken(url: string): string {
+  const token = getAdminToken();
+  if (!token) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
+function adminFetch(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(withAdminToken(url), { ...init, credentials: "include" });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +147,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/api/admin/verify", { credentials: "include" })
+    adminFetch("/api/admin/verify")
       .then(async (res) => {
         if (cancelled) return;
         if (res.ok) {
@@ -142,13 +168,13 @@ export default function AdminDashboard() {
     if (!isVerified) return;
 
     try {
-      const configRes = await fetch("/api/admin/config", { credentials: "include" });
+      const configRes = await adminFetch("/api/admin/config");
       if (configRes.ok) {
         const config = await configRes.json();
         setApiUrl(config.apiUrl || "");
       }
 
-      const brandingRes = await fetch("/api/admin/branding", { credentials: "include" });
+      const brandingRes = await adminFetch("/api/admin/branding");
       if (brandingRes.ok) {
         const branding = await brandingRes.json();
         setProviderName(branding.providerName || "Seu Provedor");
@@ -172,9 +198,8 @@ export default function AdminDashboard() {
       const params = new URLSearchParams();
       if (type && type !== "all") params.set("type", type);
 
-      const res = await fetch(
-        `/api/admin/audit-logs?${params.toString()}`,
-        { credentials: "include" }
+      const res = await adminFetch(
+        `/api/admin/audit-logs?${params.toString()}`
       );
       if (res.ok) {
         const data = await res.json();
@@ -198,10 +223,9 @@ export default function AdminDashboard() {
     setConfigSaved(false);
 
     try {
-      const res = await fetch("/api/admin/config", {
+      const res = await adminFetch("/api/admin/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ apiUrl, apiToken }),
       });
 
@@ -225,10 +249,9 @@ export default function AdminDashboard() {
     setConnectionResult(null);
 
     try {
-      const res = await fetch("/api/admin/test-connection", {
+      const res = await adminFetch("/api/admin/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ apiUrl, apiToken }),
       });
 
@@ -245,10 +268,8 @@ export default function AdminDashboard() {
   };
 
   const handleLogout = async () => {
-    await fetch("/api/admin/logout", {
-      method: "POST",
-      credentials: "include",
-    });
+    await adminFetch("/api/admin/logout", { method: "POST" });
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
     navigate("/admin");
   };
 
@@ -263,10 +284,9 @@ export default function AdminDashboard() {
     setBrandingSaved(false);
 
     try {
-      const res = await fetch("/api/admin/branding", {
+      const res = await adminFetch("/api/admin/branding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ providerName, logoUrl: logoInput }),
       });
 

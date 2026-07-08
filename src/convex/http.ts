@@ -302,19 +302,34 @@ const adminLoginHandler = httpAction(async (ctx, request) => {
 
     const result = await ctx.runMutation(api.admin.adminLogin, { password: body.password });
     const h = new Headers({ "Content-Type": "application/json" });
+    // Set cookie — may be rejected by browser on HTTP (Secure flag), so also
+    // return the token in the JSON body so the client can use localStorage.
     h.append("Set-Cookie", `mikweb_admin_session=${result.sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${8 * 60 * 60}`);
-    return new Response(JSON.stringify({ success: true, expiresAt: result.expiresAt }), { status: 200, headers: h });
+    return new Response(JSON.stringify({ success: true, sessionToken: result.sessionToken, expiresAt: result.expiresAt }), { status: 200, headers: h });
   } catch {
     return new Response(JSON.stringify({ error: "Senha de administrador incorreta." }), { status: 401, headers: { "Content-Type": "application/json" } });
   }
 });
 
+// Helper: extract admin session token from cookie or query param
+function getAdminSessionToken(request: Request): string | null {
+  // Try cookie first
+  const cookieHeader = request.headers.get("cookie") || "";
+  const cookieMatch = cookieHeader.match(/mikweb_admin_session=([^;]+)/);
+  if (cookieMatch) return cookieMatch[1];
+  // Fallback: query param (for dev environments where Secure cookies are rejected)
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get("token");
+  } catch {
+    return null;
+  }
+}
+
 // POST /api/admin/logout
 const adminLogoutHandler = httpAction(async (ctx, request) => {
   try {
-    const cookieHeader = request.headers.get("cookie") || "";
-    const match = cookieHeader.match(/mikweb_admin_session=([^;]+)/);
-    const sessionToken = match ? match[1] : null;
+    const sessionToken = getAdminSessionToken(request);
     if (sessionToken) {
       await ctx.runMutation(api.admin.adminLogout, { sessionToken });
     }
@@ -329,9 +344,7 @@ const adminLogoutHandler = httpAction(async (ctx, request) => {
 // GET /api/admin/verify
 const adminVerifyHandler = httpAction(async (ctx, request) => {
   try {
-    const cookieHeader = request.headers.get("cookie") || "";
-    const match = cookieHeader.match(/mikweb_admin_session=([^;]+)/);
-    const sessionToken = match ? match[1] : null;
+    const sessionToken = getAdminSessionToken(request);
     if (!sessionToken) {
       return new Response(JSON.stringify({ authenticated: false }), { status: 401, headers: { "Content-Type": "application/json" } });
     }

@@ -1,5 +1,6 @@
 /**
  * Profile Page — Shows customer information, contacts, and account details.
+ * Uses CSS animations instead of framer-motion.
  */
 
 import {
@@ -12,7 +13,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { motion } from "framer-motion";
 import {
   User,
   Mail,
@@ -84,12 +84,7 @@ export default function Profile() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Customer Info */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05, duration: 0.3 }}
-          className="md:col-span-2"
-        >
+        <div className="md:col-span-2 animate-[slideUp_0.3s_ease-out_0.05s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-4">
               <div className="flex items-center gap-4">
@@ -190,15 +185,10 @@ export default function Profile() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
         {/* Sidebar */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.3 }}
-          className="space-y-4"
-        >
+        <div className="space-y-4 animate-[slideUp_0.3s_ease-out_0.1s_both]">
           {/* Contacts */}
           <Card className="border-border shadow-none">
             <CardHeader className="pb-3">
@@ -257,7 +247,7 @@ export default function Profile() {
               </Button>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

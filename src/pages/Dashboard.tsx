@@ -1,6 +1,7 @@
 /**
  * Dashboard Page — Shows a summary of the customer's account,
  * including pending invoices, next due date, and quick actions.
+ * Uses CSS animations instead of framer-motion.
  */
 
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { motion } from "framer-motion";
 import {
   FileText,
   Download,
@@ -86,7 +86,6 @@ export default function Dashboard() {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
-      // Fallback for older browsers
       const textarea = document.createElement("textarea");
       textarea.value = text;
       document.body.appendChild(textarea);
@@ -112,11 +111,7 @@ export default function Dashboard() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.05s_both]">
           <Card className="border-border shadow-none">
             <CardContent className="p-5">
               <div className="flex items-center gap-3">
@@ -130,13 +125,9 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.1s_both]">
           <Card className="border-border shadow-none">
             <CardContent className="p-5">
               <div className="flex items-center gap-3">
@@ -152,13 +143,9 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.15s_both]">
           <Card className="border-border shadow-none">
             <CardContent className="p-5">
               <div className="flex items-center gap-3">
@@ -174,7 +161,7 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       </div>
 
       {/* Recent Billings */}
@@ -198,11 +185,10 @@ export default function Dashboard() {
             const StatusIcon = status.icon;
 
             return (
-              <motion.div
+              <div
                 key={billing.id}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.05 * index, duration: 0.2 }}
+                className="animate-[slideUp_0.2s_ease-out]"
+                style={{ animationDelay: `${0.05 * index}s` }}
               >
                 <Card
                   className="border-border shadow-none hover:bg-secondary/30 transition-colors cursor-pointer"
@@ -284,7 +270,6 @@ export default function Dashboard() {
                           className="h-7 text-xs text-muted-foreground hover:text-foreground ml-auto"
                           onClick={(e) => {
                             e.stopPropagation();
-                            // Download PDF
                           }}
                         >
                           <Download className="h-3 w-3 mr-1" />
@@ -294,7 +279,7 @@ export default function Dashboard() {
                     )}
                   </CardContent>
                 </Card>
-              </motion.div>
+              </div>
             );
           })}
         </div>

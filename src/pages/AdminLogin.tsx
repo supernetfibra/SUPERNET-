@@ -2,8 +2,8 @@
  * Admin Login Page — Discreet access to the admin dashboard.
  * Accessed via a tiny link on the bottom of the login page.
  *
- * Uses CSS animations instead of framer-motion to avoid DOM reconciliation
- * conflicts with React 19 during route transitions.
+ * Stores the session token in localStorage so the AdminDashboard
+ * can authenticate even when Secure cookies are rejected (HTTP dev env).
  */
 
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,8 @@ import {
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
+
+const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -53,6 +55,12 @@ export default function AdminLogin() {
       if (!response.ok) {
         setError(data.error || "Senha incorreta.");
         return;
+      }
+
+      // Store the session token in localStorage as a fallback for when
+      // the Secure cookie is rejected by the browser (HTTP dev env).
+      if (data.sessionToken) {
+        localStorage.setItem(ADMIN_TOKEN_KEY, data.sessionToken);
       }
 
       navigate("/admin/dashboard");

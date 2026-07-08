@@ -1,6 +1,7 @@
 /**
  * Invoices Page — Full list of customer invoices with filtering,
  * status indicators, and quick actions (download PDF, copy PIX/linha).
+ * Uses CSS animations instead of framer-motion.
  */
 
 import { Button } from "@/components/ui/button";
@@ -10,14 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { motion } from "framer-motion";
-import {
   FileText,
   Download,
   Copy,
@@ -26,9 +19,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Search,
-  SlidersHorizontal,
-  Wifi,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useState } from "react";
@@ -145,11 +135,10 @@ export default function Invoices() {
             const StatusIcon = status.icon;
 
             return (
-              <motion.div
+              <div
                 key={billing.id}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.03 * index, duration: 0.2 }}
+                className="animate-[slideUp_0.2s_ease-out]"
+                style={{ animationDelay: `${0.03 * index}s` }}
               >
                 <Card
                   className="border-border shadow-none hover:bg-secondary/30 transition-colors cursor-pointer"
@@ -241,7 +230,6 @@ export default function Invoices() {
                           className="h-7 text-xs text-muted-foreground hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation();
-                            // Download PDF
                           }}
                         >
                           <Download className="h-3 w-3 mr-1" />
@@ -251,7 +239,7 @@ export default function Invoices() {
                     )}
                   </CardContent>
                 </Card>
-              </motion.div>
+              </div>
             );
           })}
         </div>

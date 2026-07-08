@@ -1,10 +1,10 @@
 /**
  * Landing Page — MikWeb Customer Portal.
  * Minimalist hero with clear call-to-action leading to login.
+ * Uses CSS animations instead of framer-motion.
  */
 
 import { Button } from "@/components/ui/button";
-import { motion } from "framer-motion";
 import { Wifi, ArrowRight, Shield, FileText, Smartphone } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
@@ -41,11 +41,7 @@ export default function Landing() {
       <main className="flex-1 flex flex-col">
         <div className="flex-1 flex items-center justify-center px-6 py-20">
           <div className="max-w-2xl mx-auto text-center">
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            >
+            <div className="animate-[slideUp_0.5s_ease-out]">
               <div className="flex justify-center mb-8">
                 {logoUrl ? (
                   <img src={logoUrl} alt={providerName} className="h-16 w-16 object-contain" />
@@ -80,15 +76,10 @@ export default function Landing() {
                   Primeiro acesso
                 </Button>
               </div>
-            </motion.div>
+            </div>
 
             {/* Features */}
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2, duration: 0.5, ease: "easeOut" }}
-              className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left"
-            >
+            <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left animate-[slideUp_0.5s_ease-out_0.2s_both]">
               {[
                 {
                   icon: FileText,
@@ -118,7 +109,7 @@ export default function Landing() {
                   </p>
                 </div>
               ))}
-            </motion.div>
+            </div>
           </div>
         </div>
       </main>

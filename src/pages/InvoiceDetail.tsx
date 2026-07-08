@@ -1,6 +1,7 @@
 /**
  * Invoice Detail Page — Full view of a single billing,
  * including barcode, PIX copy, PDF download, and payment info.
+ * Uses CSS animations instead of framer-motion.
  */
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,6 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { motion } from "framer-motion";
 import {
   FileText,
   Download,
@@ -127,11 +127,7 @@ export default function InvoiceDetail() {
       </button>
 
       {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-      >
+      <div className="animate-[fadeIn_0.25s_ease-out]">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-3">
@@ -155,15 +151,11 @@ export default function InvoiceDetail() {
             {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
           </p>
         </div>
-      </motion.div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Payment Info Card */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.1s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Informações</CardTitle>
@@ -214,14 +206,10 @@ export default function InvoiceDetail() {
               )}
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
         {/* Actions Card */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.15s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Ações</CardTitle>
@@ -321,7 +309,6 @@ export default function InvoiceDetail() {
                       size="sm"
                       className="flex-1 text-xs h-9"
                       onClick={() => {
-                        // Download PDF — replace with actual download
                         if (billing.url_boleto) {
                           window.open(billing.url_boleto, "_blank");
                         }
@@ -345,16 +332,12 @@ export default function InvoiceDetail() {
               )}
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       </div>
 
       {/* Fine/Juros for overdue */}
       {billing.status === "pendente" && (billing.multa || billing.juros) && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.2s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">Encargos por Atraso</CardTitle>
@@ -376,7 +359,7 @@ export default function InvoiceDetail() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       )}
     </div>
   );

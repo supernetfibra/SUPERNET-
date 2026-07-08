@@ -1,15 +1,11 @@
-import { motion } from "framer-motion";
+/**
+ * NotFound Page — Simple 404 page.
+ * Uses CSS animations instead of framer-motion.
+ */
 
 export default function NotFound() {
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
-      className="min-h-screen flex flex-col"
-    >
-
-      
+    <div className="min-h-screen flex flex-col animate-[fadeIn_0.5s_ease-out]">
       {/* Main Content */}
       <div className="flex-1 flex flex-col items-center justify-center">
         <div className="max-w-5xl mx-auto relative px-4">
@@ -21,6 +17,6 @@ export default function NotFound() {
           </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
