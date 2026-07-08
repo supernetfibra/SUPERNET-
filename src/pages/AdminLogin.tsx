@@ -24,9 +24,11 @@ import {
 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
+import { useBranding } from "@/lib/branding-context";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
+  const { providerName, logoUrl } = useBranding();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -64,9 +66,13 @@ export default function AdminLogin() {
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Wifi className="h-5 w-5 text-muted-foreground" />
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-5 w-auto opacity-60" />
+            ) : (
+              <Wifi className="h-5 w-5 text-muted-foreground" />
+            )}
             <span className="text-sm font-medium tracking-tight text-muted-foreground">
-              MikWeb
+              {providerName}
             </span>
           </div>
           <span className="text-[10px] text-muted-foreground tracking-widest uppercase">

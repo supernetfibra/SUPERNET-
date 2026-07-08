@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { Wifi, ArrowRight, Shield, FileText, Smartphone } from "lucide-react";
 import { useNavigate } from "react-router";
+import { useBranding } from "@/lib/branding-context";
 
 export default function Landing() {
   const navigate = useNavigate();
+  const { providerName, logoUrl } = useBranding();
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -17,8 +19,12 @@ export default function Landing() {
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Wifi className="h-5 w-5 text-foreground" />
-            <span className="text-sm font-medium tracking-tight">MikWeb</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-5 w-auto" />
+            ) : (
+              <Wifi className="h-5 w-5 text-foreground" />
+            )}
+            <span className="text-sm font-medium tracking-tight">{providerName}</span>
           </div>
           <Button
             variant="outline"
@@ -41,13 +47,17 @@ export default function Landing() {
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
               <div className="flex justify-center mb-8">
-                <div className="h-16 w-16 rounded-full bg-foreground flex items-center justify-center">
-                  <Wifi className="h-8 w-8 text-background" />
-                </div>
+                {logoUrl ? (
+                  <img src={logoUrl} alt={providerName} className="h-16 w-16 object-contain" />
+                ) : (
+                  <div className="h-16 w-16 rounded-full bg-foreground flex items-center justify-center">
+                    <Wifi className="h-8 w-8 text-background" />
+                  </div>
+                )}
               </div>
               <h1 className="text-3xl sm:text-4xl font-light tracking-tight text-foreground leading-tight">
                 Bem-vindo à{" "}
-                <span className="font-medium">MikWeb</span>
+                <span className="font-medium">{providerName}</span>
               </h1>
               <p className="text-base text-muted-foreground mt-4 max-w-md mx-auto leading-relaxed">
                 Acesse suas faturas, consulte seu histórico de pagamentos
@@ -117,7 +127,7 @@ export default function Landing() {
       <footer className="border-t border-border">
         <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-center">
           <p className="text-xs text-muted-foreground">
-            MikWeb — Provedora de Internet &copy; {new Date().getFullYear()}
+            {providerName} — Provedora de Internet &copy; {new Date().getFullYear()}
           </p>
         </div>
       </footer>

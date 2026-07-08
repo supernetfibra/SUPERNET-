@@ -386,6 +386,51 @@ const adminSaveConfigHandler = httpAction(async (ctx, request) => {
   }
 });
 
+// GET /api/admin/branding
+const adminGetBrandingHandler = httpAction(async (ctx) => {
+  try {
+    const config = await ctx.runQuery(api.admin.getApiConfig);
+    return new Response(JSON.stringify({
+      providerName: config?.providerName || "MikWeb",
+      logoUrl: config?.logoUrl || "",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({ providerName: "MikWeb", logoUrl: "" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// POST /api/admin/branding
+const adminSaveBrandingHandler = httpAction(async (ctx, request) => {
+  try {
+    const body = (await request.json()) as { providerName: string; logoUrl: string };
+    if (!body.providerName || !body.providerName.trim()) {
+      return new Response(JSON.stringify({ error: "Nome do provedor é obrigatório." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    await ctx.runMutation(api.admin.saveBrandingConfig, {
+      providerName: body.providerName.trim(),
+      logoUrl: body.logoUrl || "",
+    });
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: "Erro ao salvar marca." }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
 // POST /api/admin/test-connection
 const adminTestConnectionHandler = httpAction(async (ctx, request) => {
   try {
@@ -466,5 +511,7 @@ http.route({ path: "/api/admin/config", method: "GET", handler: adminGetConfigHa
 http.route({ path: "/api/admin/config", method: "POST", handler: adminSaveConfigHandler });
 http.route({ path: "/api/admin/test-connection", method: "POST", handler: adminTestConnectionHandler });
 http.route({ path: "/api/admin/audit-logs", method: "GET", handler: adminAuditLogsHandler });
+http.route({ path: "/api/admin/branding", method: "GET", handler: adminGetBrandingHandler });
+http.route({ path: "/api/admin/branding", method: "POST", handler: adminSaveBrandingHandler });
 
 export default http;

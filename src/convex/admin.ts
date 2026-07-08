@@ -106,6 +106,8 @@ export const getApiConfig = query({
         ? `${config.apiToken.slice(0, 4)}...${config.apiToken.slice(-4)}`
         : "",
       hasToken: !!config.apiToken,
+      providerName: config.providerName,
+      logoUrl: config.logoUrl,
       updatedAt: config.updatedAt,
     };
   },
@@ -115,6 +117,8 @@ export const saveApiConfig = mutation({
   args: {
     apiUrl: v.string(),
     apiToken: v.string(),
+    providerName: v.optional(v.string()),
+    logoUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -128,6 +132,8 @@ export const saveApiConfig = mutation({
       await ctx.db.patch(existing._id, {
         apiUrl: args.apiUrl,
         apiToken: args.apiToken,
+        providerName: args.providerName ?? existing.providerName,
+        logoUrl: args.logoUrl ?? existing.logoUrl,
         updatedAt: now,
       });
     } else {
@@ -135,6 +141,45 @@ export const saveApiConfig = mutation({
         key: "default",
         apiUrl: args.apiUrl,
         apiToken: args.apiToken,
+        providerName: args.providerName,
+        logoUrl: args.logoUrl,
+        updatedAt: now,
+      });
+    }
+
+    return { success: true };
+  },
+});
+
+/**
+ * Save branding config only (provider name + logo).
+ */
+export const saveBrandingConfig = mutation({
+  args: {
+    providerName: v.string(),
+    logoUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("mikwebConfig")
+      .withIndex("by_key", (q) => q.eq("key", "default"))
+      .first();
+
+    const now = Date.now();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        providerName: args.providerName,
+        logoUrl: args.logoUrl,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("mikwebConfig", {
+        key: "default",
+        apiUrl: "",
+        apiToken: "",
+        providerName: args.providerName,
+        logoUrl: args.logoUrl,
         updatedAt: now,
       });
     }
@@ -156,7 +201,7 @@ export const getRawApiConfig = query({
       .first();
 
     return config
-      ? { apiUrl: config.apiUrl, apiToken: config.apiToken }
+      ? { apiUrl: config.apiUrl, apiToken: config.apiToken, providerName: config.providerName, logoUrl: config.logoUrl }
       : null;
   },
 });

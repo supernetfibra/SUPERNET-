@@ -21,12 +21,14 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { normalizeCpf, formatCpf } from "@/lib/cpf";
 import { useAuth } from "@/lib/auth-context";
+import { useBranding } from "@/lib/branding-context";
 
 type Step = "cpf" | "password" | "loading";
 
 export default function Login() {
   const navigate = useNavigate();
   const { login, error, clearError } = useAuth();
+  const { providerName, logoUrl } = useBranding();
 
   const [step, setStep] = useState<Step>("cpf");
   const [cpf, setCpf] = useState("");
@@ -91,8 +93,12 @@ export default function Login() {
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Wifi className="h-5 w-5 text-foreground" />
-            <span className="text-sm font-medium tracking-tight">MikWeb</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-6 w-auto" />
+            ) : (
+              <Wifi className="h-5 w-5 text-foreground" />
+            )}
+            <span className="text-sm font-medium tracking-tight">{providerName}</span>
           </div>
           <span className="text-xs text-muted-foreground">Área do Cliente</span>
         </div>
@@ -109,9 +115,13 @@ export default function Login() {
           <Card className="border-border shadow-none">
             <CardHeader className="pb-6 text-center">
               <div className="flex justify-center mb-4">
-                <div className="h-12 w-12 rounded-full bg-foreground flex items-center justify-center">
-                  <Wifi className="h-6 w-6 text-background" />
-                </div>
+                {logoUrl ? (
+                  <img src={logoUrl} alt={providerName} className="h-12 w-12 rounded-full object-contain" />
+                ) : (
+                  <div className="h-12 w-12 rounded-full bg-foreground flex items-center justify-center">
+                    <Wifi className="h-6 w-6 text-background" />
+                  </div>
+                )}
               </div>
               <CardTitle className="text-lg font-medium tracking-tight">
                 {step === "cpf" ? "Acessar Área do Cliente" : "Digite sua senha"}
@@ -297,7 +307,7 @@ export default function Login() {
       <footer className="border-t border-border">
         <div className="max-w-7xl mx-auto px-6 h-10 flex items-center justify-center">
           <p className="text-xs text-muted-foreground">
-            MikWeb — Provedora de Internet &copy; {new Date().getFullYear()}
+            {providerName} — Provedora de Internet &copy; {new Date().getFullYear()}
           </p>
         </div>
       </footer>

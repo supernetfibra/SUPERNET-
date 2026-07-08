@@ -26,6 +26,7 @@ import {
 import { useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
+import { useBranding } from "@/lib/branding-context";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -37,6 +38,7 @@ export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { customer, logout } = useAuth();
+  const { providerName, logoUrl } = useBranding();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = async () => {
@@ -68,8 +70,12 @@ export default function AppLayout() {
         <div className="flex flex-col h-full md:block">
           {/* Logo */}
           <div className="h-14 flex items-center gap-2 px-5 border-b border-border">
-            <Wifi className="h-5 w-5 text-foreground shrink-0" />
-            <span className="text-sm font-medium tracking-tight">MikWeb</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-5 w-auto" />
+            ) : (
+              <Wifi className="h-5 w-5 text-foreground shrink-0" />
+            )}
+            <span className="text-sm font-medium tracking-tight">{providerName}</span>
             <button
               onClick={() => setSidebarOpen(false)}
               className="ml-auto md:hidden text-muted-foreground hover:text-foreground transition-colors"
@@ -154,8 +160,12 @@ export default function AppLayout() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex items-center gap-2">
-            <Wifi className="h-4 w-4 text-foreground" />
-            <span className="text-sm font-medium">MikWeb</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-4 w-auto" />
+            ) : (
+              <Wifi className="h-4 w-4 text-foreground" />
+            )}
+            <span className="text-sm font-medium">{providerName}</span>
           </div>
         </header>
 

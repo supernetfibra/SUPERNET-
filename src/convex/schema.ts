@@ -49,12 +49,13 @@ const schema = defineSchema(
     }).index("by_sessionToken", ["sessionToken"])
       .index("by_cpf", ["cpf"]),
 
-    // MikWeb API configuration (stored in DB so admin can configure via UI)
+    // MikWeb API configuration + branding (stored in DB so admin can configure via UI)
     mikwebConfig: defineTable({
-      // Only one config row — identified by key "default"
-      key: v.string(),
+      key: v.string(),                  // Only one config row — identified by key "default"
       apiUrl: v.string(),
       apiToken: v.string(),
+      providerName: v.optional(v.string()), // Nome do provedor (ex: "MikWeb")
+      logoUrl: v.optional(v.string()),      // URL ou data URL da logo
       updatedAt: v.number(),
       updatedBy: v.optional(v.string()),
     }).index("by_key", ["key"]),

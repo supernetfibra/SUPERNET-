@@ -43,6 +43,10 @@ import {
   ShieldAlert,
   FileText,
   UserX,
+  Image,
+  Type,
+  Upload,
+  Smartphone,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
@@ -101,6 +105,14 @@ export default function AdminDashboard() {
     message: string;
   } | null>(null);
 
+  // Branding
+  const [providerName, setProviderName] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [logoInput, setLogoInput] = useState("");
+  const [brandingSaved, setBrandingSaved] = useState(false);
+  const [brandingSaving, setBrandingSaving] = useState(false);
+  const [brandingError, setBrandingError] = useState<string | null>(null);
+
   // Audit log
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
@@ -135,6 +147,15 @@ export default function AdminDashboard() {
       if (configRes.ok) {
         const config = await configRes.json();
         setApiUrl(config.apiUrl || "");
+      }
+
+      // Load branding
+      const brandingRes = await fetch("/api/admin/branding", { credentials: "include" });
+      if (brandingRes.ok) {
+        const branding = await brandingRes.json();
+        setProviderName(branding.providerName || "MikWeb");
+        setLogoUrl(branding.logoUrl || "");
+        setLogoInput(branding.logoUrl || "");
       }
     } catch {
       // Config endpoint might not exist as HTTP; data is loaded via Convex
@@ -240,6 +261,50 @@ export default function AdminDashboard() {
     loadAuditLogs(logFilter).finally(() => setRefreshing(false));
   };
 
+  const handleSaveBranding = async () => {
+    setBrandingSaving(true);
+    setBrandingError(null);
+    setBrandingSaved(false);
+
+    try {
+      const res = await fetch("/api/admin/branding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ providerName, logoUrl: logoInput }),
+      });
+
+      if (res.ok) {
+        setBrandingSaved(true);
+        setLogoUrl(logoInput);
+        setTimeout(() => setBrandingSaved(false), 3000);
+      } else {
+        const data = await res.json();
+        setBrandingError(data.error || "Erro ao salvar.");
+      }
+    } catch {
+      setBrandingError("Erro ao conectar com o servidor.");
+    } finally {
+      setBrandingSaving(false);
+    }
+  };
+
+  const handleLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setLogoInput(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    setLogoInput("");
+    setLogoUrl("");
+  };
+
   if (isVerified === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -329,6 +394,128 @@ export default function AdminDashboard() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Branding Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          className="lg:col-span-2"
+        >
+          <Card className="border-border shadow-none">
+            <CardHeader className="pb-4">
+              <div className="flex items-center gap-2">
+                <Image className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">
+                  Marca do Provedor
+                </CardTitle>
+              </div>
+              <CardDescription className="text-xs text-muted-foreground">
+                Personalize o nome e a logo da sua provedora.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label
+                  htmlFor="provider-name"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  Nome do Provedor
+                </Label>
+                <Input
+                  id="provider-name"
+                  type="text"
+                  placeholder="Minha Provedora"
+                  value={providerName}
+                  onChange={(e) => setProviderName(e.target.value)}
+                  className="h-9 text-sm"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Logo (URL ou upload)
+                </Label>
+                <Input
+                  type="url"
+                  placeholder="https://exemplo.com/logo.png"
+                  value={logoInput}
+                  onChange={(e) => setLogoInput(e.target.value)}
+                  className="h-9 text-xs font-mono"
+                />
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor="logo-upload"
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+                  >
+                    <Upload className="h-3 w-3" />
+                    Upload imagem
+                  </Label>
+                  <input
+                    id="logo-upload"
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                    className="hidden"
+                    onChange={handleLogoFile}
+                  />
+                  {logoInput && (
+                    <button
+                      onClick={handleRemoveLogo}
+                      className="text-xs text-destructive hover:text-destructive/80 transition-colors"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Preview */}
+              {logoInput && (
+                <div className="flex items-center gap-3 p-3 rounded-sm border border-border bg-secondary/30">
+                  {logoInput.startsWith("data:") || logoInput.startsWith("http") ? (
+                    <img
+                      src={logoInput}
+                      alt="Preview"
+                      className="h-10 w-10 object-contain rounded-sm"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center">
+                      <Wifi className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    <span className="text-foreground font-medium">{providerName || "Provedora"}</span>
+                    <p>Pré-visualização da marca</p>
+                  </div>
+                </div>
+              )}
+
+              {brandingError && (
+                <p className="flex items-start gap-2 text-xs text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>{brandingError}</span>
+                </p>
+              )}
+
+              <Button
+                variant="default"
+                size="sm"
+                className="w-full text-xs h-9"
+                onClick={handleSaveBranding}
+                disabled={brandingSaving || !providerName.trim()}
+              >
+                {brandingSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                ) : brandingSaved ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                ) : (
+                  <Type className="h-3.5 w-3.5 mr-1.5" />
+                )}
+                {brandingSaved ? "Salvo!" : "Salvar marca"}
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+
         {/* API Config */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}

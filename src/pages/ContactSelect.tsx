@@ -18,6 +18,7 @@ import { Phone, Loader2, AlertCircle, Wifi, ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
+import { useBranding } from "@/lib/branding-context";
 
 interface Contact {
   id: string;
@@ -29,6 +30,7 @@ export default function ContactSelect() {
   const navigate = useNavigate();
   const location = useLocation();
   const { selectContact, error } = useAuth();
+  const { providerName, logoUrl } = useBranding();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -62,8 +64,12 @@ export default function ContactSelect() {
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Wifi className="h-5 w-5 text-foreground" />
-            <span className="text-sm font-medium tracking-tight">MikWeb</span>
+            {logoUrl ? (
+              <img src={logoUrl} alt={providerName} className="h-5 w-auto" />
+            ) : (
+              <Wifi className="h-5 w-5 text-foreground" />
+            )}
+            <span className="text-sm font-medium tracking-tight">{providerName}</span>
           </div>
           <span className="text-xs text-muted-foreground">Área do Cliente</span>
         </div>
