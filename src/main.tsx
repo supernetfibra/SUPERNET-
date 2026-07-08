@@ -80,46 +80,44 @@ function RouteSyncer() {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>
+  <InstrumentationProvider>
     <VlyToolbar />
-    <InstrumentationProvider>
-      <ConvexAuthProvider client={convex}>
-        <AuthProvider>
-          <BrandingProvider>
-            <BrowserRouter>
-              <RouteSyncer />
-              <Suspense fallback={<RouteLoading />}>
-                <Routes>
-                  {/* Public routes */}
-                  <Route path="/" element={<Landing />} />
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/selecao-contato" element={<ContactSelect />} />
-                  <Route path="/admin" element={<AdminLogin />} />
-                  <Route path="/admin/dashboard" element={<AdminDashboard />} />
+    <ConvexAuthProvider client={convex}>
+      <AuthProvider>
+        <BrandingProvider>
+          <BrowserRouter>
+            <RouteSyncer />
+            <Suspense fallback={<RouteLoading />}>
+              <Routes>
+                {/* Public routes */}
+                <Route path="/" element={<Landing />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/selecao-contato" element={<ContactSelect />} />
+                <Route path="/admin" element={<AdminLogin />} />
+                <Route path="/admin/dashboard" element={<AdminDashboard />} />
 
-                  {/* Protected routes */}
-                  <Route
-                    element={
-                      <ProtectedRoute>
-                        <AppLayout />
-                      </ProtectedRoute>
-                    }
-                  >
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/faturas" element={<Invoices />} />
-                    <Route path="/faturas/:id" element={<InvoiceDetail />} />
-                    <Route path="/perfil" element={<Profile />} />
-                  </Route>
+                {/* Protected routes */}
+                <Route
+                  element={
+                    <ProtectedRoute>
+                      <AppLayout />
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/faturas" element={<Invoices />} />
+                  <Route path="/faturas/:id" element={<InvoiceDetail />} />
+                  <Route path="/perfil" element={<Profile />} />
+                </Route>
 
-                  {/* 404 */}
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </Suspense>
-            </BrowserRouter>
-            <Toaster />
-          </BrandingProvider>
-        </AuthProvider>
-      </ConvexAuthProvider>
-    </InstrumentationProvider>
-  </StrictMode>,
+                {/* 404 */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+          <Toaster />
+        </BrandingProvider>
+      </AuthProvider>
+    </ConvexAuthProvider>
+  </InstrumentationProvider>,
 );
