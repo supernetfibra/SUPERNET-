@@ -1,13 +1,15 @@
 /**
  * Instrumentation — catches runtime errors and reports to Vly.
  *
- * Uses a minimal ErrorBoundary that catches render-phase errors but
- * CONTINUES rendering children (instead of rendering null). This prevents
- * cascading "removeChild" DOMErrors during Vite HMR, where Vite replaces
- * a module and React tries to reconcile against already-removed DOM nodes.
+ * NOTE: We intentionally do NOT use an ErrorBoundary here. React 19 has a
+ * known transient "removeChild" DOMError that occurs when framer-motion's
+ * AnimatePresence (used by VlyToolbar) conflicts with React's concurrent
+ * reconciliation during route transitions. React recovers from this
+ * automatically. An ErrorBoundary would catch it and trigger re-renders,
+ * which prevents the automatic recovery and causes cascading failures.
  */
 
-import React from "react";
+import { type ReactNode, useEffect } from "react";
 
 // ---------------------------------------------------------------------------
 // Error reporting
@@ -32,46 +34,13 @@ async function reportToVly(message: string, stack?: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Error Boundary — logs but continues rendering children
+// Instrumentation Provider — renders children directly, no ErrorBoundary
 // ---------------------------------------------------------------------------
 
-type EBProps = { children: React.ReactNode };
-type EBState = { hasError: boolean };
-
-class ErrorBoundary extends React.Component<EBProps, EBState> {
-  constructor(props: EBProps) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error) {
-    console.error("[ErrorBoundary]", error.message);
-    reportToVly(error.message, error.stack);
-    // Clear the error state after a tick so the next render re-tries children.
-    // The "removeChild" error from HMR is transient — on the next commit cycle
-    // the DOM is stable again and rendering succeeds.
-    setTimeout(() => this.setState({ hasError: false }), 0);
-  }
-
-  render() {
-    // Always render children — even after catching an error.
-    // This prevents React from trying to unmount the tree (which would
-    // trigger more "removeChild" errors if DOM nodes were already removed).
-    return this.props.children;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Instrumentation Provider
-// ---------------------------------------------------------------------------
-
-export function InstrumentationProvider({ children }: { children: React.ReactNode }) {
-  React.useEffect(() => {
+export function InstrumentationProvider({ children }: { children: ReactNode }) {
+  useEffect(() => {
     const handleError = (event: ErrorEvent) => {
+      // Log transient DOM errors but don't prevent React's recovery
       console.error("[Instrumentation]", event.message);
       reportToVly(event.message, event.error?.stack);
     };
@@ -93,7 +62,7 @@ export function InstrumentationProvider({ children }: { children: React.ReactNod
     };
   }, []);
 
-  return <ErrorBoundary>{children}</ErrorBoundary>;
+  return <>{children}</>;
 }
 
 export default InstrumentationProvider;
