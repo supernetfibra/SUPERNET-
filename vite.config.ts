@@ -83,5 +83,13 @@ export default defineConfig({
     hmr: {
       overlay: false,
     },
+    // Proxy /api/* requests to the Convex HTTP site for HTTP actions
+    // (admin login, MikWeb login, config, branding, audit logs, etc.)
+    proxy: {
+      '/api': {
+        target: process.env.CONVEX_SITE_URL || 'https://handsome-mandrill-33.convex.site',
+        changeOrigin: true,
+      },
+    },
   },
 });
