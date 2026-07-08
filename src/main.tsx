@@ -1,10 +1,9 @@
 import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
-import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { InstrumentationProvider } from "@/instrumentation.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
-import { StrictMode, useEffect, lazy, Suspense } from "react";
+import { StrictMode, useEffect, lazy, Suspense, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation, Navigate } from "react-router";
 import "./index.css";
@@ -79,9 +78,12 @@ function RouteSyncer() {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Mount the main app
+// ---------------------------------------------------------------------------
+
 createRoot(document.getElementById("root")!).render(
   <InstrumentationProvider>
-    <VlyToolbar />
     <ConvexAuthProvider client={convex}>
       <AuthProvider>
         <BrandingProvider>
@@ -121,3 +123,25 @@ createRoot(document.getElementById("root")!).render(
     </ConvexAuthProvider>
   </InstrumentationProvider>,
 );
+
+// ---------------------------------------------------------------------------
+// Mount VlyToolbar in a SEPARATE React root.
+//
+// VlyToolbar uses framer-motion's AnimatePresence which manipulates the DOM
+// in ways that conflict with React 19's reconciliation during route
+// transitions. By rendering it in its own root, its DOM operations are
+// completely isolated from the main app's reconciliation — preventing the
+// "removeChild" NotFoundError.
+// ---------------------------------------------------------------------------
+
+(function mountVlyToolbar() {
+  const container = document.createElement("div");
+  container.id = "vly-toolbar-root";
+  document.body.appendChild(container);
+
+  // Lazy-import so the chunk is loaded asynchronously and doesn't block the
+  // main app's initial render.
+  import("../vly-toolbar-readonly.tsx").then(({ VlyToolbar }) => {
+    createRoot(container).render(createElement(VlyToolbar));
+  });
+})();
