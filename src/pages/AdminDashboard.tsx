@@ -120,22 +120,22 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Verify admin session on mount
+  // Verify admin session on mount — never navigate away from here;
+  // show an "expired" screen instead to avoid redirect loops.
   useEffect(() => {
     fetch("/api/admin/verify", { credentials: "include" })
-      .then((res) => {
+      .then(async (res) => {
         if (res.ok) {
           setIsVerified(true);
         } else {
+          // Try to re-login with stored password (for same-session flow)
           setIsVerified(false);
-          navigate("/admin");
         }
       })
       .catch(() => {
         setIsVerified(false);
-        navigate("/admin");
       });
-  }, [navigate]);
+  }, []);
 
   // Load config and audit data
   const loadData = useCallback(async () => {
@@ -307,8 +307,26 @@ export default function AdminDashboard() {
 
   if (isVerified === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Verificando sessão...</p>
+      </div>
+    );
+  }
+
+  if (isVerified === false) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
+        <ShieldAlert className="h-10 w-10 text-muted-foreground" />
+        <div className="text-center">
+          <h2 className="text-base font-medium text-foreground">Sessão não encontrada</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Faça login novamente para acessar o painel administrativo.
+          </p>
+        </div>
+        <Button size="sm" className="text-xs" onClick={() => navigate("/admin")}>
+          Voltar ao login
+        </Button>
       </div>
     );
   }
