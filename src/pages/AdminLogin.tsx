@@ -1,6 +1,9 @@
 /**
  * Admin Login Page — Discreet access to the admin dashboard.
  * Accessed via a tiny link on the bottom of the login page.
+ *
+ * Uses CSS animations instead of framer-motion to avoid DOM reconciliation
+ * conflicts with React 19 during route transitions.
  */
 
 import { Button } from "@/components/ui/button";
@@ -13,7 +16,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { motion } from "framer-motion";
 import {
   Shield,
   ArrowRight,
@@ -62,7 +64,7 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-background animate-[fadeIn_0.3s_ease-out]">
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -82,12 +84,7 @@ export default function AdminLogin() {
       </header>
 
       <div className="flex-1 flex items-center justify-center px-4 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="w-full max-w-sm"
-        >
+        <div className="w-full max-w-sm animate-[slideUp_0.4s_ease-out]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-6 text-center">
               <div className="flex justify-center mb-4">
@@ -126,14 +123,10 @@ export default function AdminLogin() {
                 </div>
 
                 {error && (
-                  <motion.p
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="flex items-start gap-2 text-xs text-destructive"
-                  >
+                  <p className="flex items-start gap-2 text-xs text-destructive animate-[fadeIn_0.2s_ease-out]">
                     <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                     <span>{error}</span>
-                  </motion.p>
+                  </p>
                 )}
 
                 <Button
@@ -164,7 +157,7 @@ export default function AdminLogin() {
             <ArrowLeft className="h-3 w-3" />
             Voltar ao login
           </button>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

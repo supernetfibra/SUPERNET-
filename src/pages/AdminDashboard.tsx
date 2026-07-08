@@ -1,6 +1,9 @@
 /**
  * Admin Dashboard — API configuration, connection test,
  * and audit log viewer (login attempts, errors, etc.).
+ *
+ * Uses CSS animations instead of framer-motion to avoid DOM reconciliation
+ * conflicts with React 19 during route transitions.
  */
 
 import { Button } from "@/components/ui/button";
@@ -14,7 +17,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -22,7 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { motion } from "framer-motion";
 import {
   Settings,
   Activity,
@@ -37,16 +38,11 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  Search,
-  Calendar,
-  Clock,
   ShieldAlert,
-  FileText,
   UserX,
   Image,
   Type,
   Upload,
-  Smartphone,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
@@ -120,21 +116,25 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Verify admin session on mount — never navigate away from here;
-  // show an "expired" screen instead to avoid redirect loops.
+  // Verify admin session on mount — show an "expired" screen instead of
+  // navigating away, to avoid redirect loops.
   useEffect(() => {
+    let cancelled = false;
+
     fetch("/api/admin/verify", { credentials: "include" })
       .then(async (res) => {
+        if (cancelled) return;
         if (res.ok) {
           setIsVerified(true);
         } else {
-          // Try to re-login with stored password (for same-session flow)
           setIsVerified(false);
         }
       })
       .catch(() => {
-        setIsVerified(false);
+        if (!cancelled) setIsVerified(false);
       });
+
+    return () => { cancelled = true; };
   }, []);
 
   // Load config and audit data
@@ -142,14 +142,12 @@ export default function AdminDashboard() {
     if (!isVerified) return;
 
     try {
-      // Load current config
       const configRes = await fetch("/api/admin/config", { credentials: "include" });
       if (configRes.ok) {
         const config = await configRes.json();
         setApiUrl(config.apiUrl || "");
       }
 
-      // Load branding
       const brandingRes = await fetch("/api/admin/branding", { credentials: "include" });
       if (brandingRes.ok) {
         const branding = await brandingRes.json();
@@ -171,8 +169,6 @@ export default function AdminDashboard() {
   const loadAuditLogs = async (type?: string) => {
     setLogsLoading(true);
     try {
-      // We load via Convex query through a proxy — use the convex client
-      // For HTTP-based, we use a dedicated endpoint
       const params = new URLSearchParams();
       if (type && type !== "all") params.set("type", type);
 
@@ -305,6 +301,9 @@ export default function AdminDashboard() {
     setLogoUrl("");
   };
 
+  // ---------------------------------------------------------------------------
+  // Loading state
+  // ---------------------------------------------------------------------------
   if (isVerified === null) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
@@ -314,9 +313,12 @@ export default function AdminDashboard() {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Session expired / not found
+  // ---------------------------------------------------------------------------
   if (isVerified === false) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-4 animate-[fadeIn_0.3s_ease-out]">
         <ShieldAlert className="h-10 w-10 text-muted-foreground" />
         <div className="text-center">
           <h2 className="text-base font-medium text-foreground">Sessão não encontrada</h2>
@@ -331,6 +333,9 @@ export default function AdminDashboard() {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Summary cards data
+  // ---------------------------------------------------------------------------
   const summaryCards = auditSummary
     ? [
         {
@@ -360,8 +365,11 @@ export default function AdminDashboard() {
       ]
     : [];
 
+  // ---------------------------------------------------------------------------
+  // Main dashboard
+  // ---------------------------------------------------------------------------
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12">
+    <div className="max-w-6xl mx-auto space-y-8 pb-12 px-4 animate-[fadeIn_0.3s_ease-out]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -386,39 +394,27 @@ export default function AdminDashboard() {
       {/* Summary Cards */}
       {auditSummary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {summaryCards.map((card, i) => (
-            <motion.div
-              key={card.label}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05, duration: 0.3 }}
-            >
-              <Card className="border-border shadow-none">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <card.icon className={`h-4 w-4 ${card.color}`} />
-                    <div>
-                      <p className="text-lg font-light tracking-tight text-foreground">
-                        {card.value}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">{card.label}</p>
-                    </div>
+          {summaryCards.map((card) => (
+            <Card key={card.label} className="border-border shadow-none animate-[slideUp_0.3s_ease-out]">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <card.icon className={`h-4 w-4 ${card.color}`} />
+                  <div>
+                    <p className="text-lg font-light tracking-tight text-foreground">
+                      {card.value}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{card.label}</p>
                   </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* Branding Section */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.3 }}
-          className="lg:col-span-2"
-        >
+        <div className="lg:col-span-2 animate-[slideUp_0.3s_ease-out_0.1s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-4">
               <div className="flex items-center gap-2">
@@ -532,15 +528,10 @@ export default function AdminDashboard() {
               </Button>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
         {/* API Config */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.3 }}
-          className="lg:col-span-2"
-        >
+        <div className="lg:col-span-2 animate-[slideUp_0.3s_ease-out_0.15s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-4">
               <div className="flex items-center gap-2">
@@ -666,15 +657,10 @@ export default function AdminDashboard() {
               </p>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
 
         {/* Audit Log */}
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.3 }}
-          className="lg:col-span-3"
-        >
+        <div className="lg:col-span-3 animate-[slideUp_0.3s_ease-out_0.2s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
@@ -800,16 +786,12 @@ export default function AdminDashboard() {
               )}
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       </div>
 
       {/* Total Stats */}
       {auditSummary && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2, duration: 0.3 }}
-        >
+        <div className="animate-[slideUp_0.3s_ease-out_0.25s_both]">
           <Card className="border-border shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium">
@@ -853,7 +835,7 @@ export default function AdminDashboard() {
               </div>
             </CardContent>
           </Card>
-        </motion.div>
+        </div>
       )}
     </div>
   );
