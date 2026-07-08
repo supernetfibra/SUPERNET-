@@ -1,225 +1,176 @@
-import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { ChevronDown, ExternalLink } from "lucide-react";
-import React, { useEffect, useRef, useState } from "react";
+/**
+ * Simple error boundary and instrumentation.
+ *
+ * Uses a class-based ErrorBoundary to catch render-phase errors and
+ * a plain DOM-overlay approach to display them — no portal-based dialogs,
+ * no simultaneous error handlers, no risk of cascading re-renders.
+ */
 
-type SyncError = {
-  error: string;
-  stack: string;
-  filename: string;
-  lineno: number;
-  colno: number;
-};
+import React from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 
-type AsyncError = {
-  error: string;
-  stack: string;
-};
+// ---------------------------------------------------------------------------
+// Error reporting
+// ---------------------------------------------------------------------------
 
-type GenericError = SyncError | AsyncError;
-
-async function reportErrorToVly(errorData: {
-  error: string;
-  stackTrace?: string;
-  filename?: string;
-  lineno?: number;
-  colno?: number;
-}) {
-  if (!import.meta.env.VITE_VLY_APP_ID) {
-    return;
-  }
-
+async function reportToVly(message: string, stack?: string) {
+  const appId = import.meta.env.VITE_VLY_APP_ID;
+  if (!appId) return;
   try {
     await fetch(import.meta.env.VITE_VLY_MONITORING_URL, {
       method: "POST",
       body: JSON.stringify({
-        ...errorData,
+        error: message,
+        stackTrace: stack,
         url: window.location.href,
-        projectSemanticIdentifier: import.meta.env.VITE_VLY_APP_ID,
+        projectSemanticIdentifier: appId,
       }),
     });
-  } catch (error) {
-    console.error("Failed to report error to Vly:", error);
+  } catch {
+    // swallow
   }
 }
 
-function ErrorDialog({
-  error,
-  setError,
-}: {
-  error: GenericError;
-  setError: (error: GenericError | null) => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/20 backdrop-blur-sm">
-      <div className="relative max-w-4xl w-[90vw] rounded-lg border border-border bg-card p-6 shadow-xl">
-        <div className="mb-4">
-          <h2 className="text-lg font-medium text-destructive">Runtime Error</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            A runtime error occurred. Open the editor to automatically debug the error.
-          </p>
-        </div>
-        <p className="text-sm text-foreground font-mono bg-secondary/50 rounded-sm px-3 py-2 mb-4 truncate">
-          {error.error}
+// ---------------------------------------------------------------------------
+// Pure DOM overlay (no React reconciliation conflicts)
+// ---------------------------------------------------------------------------
+
+function showErrorOverlay(message: string, stack: string) {
+  // Remove any previous overlay
+  document.getElementById("vly-error-overlay")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "vly-error-overlay";
+  overlay.innerHTML = `
+    <div style="
+      position: fixed; inset: 0; z-index: 999999;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.15); backdrop-filter: blur(4px);
+    ">
+      <div style="
+        max-width: 90vw; width: 700px;
+        background: var(--card); border: 1px solid var(--border);
+        border-radius: 8px; padding: 24px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+        font-family: system-ui, -apple-system, sans-serif;
+        color: var(--foreground);
+      ">
+        <h2 style="font-size: 16px; font-weight: 600; margin: 0 0 4px; color: var(--destructive);">
+          Runtime Error
+        </h2>
+        <p style="font-size: 13px; color: var(--muted-foreground); margin: 0 0 12px;">
+          A runtime error occurred. You can dismiss this and continue, or open the editor to debug.
         </p>
-        <Collapsible>
-          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronDown className="h-3 w-3" />
+        <p style="
+          font-size: 12px; font-family: monospace;
+          background: var(--secondary); padding: 8px 12px;
+          border-radius: 4px; white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; margin: 0 0 12px;
+        ">${escapeHtml(message)}</p>
+        <details style="margin-bottom: 16px;">
+          <summary style="font-size: 12px; cursor: pointer; color: var(--muted-foreground);">
             See error details
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2 p-3 bg-foreground text-background rounded text-xs overflow-x-auto max-h-60 max-w-full [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-              <pre className="whitespace-pre-wrap break-all">{error.stack}</pre>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs"
-            onClick={() => setError(null)}
-          >
-            Dismiss
-          </Button>
-          <a
-            href={`https://freebuff.com/project/${import.meta.env.VITE_VLY_APP_ID}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Button size="sm" className="text-xs">
-              <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-              Open editor
-            </Button>
-          </a>
+          </summary>
+          <pre style="
+            margin-top: 8px; padding: 12px; font-size: 11px;
+            background: var(--foreground); color: var(--background);
+            border-radius: 4px; overflow-x: auto; max-height: 200px;
+            white-space: pre-wrap; word-break: break-all;
+          ">${escapeHtml(stack)}</pre>
+        </details>
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button
+            id="vly-dismiss-btn"
+            style="
+              padding: 6px 16px; font-size: 12px; border-radius: 4px;
+              border: 1px solid var(--border); background: transparent;
+              cursor: pointer; color: var(--foreground);
+            "
+          >Dismiss</button>
+          <button
+            id="vly-reload-btn"
+            style="
+              padding: 6px 16px; font-size: 12px; border-radius: 4px;
+              border: none; background: var(--foreground);
+              color: var(--background); cursor: pointer;
+            "
+          >Reload page</button>
         </div>
       </div>
     </div>
-  );
+  `;
+
+  document.body.appendChild(overlay);
+
+  document.getElementById("vly-dismiss-btn")?.addEventListener("click", () => {
+    overlay.remove();
+  });
+  document.getElementById("vly-reload-btn")?.addEventListener("click", () => {
+    window.location.reload();
+  });
 }
 
-type ErrorBoundaryProps = {
-  children: React.ReactNode;
-};
+function escapeHtml(text: string): string {
+  const div = document.createElement("div");
+  div.appendChild(document.createTextNode(text));
+  return div.innerHTML;
+}
 
-type ErrorBoundaryState = {
-  hasError: boolean;
-  error: GenericError | null;
-};
+// ---------------------------------------------------------------------------
+// Error Boundary (class component — no hooks, no extra re-renders)
+// ---------------------------------------------------------------------------
 
-class ErrorBoundary extends React.Component<
-  ErrorBoundaryProps,
-  ErrorBoundaryState
-> {
-  constructor(props: ErrorBoundaryProps) {
+type Props = { children: React.ReactNode };
+type State = { hasError: boolean };
+
+export class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error) {
-    return {
-      hasError: true,
-      error: {
-        error: error.message,
-        stack: error.stack || "",
-      },
-    };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    reportErrorToVly({
-      error: error.message,
-      stackTrace: error.stack,
-    });
+  componentDidCatch(error: Error) {
+    reportToVly(error.message, error.stack);
+    // Show overlay using plain DOM — no React rendering to avoid reconciliation loops
+    showErrorOverlay(error.message, error.stack || "");
   }
 
   render() {
     if (this.state.hasError) {
-      return (
-        <ErrorDialog
-          error={this.state.error || { error: "An error occurred", stack: "" }}
-          setError={() => this.setState({ hasError: false, error: null })}
-        />
-      );
+      // Render nothing — the overlay is shown as a DOM element outside React
+      return null;
     }
-
     return this.props.children;
   }
 }
 
-export function InstrumentationProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const [error, setError] = useState<GenericError | null>(null);
-  const isHandlingError = useRef(false);
+// ---------------------------------------------------------------------------
+// Instrumentation Provider
+// ---------------------------------------------------------------------------
 
-  useEffect(() => {
+export function InstrumentationProvider({ children }: { children: React.ReactNode }) {
+  React.useEffect(() => {
+    // Only report to Vly — don't show dialogs, let ErrorBoundary handle rendering errors
     const handleError = (event: ErrorEvent) => {
-      // Prevent cascading errors — if we're already handling one, ignore
-      if (isHandlingError.current) return;
-      isHandlingError.current = true;
+      console.error("[Instrumentation]", event.message);
+      reportToVly(event.message, event.error?.stack);
 
-      try {
-        console.error("[Instrumentation]", event.message);
-
-        if (import.meta.env.VITE_VLY_APP_ID) {
-          reportErrorToVly({
-            error: event.message,
-            stackTrace: event.error?.stack,
-            filename: event.filename,
-            lineno: event.lineno,
-            colno: event.colno,
-          });
-        }
-
-        setError({
-          error: event.message,
-          stack: event.error?.stack || "",
-          filename: event.filename || "",
-          lineno: event.lineno,
-          colno: event.colno,
-        });
-      } catch (err) {
-        console.error("Error in handleError:", err);
-      } finally {
-        // Reset the flag after a short delay to avoid rapid re-entry
-        setTimeout(() => {
-          isHandlingError.current = false;
-        }, 1000);
-      }
+      // DO NOT call setState here — that would trigger a re-render of the entire app
+      // during a reconciler error, making the DOM collision worse.
+      // The ErrorBoundary class component above handles the UI overlay.
     };
 
     const handleRejection = (event: PromiseRejectionEvent) => {
-      if (isHandlingError.current) return;
-      isHandlingError.current = true;
-
-      try {
-        console.error("[Instrumentation] Unhandled rejection:", event.reason);
-
-        if (import.meta.env.VITE_VLY_APP_ID) {
-          reportErrorToVly({
-            error: event.reason?.message || "Unhandled rejection",
-            stackTrace: event.reason?.stack,
-          });
-        }
-
-        setError({
-          error: event.reason?.message || "Unhandled promise rejection",
-          stack: event.reason?.stack || "",
-        });
-      } catch (err) {
-        console.error("Error in handleRejection:", err);
-      } finally {
-        setTimeout(() => {
-          isHandlingError.current = false;
-        }, 1000);
-      }
+      console.error("[Instrumentation] Unhandled rejection:", event.reason);
+      reportToVly(
+        event.reason?.message || "Unhandled rejection",
+        event.reason?.stack,
+      );
     };
 
     window.addEventListener("error", handleError);
@@ -231,10 +182,7 @@ export function InstrumentationProvider({
     };
   }, []);
 
-  return (
-    <>
-      <ErrorBoundary>{children}</ErrorBoundary>
-      {error && <ErrorDialog error={error} setError={setError} />}
-    </>
-  );
+  return <ErrorBoundary>{children}</ErrorBoundary>;
 }
+
+export default InstrumentationProvider;
