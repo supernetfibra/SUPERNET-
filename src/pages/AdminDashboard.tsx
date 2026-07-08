@@ -153,7 +153,7 @@ export default function AdminDashboard() {
       const brandingRes = await fetch("/api/admin/branding", { credentials: "include" });
       if (brandingRes.ok) {
         const branding = await brandingRes.json();
-        setProviderName(branding.providerName || "MikWeb");
+        setProviderName(branding.providerName || "Seu Provedor");
         setLogoUrl(branding.logoUrl || "");
         setLogoInput(branding.logoUrl || "");
       }

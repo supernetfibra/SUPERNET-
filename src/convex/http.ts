@@ -391,14 +391,14 @@ const adminGetBrandingHandler = httpAction(async (ctx) => {
   try {
     const config = await ctx.runQuery(api.admin.getApiConfig);
     return new Response(JSON.stringify({
-      providerName: config?.providerName || "MikWeb",
+      providerName: config?.providerName || "Seu Provedor",
       logoUrl: config?.logoUrl || "",
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ providerName: "MikWeb", logoUrl: "" }), {
+    return new Response(JSON.stringify({ providerName: "Seu Provedor", logoUrl: "" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });

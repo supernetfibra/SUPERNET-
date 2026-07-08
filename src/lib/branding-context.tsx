@@ -11,13 +11,13 @@ interface BrandingConfig {
 }
 
 const BrandingContext = createContext<BrandingConfig>({
-  providerName: "MikWeb",
+  providerName: "Seu Provedor",
   logoUrl: "",
 });
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState<BrandingConfig>({
-    providerName: "MikWeb",
+    providerName: "Seu Provedor",
     logoUrl: "",
   });
 
