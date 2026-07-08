@@ -1,4 +1,5 @@
 import '@vly-ai/integrations';
+import { Toaster } from "@/components/ui/sonner";
 import { InstrumentationProvider } from "@/instrumentation.tsx";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
@@ -108,6 +109,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
+          <Toaster />
         </BrandingProvider>
       </AuthProvider>
     </ConvexAuthProvider>

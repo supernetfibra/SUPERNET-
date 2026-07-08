@@ -79,10 +79,10 @@ export default defineConfig({
   },
   // Performance hints
   server: {
-    // Keep HMR on, but disable full-screen error overlay
-    hmr: {
-      overlay: false,
-    },
+    // HMR must be disabled — the Freebuff proxy breaks Vite's WebSocket-based
+    // module hot-reloading, causing "Importing a module script failed" errors
+    // that cascade into React removeChild NotFoundError crashes.
+    hmr: false,
     // Proxy /api/* requests to the Convex HTTP site for HTTP actions
     // (admin login, MikWeb login, config, branding, audit logs, etc.)
     proxy: {
