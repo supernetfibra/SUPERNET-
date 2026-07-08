@@ -2,17 +2,21 @@
  * MikWeb API Integration Service
  *
  * This module provides Convex actions to interact with the MikWeb REST API.
- * Configure the API base URL and token in environment variables.
+ * API configuration can come from environment variables OR from the
+ * mikwebConfig table in the database (set by the admin UI).
  *
- * Required env vars:
- *   MIKWEB_API_URL     - Base URL for the MikWeb API (e.g., https://api.mikweb.com.br)
+ * Priority: env vars > DB config
+ *
+ * Required env vars (if DB config not set):
+ *   MIKWEB_API_URL     - Base URL for the MikWeb API
  *   MIKWEB_API_TOKEN   - Bearer token for API authentication
  */
 
 "use node";
 
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import { action, ActionCtx } from "./_generated/server";
+import { api } from "./_generated/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,21 +80,35 @@ export interface MikWebApiError {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getApiConfig() {
+function getEnvConfig() {
   const baseUrl = process.env.MIKWEB_API_URL;
   const token = process.env.MIKWEB_API_TOKEN;
-
-  if (!baseUrl || !token) {
-    throw new Error(
-      "MikWeb API not configured. Set MIKWEB_API_URL and MIKWEB_API_TOKEN in environment variables."
-    );
-  }
-
-  return { baseUrl, token };
+  return baseUrl && token ? { baseUrl, token } : null;
 }
 
-async function apiGet<T>(path: string): Promise<T> {
-  const { baseUrl, token } = getApiConfig();
+async function getApiConfig(ctx: ActionCtx) {
+  // Priority 1: Environment variables
+  const envConfig = getEnvConfig();
+  if (envConfig) return envConfig;
+
+  // Priority 2: Database-stored config
+  try {
+    const dbConfig = await ctx.runQuery(api.admin.getRawApiConfig);
+    if (dbConfig) {
+      return { baseUrl: dbConfig.apiUrl, token: dbConfig.apiToken };
+    }
+  } catch {
+    // Ignore errors reading DB config
+  }
+
+  throw new Error(
+    "MikWeb API não configurada. Configure a URL e o Token da API no painel de administração " +
+    "ou defina as variáveis de ambiente MIKWEB_API_URL e MIKWEB_API_TOKEN."
+  );
+}
+
+async function apiGet<T>(ctx: ActionCtx, path: string): Promise<T> {
+  const { baseUrl, token } = await getApiConfig(ctx);
   const url = `${baseUrl.replace(/\/$/, "")}${path}`;
 
   const response = await fetch(url, {
@@ -111,8 +129,8 @@ async function apiGet<T>(path: string): Promise<T> {
   return response.json();
 }
 
-async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const { baseUrl, token } = getApiConfig();
+async function apiPost<T>(ctx: ActionCtx, path: string, body?: unknown): Promise<T> {
+  const { baseUrl, token } = await getApiConfig(ctx);
   const url = `${baseUrl.replace(/\/$/, "")}${path}`;
 
   const response = await fetch(url, {
@@ -138,19 +156,12 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 // Customer Services
 // ---------------------------------------------------------------------------
 
-/**
- * Search for a customer by CPF/CNPJ.
- * Returns the customer(s) found or throws if none found.
- */
 export const findCustomerByCPF = action({
   args: { cpf: v.string() },
-  handler: async (_ctx, args): Promise<MikWebCustomer[]> => {
+  handler: async (ctx, args): Promise<MikWebCustomer[]> => {
     const cpf = args.cpf.replace(/\D/g, "");
-
-    // Normal API call — replace with actual MikWeb endpoint
-    // The endpoint path depends on the MikWeb API version/contract.
-    // Common patterns: /api/clientes/cpf/{cpf} or /api/clientes?cpf={cpf}
     const customers = await apiGet<MikWebCustomer[]>(
+      ctx,
       `/api/clientes?cpf_cnpj=${cpf}`
     );
 
@@ -162,38 +173,30 @@ export const findCustomerByCPF = action({
   },
 });
 
-/**
- * Get contacts for a specific customer.
- */
 export const getCustomerContacts = action({
   args: { customerId: v.string() },
-  handler: async (_ctx, args): Promise<MikWebContact[]> => {
+  handler: async (ctx, args): Promise<MikWebContact[]> => {
     const contacts = await apiGet<MikWebContact[]>(
+      ctx,
       `/api/clientes/${args.customerId}/contatos`
     );
-
     return contacts || [];
   },
 });
 
-/**
- * Validate the user's password (phone number) against customer data.
- * Returns the matching contact if valid, or throws if invalid.
- */
 export const validateInitialPassword = action({
   args: {
     customerId: v.string(),
     password: v.string(),
   },
-  handler: async (_ctx, args): Promise<{ valid: boolean; contactId?: string }> => {
+  handler: async (ctx, args): Promise<{ valid: boolean; contactId?: string }> => {
     const normalizedPassword = args.password.replace(/\D/g, "");
 
-    // Get customer contacts
     const contacts = await apiGet<MikWebContact[]>(
+      ctx,
       `/api/clientes/${args.customerId}/contatos`
     );
 
-    // Find a contact whose phone matches the password
     const matchingContact = contacts?.find((contact) => {
       const contactPhone = (contact.telefone || contact.celular || "").replace(/\D/g, "");
       return contactPhone === normalizedPassword;
@@ -203,8 +206,8 @@ export const validateInitialPassword = action({
       return { valid: true, contactId: matchingContact.id };
     }
 
-    // Also check the customer's main phone fields
     const customer = await apiGet<MikWebCustomer>(
+      ctx,
       `/api/clientes/${args.customerId}`
     );
     const customerPhone = (customer.telefone || customer.celular || "").replace(/\D/g, "");
@@ -221,37 +224,29 @@ export const validateInitialPassword = action({
 // Billing Services
 // ---------------------------------------------------------------------------
 
-/**
- * List all billings for a customer.
- */
 export const listBillingsByCustomerId = action({
   args: { customerId: v.string() },
-  handler: async (_ctx, args): Promise<MikWebBilling[]> => {
+  handler: async (ctx, args): Promise<MikWebBilling[]> => {
     const billings = await apiGet<MikWebBilling[]>(
+      ctx,
       `/api/clientes/${args.customerId}/cobrancas`
     );
     return billings || [];
   },
 });
 
-/**
- * Get a single billing by ID.
- */
 export const getBillingById = action({
   args: { billingId: v.string() },
-  handler: async (_ctx, args): Promise<MikWebBilling> => {
-    return apiGet<MikWebBilling>(`/api/cobrancas/${args.billingId}`);
+  handler: async (ctx, args): Promise<MikWebBilling> => {
+    return apiGet<MikWebBilling>(ctx, `/api/cobrancas/${args.billingId}`);
   },
 });
 
-/**
- * Download a billing PDF.
- * Returns the URL to download the PDF from MikWeb.
- */
 export const downloadBillingPdf = action({
   args: { billingId: v.string() },
-  handler: async (_ctx, args): Promise<{ url: string }> => {
+  handler: async (ctx, args): Promise<{ url: string }> => {
     const billing = await apiGet<MikWebBilling>(
+      ctx,
       `/api/cobrancas/${args.billingId}`
     );
 
@@ -263,12 +258,9 @@ export const downloadBillingPdf = action({
   },
 });
 
-/**
- * Get customer details by ID.
- */
 export const getCustomerById = action({
   args: { customerId: v.string() },
-  handler: async (_ctx, args): Promise<MikWebCustomer> => {
-    return apiGet<MikWebCustomer>(`/api/clientes/${args.customerId}`);
+  handler: async (ctx, args): Promise<MikWebCustomer> => {
+    return apiGet<MikWebCustomer>(ctx, `/api/clientes/${args.customerId}`);
   },
 });

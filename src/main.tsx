@@ -22,6 +22,8 @@ const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Invoices = lazy(() => import("./pages/Invoices.tsx"));
 const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail.tsx"));
 const Profile = lazy(() => import("./pages/Profile.tsx"));
+const AdminLogin = lazy(() => import("./pages/AdminLogin.tsx"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -90,6 +92,8 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/" element={<Landing />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/selecao-contato" element={<ContactSelect />} />
+                <Route path="/admin" element={<AdminLogin />} />
+                <Route path="/admin/dashboard" element={<AdminDashboard />} />
 
                 {/* Protected routes */}
                 <Route
