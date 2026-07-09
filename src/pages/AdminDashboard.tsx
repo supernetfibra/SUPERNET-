@@ -53,6 +53,7 @@ import { useNavigate } from "react-router";
 
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 const BRANDING_STORAGE_KEY = "mikweb_branding";
+const CONFIG_STORAGE_KEY = "mikweb_api_config";
 
 function getAdminToken(): string | null {
   try {
@@ -74,6 +75,23 @@ function getStoredBranding(): { providerName: string; logoUrl: string } | null {
 function storeBranding(name: string, logo: string) {
   try {
     localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify({ providerName: name, logoUrl: logo }));
+  } catch {
+    // localStorage may be full or unavailable
+  }
+}
+
+function getStoredConfig(): { apiUrl: string; apiToken: string } | null {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeConfig(apiUrl: string, apiToken: string) {
+  try {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ apiUrl, apiToken }));
   } catch {
     // localStorage may be full or unavailable
   }
@@ -186,10 +204,37 @@ export default function AdminDashboard() {
     if (!isVerified) return;
 
     try {
-      const configRes = await adminFetch("/api/admin/config");
-      if (configRes.ok) {
-        const config = await configRes.json();
-        setApiUrl(config.apiUrl || "");
+      // Try loading API config from the server
+      let loadedConfig = false;
+      try {
+        const configRes = await adminFetch("/api/admin/config");
+        if (configRes.ok) {
+          const config = await configRes.json();
+          if (config.apiUrl) {
+            setApiUrl(config.apiUrl);
+            // Token comes masked from server (only first/last 4 chars)
+            // Only restore token from localStorage if server has one
+            if (config.hasToken) {
+              const stored = getStoredConfig();
+              if (stored?.apiToken) {
+                setApiToken(stored.apiToken);
+              }
+            }
+            storeConfig(config.apiUrl, "");
+            loadedConfig = true;
+          }
+        }
+      } catch {
+        // Server unavailable — fall through to localStorage
+      }
+
+      // Fallback to localStorage if server failed
+      if (!loadedConfig) {
+        const stored = getStoredConfig();
+        if (stored) {
+          setApiUrl(stored.apiUrl);
+          setApiToken(stored.apiToken);
+        }
       }
 
       // Try loading branding from the server
@@ -261,6 +306,11 @@ export default function AdminDashboard() {
     setConfigError(null);
     setConfigSaved(false);
 
+    // Always save to localStorage first for immediate persistence
+    storeConfig(apiUrl, apiToken);
+    setConfigSaved(true);
+
+    // Then try the server — if it fails, the data is still persisted locally
     try {
       const res = await adminFetch("/api/admin/config", {
         method: "POST",
@@ -268,18 +318,16 @@ export default function AdminDashboard() {
         body: JSON.stringify({ apiUrl, apiToken }),
       });
 
-      if (res.ok) {
-        setConfigSaved(true);
-        setConnectionResult(null);
-        setTimeout(() => setConfigSaved(false), 3000);
+      if (!res.ok) {
+        console.warn("API config saved to localStorage only; server rejected:", await res.text());
       } else {
-        const data = await res.json();
-        setConfigError(data.error || "Erro ao salvar configuração.");
+        setConnectionResult(null);
       }
     } catch {
-      setConfigError("Erro ao conectar com o servidor.");
+      console.warn("API config saved to localStorage only; server unavailable.");
     } finally {
       setConfigSaving(false);
+      setTimeout(() => setConfigSaved(false), 3000);
     }
   };
 
