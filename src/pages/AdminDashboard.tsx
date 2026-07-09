@@ -253,9 +253,13 @@ export default function AdminDashboard() {
   };
 
   const handleLogout = async () => {
-    await adminFetch("/api/admin/logout", { method: "POST" });
+    try {
+      await adminFetch("/api/admin/logout", { method: "POST" });
+    } catch {
+      // Ignore logout API errors
+    }
     localStorage.removeItem(ADMIN_TOKEN_KEY);
-    navigate("/admin");
+    navigate("/");
   };
 
   const handleRefresh = () => {
