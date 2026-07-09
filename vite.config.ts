@@ -11,6 +11,9 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Ensure a single copy of React across all modules (vly-toolbar-readonly.tsx
+    // is outside src/ and can resolve a separate React without this).
+    dedupe: ["react", "react-dom"],
   },
   build: {
     // Enable source maps for better debugging (disable in production if needed)
