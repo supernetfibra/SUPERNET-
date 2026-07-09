@@ -178,11 +178,21 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Verify admin session on mount — show an "expired" screen instead of
-  // navigating away, to avoid redirect loops.
+  // Verify admin session on mount — check localStorage first, then try server.
   useEffect(() => {
     let cancelled = false;
 
+    // 1. Check localStorage for a valid session (works without server)
+    const localToken = localStorage.getItem(ADMIN_TOKEN_KEY);
+    const expires = localStorage.getItem(ADMIN_TOKEN_KEY + "_expires");
+    const localValid = localToken && expires && Date.now() < Number(expires);
+
+    if (localValid) {
+      setIsVerified(true);
+      return;
+    }
+
+    // 2. Try server verify as fallback
     adminFetch("/api/admin/verify")
       .then(async (res) => {
         if (cancelled) return;

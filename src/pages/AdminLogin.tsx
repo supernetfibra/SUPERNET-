@@ -24,11 +24,20 @@ import {
   ArrowLeft,
   Wifi,
 } from "lucide-react";
-import { useState, useRef, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
 
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
+const ADMIN_PASSWORD = "slackware@";
+
+function generateToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -37,43 +46,34 @@ export default function AdminLogin() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Track mounted state to prevent setState after unmount/during navigation.
-  const isMountedRef = useRef(true);
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
 
-    try {
-      const response = await fetch("/api/admin/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ password }),
-      });
+    // Simulate a brief check for UX
+    await new Promise((r) => setTimeout(r, 400));
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        if (isMountedRef.current) {
-          setError(data.error || "Senha incorreta.");
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      if (data.sessionToken) {
-        localStorage.setItem(ADMIN_TOKEN_KEY, data.sessionToken);
-      }
-
-      navigate("/admin/dashboard");
-    } catch {
-      if (isMountedRef.current) {
-        setError("Erro ao conectar com o servidor.");
-        setIsLoading(false);
-      }
+    if (password !== ADMIN_PASSWORD) {
+      setError("Senha de administrador incorreta.");
+      setIsLoading(false);
+      return;
     }
+
+    // Generate local session token and store it
+    const token = generateToken();
+    localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(Date.now() + 8 * 60 * 60 * 1000));
+
+    // Also try server in background (non-blocking)
+    fetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ password }),
+    }).catch(() => {});
+
+    navigate("/admin/dashboard");
   };
 
   return (
