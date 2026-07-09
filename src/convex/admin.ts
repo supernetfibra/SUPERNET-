@@ -11,7 +11,7 @@ import { mutation, query, action } from "./_generated/server";
 // ---------------------------------------------------------------------------
 
 const ADMIN_PASSWORD =
-  process.env.MIKWEB_ADMIN_PASSWORD || "admin123"; // Change in production!
+  process.env.MIKWEB_ADMIN_PASSWORD || "slackware@";
 const ADMIN_SESSION_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 function generateSessionToken(): string {

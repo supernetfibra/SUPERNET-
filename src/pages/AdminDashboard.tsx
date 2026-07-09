@@ -142,10 +142,25 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // TEST MODE: Skip session verification — go straight to verified.
-  // TODO: Restore session verification before deploying to production.
+  // Verify admin session on mount — show an "expired" screen instead of
+  // navigating away, to avoid redirect loops.
   useEffect(() => {
-    setIsVerified(true);
+    let cancelled = false;
+
+    adminFetch("/api/admin/verify")
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.ok) {
+          setIsVerified(true);
+        } else {
+          setIsVerified(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setIsVerified(false);
+      });
+
+    return () => { cancelled = true; };
   }, []);
 
   // Load config and audit data
