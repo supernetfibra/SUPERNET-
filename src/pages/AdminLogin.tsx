@@ -24,7 +24,7 @@ import {
   ArrowLeft,
   Wifi,
 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useState, useRef, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
 
@@ -36,6 +36,11 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Track mounted state to prevent setState after unmount/during navigation.
+  // This prevents the React 19 "removeChild" crash that occurs when a
+  // component tries to update state while being unmounted by a route transition.
+  const isMountedRef = useRef(true);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,7 +58,9 @@ export default function AdminLogin() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || "Senha incorreta.");
+        if (isMountedRef.current) {
+          setError(data.error || "Senha incorreta.");
+        }
         return;
       }
 
@@ -63,12 +70,19 @@ export default function AdminLogin() {
         localStorage.setItem(ADMIN_TOKEN_KEY, data.sessionToken);
       }
 
+      // Navigate IMMEDIATELY without any subsequent state updates.
+      // This prevents the removeChild crash caused by setState on an
+      // unmounting component during route transition.
       navigate("/admin/dashboard");
     } catch {
-      setError("Erro ao conectar com o servidor.");
-    } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setError("Erro ao conectar com o servidor.");
+        setIsLoading(false);
+      }
     }
+    // Intentionally NO finally block — on success the component unmounts
+    // via navigate(), and calling setIsLoading(false) would trigger a
+    // state update on an unmounting component, causing removeChild errors.
   };
 
   return (
