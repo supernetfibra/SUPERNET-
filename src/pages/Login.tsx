@@ -220,7 +220,7 @@ export default function Login() {
                         </button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Sua senha inicial é o número de telefone que você cadastrou na MikWeb.
+                        Sua senha inicial é o número de telefone que você cadastrou em seu provedor.
                       </p>
                     </div>
 
