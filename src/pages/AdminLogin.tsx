@@ -38,8 +38,6 @@ export default function AdminLogin() {
   const [isLoading, setIsLoading] = useState(false);
 
   // Track mounted state to prevent setState after unmount/during navigation.
-  // This prevents the React 19 "removeChild" crash that occurs when a
-  // component tries to update state while being unmounted by a route transition.
   const isMountedRef = useRef(true);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -60,19 +58,15 @@ export default function AdminLogin() {
       if (!response.ok) {
         if (isMountedRef.current) {
           setError(data.error || "Senha incorreta.");
+          setIsLoading(false);
         }
         return;
       }
 
-      // Store the session token in localStorage as a fallback for when
-      // the Secure cookie is rejected by the browser (HTTP dev env).
       if (data.sessionToken) {
         localStorage.setItem(ADMIN_TOKEN_KEY, data.sessionToken);
       }
 
-      // Navigate IMMEDIATELY without any subsequent state updates.
-      // This prevents the removeChild crash caused by setState on an
-      // unmounting component during route transition.
       navigate("/admin/dashboard");
     } catch {
       if (isMountedRef.current) {
@@ -80,9 +74,6 @@ export default function AdminLogin() {
         setIsLoading(false);
       }
     }
-    // Intentionally NO finally block — on success the component unmounts
-    // via navigate(), and calling setIsLoading(false) would trigger a
-    // state update on an unmounting component, causing removeChild errors.
   };
 
   return (
@@ -151,6 +142,13 @@ export default function AdminLogin() {
                   </p>
                 )}
 
+                {/*
+                  IMPORTANT: All text inside Button MUST be wrapped in <span>.
+                  React 19's concurrent reconciler crashes with removeChild when
+                  managing bare text nodes inside <button> elements during state
+                  transitions. Wrapping text in <span> forces React to manage
+                  Element nodes instead of Text nodes, avoiding the crash.
+                */}
                 <Button
                   type="submit"
                   className="w-full h-10 text-sm"
@@ -159,11 +157,11 @@ export default function AdminLogin() {
                   {isLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Verificando...
+                      <span>Verificando...</span>
                     </>
                   ) : (
                     <>
-                      Acessar painel
+                      <span>Acessar painel</span>
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </>
                   )}
@@ -177,7 +175,7 @@ export default function AdminLogin() {
             className="mt-6 flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mx-auto"
           >
             <ArrowLeft className="h-3 w-3" />
-            Voltar ao login
+            <span>Voltar ao login</span>
           </button>
         </div>
       </div>
