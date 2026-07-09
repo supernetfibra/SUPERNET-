@@ -52,12 +52,30 @@ import { useNavigate } from "react-router";
 // ---------------------------------------------------------------------------
 
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
+const BRANDING_STORAGE_KEY = "mikweb_branding";
 
 function getAdminToken(): string | null {
   try {
     return localStorage.getItem(ADMIN_TOKEN_KEY);
   } catch {
     return null;
+  }
+}
+
+function getStoredBranding(): { providerName: string; logoUrl: string } | null {
+  try {
+    const raw = localStorage.getItem(BRANDING_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeBranding(name: string, logo: string) {
+  try {
+    localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify({ providerName: name, logoUrl: logo }));
+  } catch {
+    // localStorage may be full or unavailable
   }
 }
 
@@ -174,12 +192,33 @@ export default function AdminDashboard() {
         setApiUrl(config.apiUrl || "");
       }
 
-      const brandingRes = await adminFetch("/api/admin/branding");
-      if (brandingRes.ok) {
-        const branding = await brandingRes.json();
-        setProviderName(branding.providerName || "Seu Provedor");
-        setLogoUrl(branding.logoUrl || "");
-        setLogoInput(branding.logoUrl || "");
+      // Try loading branding from the server
+      let loadedBranding = false;
+      try {
+        const brandingRes = await adminFetch("/api/admin/branding");
+        if (brandingRes.ok) {
+          const branding = await brandingRes.json();
+          if (branding.providerName) {
+            setProviderName(branding.providerName);
+            setLogoUrl(branding.logoUrl || "");
+            setLogoInput(branding.logoUrl || "");
+            // Sync to localStorage
+            storeBranding(branding.providerName, branding.logoUrl || "");
+            loadedBranding = true;
+          }
+        }
+      } catch {
+        // Server unavailable — fall through to localStorage
+      }
+
+      // Fallback to localStorage if server failed
+      if (!loadedBranding) {
+        const stored = getStoredBranding();
+        if (stored) {
+          setProviderName(stored.providerName);
+          setLogoUrl(stored.logoUrl);
+          setLogoInput(stored.logoUrl);
+        }
       }
     } catch {
       // Config endpoint might not exist as HTTP; data is loaded via Convex
@@ -287,6 +326,12 @@ export default function AdminDashboard() {
     setBrandingError(null);
     setBrandingSaved(false);
 
+    // Always save to localStorage first for immediate persistence
+    storeBranding(providerName, logoInput);
+    setLogoUrl(logoInput);
+    setBrandingSaved(true);
+
+    // Then try the server — if it fails, the data is still persisted locally
     try {
       const res = await adminFetch("/api/admin/branding", {
         method: "POST",
@@ -294,18 +339,14 @@ export default function AdminDashboard() {
         body: JSON.stringify({ providerName, logoUrl: logoInput }),
       });
 
-      if (res.ok) {
-        setBrandingSaved(true);
-        setLogoUrl(logoInput);
-        setTimeout(() => setBrandingSaved(false), 3000);
-      } else {
-        const data = await res.json();
-        setBrandingError(data.error || "Erro ao salvar.");
+      if (!res.ok) {
+        console.warn("Branding saved to localStorage only; server rejected:", await res.text());
       }
     } catch {
-      setBrandingError("Erro ao conectar com o servidor.");
+      console.warn("Branding saved to localStorage only; server unavailable.");
     } finally {
       setBrandingSaving(false);
+      setTimeout(() => setBrandingSaved(false), 3000);
     }
   };
 

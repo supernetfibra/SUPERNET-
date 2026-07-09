@@ -1,6 +1,7 @@
 /**
  * Branding Context — Provides the provider name and logo URL
- * to all pages in the app. Loaded once from the backend on mount.
+ * to all pages in the app. Loaded from localStorage first (instant),
+ * then attempts to sync from the server.
  */
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
@@ -10,30 +11,45 @@ interface BrandingConfig {
   logoUrl: string;
 }
 
-const BrandingContext = createContext<BrandingConfig>({
-  providerName: "Seu Provedor",
-  logoUrl: "",
-});
+const BRANDING_STORAGE_KEY = "mikweb_branding";
+
+function loadFromStorage(): BrandingConfig | null {
+  try {
+    const raw = localStorage.getItem(BRANDING_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+const defaults: BrandingConfig = { providerName: "Seu Provedor", logoUrl: "" };
+
+const BrandingContext = createContext<BrandingConfig>(defaults);
 
 export function BrandingProvider({ children }: { children: ReactNode }) {
-  const [branding, setBranding] = useState<BrandingConfig>({
-    providerName: "Seu Provedor",
-    logoUrl: "",
-  });
+  // Initialize from localStorage for instant availability
+  const stored = loadFromStorage();
+  const [branding, setBranding] = useState<BrandingConfig>(stored || defaults);
 
   useEffect(() => {
+    // Try to sync from server in the background
     fetch("/api/admin/branding", { credentials: "include" })
-      .then((res) => res.ok ? res.json() : null)
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) {
-          setBranding({
-            providerName: data.providerName || "MikWeb",
+        if (data?.providerName) {
+          const fresh = {
+            providerName: data.providerName,
             logoUrl: data.logoUrl || "",
-          });
+          };
+          setBranding(fresh);
+          // Sync to localStorage
+          try {
+            localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(fresh));
+          } catch {}
         }
       })
       .catch(() => {
-        // Fallback to default
+        // Server unavailable — localStorage fallback already in place
       });
   }, []);
 
