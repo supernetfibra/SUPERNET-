@@ -332,6 +332,63 @@ const billingsHandler = httpAction(async (ctx, request) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/mikweb/billings/:id/download — Download billing PDF
+// Proxies the request to the MikWeb API with the Bearer token
+// ---------------------------------------------------------------------------
+const billingDownloadHandler = httpAction(async (ctx, request) => {
+  try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(JSON.stringify({ error: "Sessão não encontrada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const session = await ctx.runQuery(api.sessions.getSession, { sessionToken });
+    if (!session) {
+      return new Response(JSON.stringify({ error: "Sessão expirada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Extract billing ID from URL: /api/mikweb/billings/<ID>/download
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/");
+    // parts = ["", "api", "mikweb", "billings", "<ID>", "download"]
+    const billingId = parts[4];
+
+    if (!billingId) {
+      return new Response(JSON.stringify({ error: "ID da fatura não informado." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Get the download URL from the action (which has the token)
+    const result = await ctx.runAction(api.mikweb.downloadBillingPdf, {
+      billingId,
+    });
+
+    // Redirect the browser to the download URL
+    return new Response(null, {
+      status: 302,
+      headers: { Location: result.url },
+    });
+  } catch (err) {
+    console.error("[BILLING_DOWNLOAD_ERROR]", err);
+    return new Response(JSON.stringify({ error: "Erro ao baixar PDF." }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Admin HTTP Endpoints
 // ---------------------------------------------------------------------------
 
@@ -560,6 +617,7 @@ http.route({ path: "/api/mikweb/logout", method: "POST", handler: logoutHandler 
 http.route({ path: "/api/mikweb/me", method: "GET", handler: meHandler });
 http.route({ path: "/api/mikweb/select-contact", method: "POST", handler: selectContactHandler });
 http.route({ path: "/api/mikweb/billings", method: "GET", handler: billingsHandler });
+http.route({ path: "/api/mikweb/billings/:id/download", method: "GET", handler: billingDownloadHandler });
 
 http.route({ path: "/api/admin/login", method: "POST", handler: adminLoginHandler });
 http.route({ path: "/api/admin/logout", method: "POST", handler: adminLogoutHandler });

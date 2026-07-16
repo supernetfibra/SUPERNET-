@@ -248,7 +248,7 @@ export default function InvoiceDetail() {
                       variant="default"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      disabled
+                      onClick={() => window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank")}
                     >
                       <Download className="h-3.5 w-3.5 mr-1.5" />
                       Download PDF

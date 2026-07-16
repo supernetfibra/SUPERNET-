@@ -209,6 +209,7 @@ export default function Invoices() {
                           className="h-7 text-xs text-muted-foreground hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation();
+                            window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
                           }}
                         >
                           <Download className="h-3 w-3 mr-1" />
