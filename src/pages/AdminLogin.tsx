@@ -46,17 +46,12 @@ export default function AdminLogin() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    setIsLoading(true);
-
-    // Simulate a brief check for UX
-    await new Promise((r) => setTimeout(r, 400));
 
     if (password !== ADMIN_PASSWORD) {
       setError("Senha de administrador incorreta.");
-      setIsLoading(false);
       return;
     }
 
@@ -65,15 +60,9 @@ export default function AdminLogin() {
     localStorage.setItem(ADMIN_TOKEN_KEY, token);
     localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(Date.now() + 8 * 60 * 60 * 1000));
 
-    // Also try server in background (non-blocking)
-    fetch("/api/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ password }),
-    }).catch(() => {});
-
-    navigate("/admin/dashboard");
+    // Use window.location for navigation to avoid React 19 DOM
+    // reconciliation bugs during route transitions (removeChild crash).
+    window.location.href = "/admin/dashboard";
   };
 
   return (
@@ -154,17 +143,8 @@ export default function AdminLogin() {
                   className="w-full h-10 text-sm"
                   disabled={isLoading || !password}
                 >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      <span>Verificando...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Acessar painel</span>
-                      <ArrowRight className="ml-2 h-4 w-4" />
-                    </>
-                  )}
+                  <span>Acessar painel</span>
+                <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </form>
             </CardContent>
