@@ -378,16 +378,12 @@ export default function AdminDashboard() {
 
       // Fallback: test directly from browser (pode falhar por CORS/SSL)
       const baseUrl = apiUrl.replace(/\/$/, "");
-      const testPaths = [
-        { path: "/clientes", label: "rota padrão" },
-        { path: "/api/clientes", label: "rota com /api/" },
-      ];
+      const testPaths = ["/customers", "/customers?limit=1"];
 
       let testedUrls: string[] = [];
-      let lastError: string | null = null;
 
-      for (const { path, label } of testPaths) {
-        const url = `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`;
+      for (const path of testPaths) {
+        const url = `${baseUrl}${path}`;
         testedUrls.push(url);
 
         try {
@@ -402,14 +398,13 @@ export default function AdminDashboard() {
           if (response.ok) {
             setConnectionResult({
               success: true,
-              message: `Conexão estabelecida com sucesso! (${label})`,
+              message: "Conexão estabelecida com sucesso!",
             });
             return;
           }
 
           if (response.status === 404) {
-            lastError = `Erro HTTP 404 (${label})`;
-            continue; // Try next path
+            continue;
           }
 
           if (response.status === 401 || response.status === 403) {
@@ -420,9 +415,12 @@ export default function AdminDashboard() {
             return;
           }
 
-          lastError = `Erro HTTP ${response.status}: ${response.statusText}`;
+          setConnectionResult({
+            success: false,
+            message: `Erro HTTP ${response.status}: ${response.statusText}`,
+          });
+          return;
         } catch {
-          lastError = "Falha de rede (possível CORS ou SSL)";
           continue;
         }
       }
@@ -430,10 +428,10 @@ export default function AdminDashboard() {
       // All paths failed
       setConnectionResult({
         success: false,
-        message: `Nenhuma rota funcionou. URLs testadas:
+        message: `Nenhum endpoint respondeu. URLs testadas:
 ${testedUrls.join("\n")}
 
-Verifique se a URL da API está correta.`,
+A URL base está correta (${baseUrl}). Verifique o token de autenticação.`,
       });
     } catch (err) {
       setConnectionResult({

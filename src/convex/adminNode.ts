@@ -80,31 +80,29 @@ export const testApiConnection = action({
   handler: async (_ctx, args) => {
     const baseUrl = args.apiUrl.replace(/\/$/, "");
 
-    // Try the most common MikWeb API paths
+    // Try the MikWeb API endpoints as documented
     const paths = [
-      { path: "/clientes", label: "cliente" },
-      { path: "/api/clientes", label: "cliente (com /api/)" },
+      { path: "/customers", label: "/customers" },
+      { path: "/customers?limit=1", label: "/customers?limit=1" },
     ];
 
     for (const { path, label } of paths) {
       try {
-        const url = `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`;
+        const url = `${baseUrl}${path}`;
 
         const response = await apiFetch(url, args.apiToken);
 
         if (response.ok) {
           return {
             success: true,
-            message: `Conexão estabelecida com sucesso! (rota: ${label})`,
+            message: `Conexão estabelecida com sucesso! (${label})`,
           };
         }
 
-        // If we got a 404 on the first path, try the next one
         if (response.status === 404) {
           continue;
         }
 
-        // For other status codes, return immediately
         let errorBody = "";
         try {
           const parsed = JSON.parse(response.body);
@@ -124,20 +122,18 @@ export const testApiConnection = action({
           success: false,
           message: `Erro HTTP ${response.status}: ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`,
         };
-      } catch (err) {
-        // Network error — skip to next path
+      } catch {
         continue;
       }
     }
 
-    // All paths failed — show the exact URLs attempted
-    const attemptedPaths = paths
-      .map(({ path }) => `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`)
+    const attemptedUrls = paths
+      .map(({ path }) => `${baseUrl}${path}`)
       .join("\n");
 
     return {
       success: false,
-      message: `Não foi possível conectar. URLs testadas:\n${attemptedPaths}\n\nVerifique se a URL da API está correta no campo acima. Se precisar, tente também "https://api.mikweb.com.br" ou "https://www.api.mikweb.com.br" como URL base.`,
+      message: `Nenhum endpoint respondeu. URLs testadas:\n${attemptedUrls}\n\nVerifique se a URL base e o token estão corretos.`,
     };
   },
 });
