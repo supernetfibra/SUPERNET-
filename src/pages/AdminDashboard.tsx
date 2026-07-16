@@ -362,7 +362,16 @@ export default function AdminDashboard() {
         return;
       }
 
-      // Try via Convex backend first (server-side, sem restrições CORS)
+      const baseUrl = apiUrl.replace(/\/$/, "");
+
+      // 1. Try directly from browser first (works when CORS allows)
+      const browserResult = await testApiFromBrowser(baseUrl, apiToken);
+      if (browserResult) {
+        setConnectionResult(browserResult);
+        return;
+      }
+
+      // 2. Fallback: try via Convex backend (server-side, sem CORS)
       try {
         const res = await adminFetch("/api/admin/test-connection", {
           method: "POST",
@@ -373,65 +382,13 @@ export default function AdminDashboard() {
         setConnectionResult(data);
         return;
       } catch {
-        // Convex unavailable — try browser directly
+        // Convex unavailable
       }
 
-      // Fallback: test directly from browser (pode falhar por CORS/SSL)
-      const baseUrl = apiUrl.replace(/\/$/, "");
-      const testPaths = ["/customers?per_page=1", "/customers"];
-
-      let testedUrls: string[] = [];
-
-      for (const path of testPaths) {
-        const url = `${baseUrl}${path}`;
-        testedUrls.push(url);
-
-        try {
-          const response = await fetch(url, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${apiToken}`,
-              "Content-Type": "application/json",
-            },
-          });
-
-          if (response.ok) {
-            setConnectionResult({
-              success: true,
-              message: "Conexão estabelecida com sucesso!",
-            });
-            return;
-          }
-
-          if (response.status === 404) {
-            continue;
-          }
-
-          if (response.status === 401 || response.status === 403) {
-            setConnectionResult({
-              success: false,
-              message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
-            });
-            return;
-          }
-
-          setConnectionResult({
-            success: false,
-            message: `Erro HTTP ${response.status}: ${response.statusText}`,
-          });
-          return;
-        } catch {
-          continue;
-        }
-      }
-
-      // All paths failed
+      // Both methods failed
       setConnectionResult({
         success: false,
-        message: `Nenhum endpoint respondeu. URLs testadas:
-${testedUrls.join("\n")}
-
-A URL base está correta (${baseUrl}). Verifique o token de autenticação.`,
+        message: `Não foi possível conectar em "${baseUrl}". Verifique se a URL e o token estão corretos.`,
       });
     } catch (err) {
       setConnectionResult({
@@ -442,6 +399,48 @@ A URL base está correta (${baseUrl}). Verifique o token de autenticação.`,
       setTestingConnection(false);
     }
   };
+
+  /** Test API directly from the browser */
+  async function testApiFromBrowser(baseUrl: string, token: string) {
+    const testPaths = ["/customers?per_page=1", "/customers"];
+    const testedUrls: string[] = [];
+
+    for (const path of testPaths) {
+      const url = `${baseUrl}${path}`;
+      testedUrls.push(url);
+
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          return { success: true, message: "Conexão estabelecida com sucesso!" };
+        }
+
+        if (response.status === 404) {
+          continue;
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          return { success: false, message: `Token inválido ou sem permissão (HTTP ${response.status}).` };
+        }
+
+        return { success: false, message: `Erro HTTP ${response.status}: ${response.statusText}` };
+      } catch {
+        continue;
+      }
+    }
+
+    return {
+      success: false,
+      message: `Nenhum endpoint respondeu. URLs testadas:\n${testedUrls.join("\n")}\n\nA URL base está correta (${baseUrl}). Verifique o token de autenticação.`,
+    };
+  }
 
   const handleLogout = async () => {
     try {
