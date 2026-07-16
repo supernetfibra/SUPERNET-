@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { useBillings } from "@/hooks/use-billings";
+import { useBillings, formatVencimentoComMes } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
@@ -150,10 +150,10 @@ export default function Dashboard() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground">
-                            {billing.competencia}
+                            {formatVencimentoComMes(billing.vencimento)}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            Vencimento: {billing.vencimento}
+                            {billing.competencia}
                           </p>
                         </div>
                       </div>

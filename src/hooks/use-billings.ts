@@ -191,4 +191,30 @@ export function useBillingById(id: string | undefined): {
   return { billing, isLoading };
 }
 
+// ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
+
+const MESES: string[] = [
+  "Janeiro", "Fevereiro", "Março", "Abril",
+  "Maio", "Junho", "Julho", "Agosto",
+  "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+
+/**
+ * Format vencimento (dd/MM/yyyy) to show month name in Portuguese.
+ * Ex: "10/03/2025" → "10 de Março de 2025"
+ */
+export function formatVencimentoComMes(vencimento: string): string {
+  if (!vencimento) return "";
+  const parts = vencimento.split("/");
+  if (parts.length !== 3) return vencimento;
+
+  const [dia, mes, ano] = parts;
+  const mesNum = parseInt(mes, 10);
+  const mesNome = MESES[mesNum - 1] || mes;
+
+  return `${parseInt(dia, 10)} de ${mesNome} de ${ano}`;
+}
+
 export { mapBilling, mapStatus, formatDate };

@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { useBillings } from "@/hooks/use-billings";
+import { useBillings, formatVencimentoComMes } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
@@ -165,10 +165,10 @@ export default function Invoices() {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-foreground">
-                            {billing.competencia}
+                            {formatVencimentoComMes(billing.vencimento)}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            Vencimento: {billing.vencimento}
+                            {billing.competencia}
                             {billing.status === "pago" && billing.data_pagamento && (
                               <> · Pago em: {billing.data_pagamento}</>
                             )}
