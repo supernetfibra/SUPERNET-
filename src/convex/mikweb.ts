@@ -208,7 +208,7 @@ export const findCustomerByCPF = action({
  * Response: { "customer": {...} }
  */
 export const getCustomerById = action({
-  args: { customerId: v.union(v.string(), v.number()) },
+  args: { customerId: v.string() },
   handler: async (ctx, args): Promise<MikWebCustomer> => {
     return apiGet<MikWebCustomer>(ctx, `/customers/${args.customerId}`);
   },
@@ -224,7 +224,7 @@ export const getCustomerById = action({
  */
 export const validateInitialPassword = action({
   args: {
-    customerId: v.union(v.string(), v.number()),
+    customerId: v.string(),
     password: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean; contactId?: string }> => {
@@ -268,7 +268,7 @@ export const validateInitialPassword = action({
  * Response: { "billings": [...], "meta": {...} }
  */
 export const listBillingsByCustomerId = action({
-  args: { customerId: v.union(v.string(), v.number()) },
+  args: { customerId: v.string() },
   handler: async (ctx, args): Promise<MikWebBilling[]> => {
     const billings = await apiGet<MikWebBilling[]>(
       ctx,
@@ -284,7 +284,7 @@ export const listBillingsByCustomerId = action({
  * Response: { "billing": {...} }
  */
 export const getBillingById = action({
-  args: { billingId: v.union(v.string(), v.number()) },
+  args: { billingId: v.string() },
   handler: async (ctx, args): Promise<MikWebBilling> => {
     return apiGet<MikWebBilling>(ctx, `/billings/${args.billingId}`);
   },
@@ -296,7 +296,7 @@ export const getBillingById = action({
  * Returns a PDF file. We return the download URL instead.
  */
 export const downloadBillingPdf = action({
-  args: { billingId: v.union(v.string(), v.number()) },
+  args: { billingId: v.string() },
   handler: async (ctx, args): Promise<{ url: string }> => {
     const { baseUrl, token } = await getApiConfig(ctx);
     const url = `${baseUrl.replace(/\/$/, "")}/billings/${args.billingId}/download?valid=true`;
@@ -325,7 +325,7 @@ export const downloadBillingPdf = action({
  * We extract all phone fields from the customer record.
  */
 export const getCustomerContacts = action({
-  args: { customerId: v.union(v.string(), v.number()) },
+  args: { customerId: v.string() },
   handler: async (ctx, args): Promise<Array<{ id: string; phone: string; label?: string }>> => {
     const customer = await apiGet<MikWebCustomer>(
       ctx,

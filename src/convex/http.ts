@@ -117,7 +117,7 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     let contacts: Array<{ id: string; phone: string; label?: string }> = [];
     try {
-      contacts = await ctx.runAction(api.mikweb.getCustomerContacts, { customerId: customer.id });
+      contacts = await ctx.runAction(api.mikweb.getCustomerContacts, { customerId: String(customer.id) });
     } catch (err) {
       console.error(`[LOGIN_ERROR] getCustomerContacts: ${err}`);
       contacts = [];
@@ -126,7 +126,7 @@ const loginHandler = httpAction(async (ctx, request) => {
     let validationResult;
     try {
       validationResult = await ctx.runAction(api.mikweb.validateInitialPassword, {
-        customerId: customer.id,
+        customerId: String(customer.id),
         password: body.password,
       });
     } catch (err) {
