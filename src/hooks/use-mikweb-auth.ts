@@ -89,9 +89,9 @@ export function useMikWebAuth() {
     checkSession();
   }, [checkSession]);
 
-  // Login with CPF + phone password
+  // Login with CPF + password (last 4 digits of CPF)
   const login = useCallback(
-    async (cpf: string, password: string): Promise<LoginResponse> => {
+    async (cpf: string, password: string, keepConnected?: boolean): Promise<LoginResponse> => {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
       try {
@@ -99,7 +99,7 @@ export function useMikWebAuth() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ cpf, password }),
+          body: JSON.stringify({ cpf, password, keepConnected }),
         });
 
         const data = await response.json();

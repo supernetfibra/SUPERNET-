@@ -81,6 +81,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       cpf: string;
       password: string;
       contactId?: string;
+      keepConnected?: boolean;
     };
 
     if (!body.cpf || !body.password) {
@@ -153,16 +154,20 @@ const loginHandler = httpAction(async (ctx, request) => {
       label: c.label,
     }));
 
+    const keepConnected = body.keepConnected === true;
+    const sessionMaxAge = keepConnected ? 7 * 24 * 60 * 60 : 24 * 60 * 60;
+
     const sessionResult = await ctx.runMutation(api.sessions.createSession, {
       cpf,
       customerId: String(customer.id),
       customerName: customer.full_name,
       contacts: sessionContacts,
       selectedContactId: undefined,
+      keepConnected,
     });
 
     const responseHeaders = new Headers({ "Content-Type": "application/json" });
-    responseHeaders.append("Set-Cookie", `mikweb_session=${sessionResult.sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`);
+    responseHeaders.append("Set-Cookie", `mikweb_session=${sessionResult.sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionMaxAge}`);
 
     console.log(`[LOGIN_SUCCESS] CPF: ${cpf}, Customer: ${customer.full_name}, Duration: ${Date.now() - startTime}ms`);
 

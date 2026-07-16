@@ -33,6 +33,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [keepConnected, setKeepConnected] = useState(false);
 
   const handleCpfSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -52,7 +53,7 @@ export default function Login() {
     setIsSubmitting(true);
 
     try {
-      const result = await login(normalizeCpf(cpf), password);
+      const result = await login(normalizeCpf(cpf), password, keepConnected);
 
       if (result?.hasMultipleContacts && result?.contacts?.length > 0) {
         navigate("/selecao-contato", {
@@ -230,6 +231,19 @@ export default function Login() {
                         <span>{error}</span>
                       </p>
                     )}
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="keep-connected"
+                        type="checkbox"
+                        checked={keepConnected}
+                        onChange={(e) => setKeepConnected(e.target.checked)}
+                        className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30 accent-foreground"
+                      />
+                      <Label htmlFor="keep-connected" className="text-xs text-muted-foreground cursor-pointer select-none">
+                        Manter conectado
+                      </Label>
+                    </div>
 
                     <Button
                       type="submit"

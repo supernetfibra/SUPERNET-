@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const EXTENDED_SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const SESSION_EXTEND_THRESHOLD_MS = 30 * 60 * 1000; // Extend if more than 30min left
 
 import { generateSessionToken } from "./shared";
@@ -32,10 +33,15 @@ export const createSession = mutation({
       })
     ),
     selectedContactId: v.optional(v.string()),
+    keepConnected: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     const sessionToken = generateSessionToken();
+
+    const duration = args.keepConnected
+      ? EXTENDED_SESSION_DURATION_MS
+      : SESSION_DURATION_MS;
 
     await ctx.db.insert("mikwebSessions", {
       sessionToken,
@@ -45,11 +51,11 @@ export const createSession = mutation({
       contacts: args.contacts,
       selectedContactId: args.selectedContactId,
       createdAt: now,
-      expiresAt: now + SESSION_DURATION_MS,
+      expiresAt: now + duration,
       lastActivityAt: now,
     });
 
-    return { sessionToken, expiresAt: now + SESSION_DURATION_MS };
+    return { sessionToken, expiresAt: now + duration };
   },
 });
 
