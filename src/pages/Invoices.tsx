@@ -11,14 +11,26 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
+import {
   FileText,
   Download,
   Copy,
   CopyCheck,
   ChevronRight,
+  ChevronLeft,
+  ChevronsLeft,
+  ChevronsRight,
   Loader2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useBillings } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
@@ -27,15 +39,58 @@ import type { BillingSummary } from "@/hooks/use-billings";
 
 type FilterStatus = "all" | "pendente" | "pago" | "vencido";
 
+const ITEMS_PER_PAGE = 10;
+
 export default function Invoices() {
   const navigate = useNavigate();
   const { billings, isLoading } = useBillings();
   const [copiedId, handleCopy] = useCopyToClipboard();
   const [filter, setFilter] = useState<FilterStatus>("all");
+  const [page, setPage] = useState(1);
 
-  const filteredBillings = filter === "all"
-    ? billings
-    : billings.filter((b: BillingSummary) => b.status === filter);
+  const filteredBillings = useMemo(() => {
+    return filter === "all"
+      ? billings
+      : billings.filter((b: BillingSummary) => b.status === filter);
+  }, [billings, filter]);
+
+  const totalPages = Math.ceil(filteredBillings.length / ITEMS_PER_PAGE);
+  const paginatedBillings = filteredBillings.slice(
+    (page - 1) * ITEMS_PER_PAGE,
+    page * ITEMS_PER_PAGE
+  );
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setPage(1);
+  }, [filter]);
+
+  // Clamp page if it exceeds total pages (e.g., after filter change)
+  useEffect(() => {
+    if (page > totalPages && totalPages > 0) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  // Generate visible page numbers for the paginator
+  const pageNumbers = useMemo(() => {
+    const pages: (number | "ellipsis")[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (page > 3) pages.push("ellipsis");
+      const start = Math.max(2, page - 1);
+      const end = Math.min(totalPages - 1, page + 1);
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (page < totalPages - 2) pages.push("ellipsis");
+      pages.push(totalPages);
+    }
+    return pages;
+  }, [page, totalPages]);
+
+  const startItem = filteredBillings.length > 0 ? (page - 1) * ITEMS_PER_PAGE + 1 : 0;
+  const endItem = Math.min(page * ITEMS_PER_PAGE, filteredBillings.length);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -84,7 +139,7 @@ export default function Invoices() {
         </div>
       ) : (
         <div className="space-y-2">
-          {filteredBillings.map((billing, index) => {
+          {paginatedBillings.map((billing, index) => {
             const status = statusConfig[billing.status] || statusConfig.pendente;
             const StatusIcon = status.icon;
 
@@ -197,6 +252,80 @@ export default function Invoices() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Pagination */}
+      {!isLoading && filteredBillings.length > 0 && totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+          <p className="text-xs text-muted-foreground order-2 sm:order-1">
+            {startItem}–{endItem} de {filteredBillings.length}
+          </p>
+          <Pagination className="order-1 sm:order-2">
+            <PaginationContent>
+              <PaginationItem>
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page === 1}
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 w-8 disabled:opacity-30 hover:bg-secondary/50 transition-colors"
+                  aria-label="Primeira página"
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </button>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (page > 1) setPage(page - 1);
+                  }}
+                  className={page === 1 ? "pointer-events-none opacity-30" : ""}
+                />
+              </PaginationItem>
+              {pageNumbers.map((p, i) =>
+                p === "ellipsis" ? (
+                  <PaginationItem key={`ellipsis-${i}`}>
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem key={p}>
+                    <PaginationLink
+                      href="#"
+                      isActive={p === page}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setPage(p);
+                      }}
+                      className="h-8 w-8 text-xs"
+                    >
+                      {p}
+                    </PaginationLink>
+                  </PaginationItem>
+                )
+              )}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (page < totalPages) setPage(page + 1);
+                  }}
+                  className={page === totalPages ? "pointer-events-none opacity-30" : ""}
+                />
+              </PaginationItem>
+              <PaginationItem>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={page === totalPages}
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 w-8 disabled:opacity-30 hover:bg-secondary/50 transition-colors"
+                  aria-label="Última página"
+                >
+                  <ChevronsRight className="h-4 w-4" />
+                </button>
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
         </div>
       )}
     </div>
