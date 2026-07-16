@@ -346,18 +346,55 @@ export default function AdminDashboard() {
     setConnectionResult(null);
 
     try {
+      // Try via Convex backend first
       const res = await adminFetch("/api/admin/test-connection", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiUrl, apiToken }),
       });
 
-      const data = await res.json();
-      setConnectionResult(data);
+      if (res.ok) {
+        const data = await res.json();
+        setConnectionResult(data);
+        return;
+      }
     } catch {
+      // Convex backend unavailable — test directly from the browser
+    }
+
+    // Fallback: test the MikWeb API directly from the browser
+    try {
+      const baseUrl = apiUrl.replace(/\/$/, "");
+      const url = `${baseUrl}/api/clientes?cpf_cnpj=00000000000&limit=1`;
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (response.ok) {
+        setConnectionResult({
+          success: true,
+          message: "Conexão estabelecida com sucesso!",
+        });
+      } else if (response.status === 401 || response.status === 403) {
+        setConnectionResult({
+          success: false,
+          message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
+        });
+      } else {
+        setConnectionResult({
+          success: false,
+          message: `Erro HTTP ${response.status}: ${response.statusText}`,
+        });
+      }
+    } catch (err) {
       setConnectionResult({
         success: false,
-        message: "Erro ao conectar com o servidor.",
+        message: `Erro de conexão: ${err instanceof Error ? err.message : "Desconhecido"}`,
       });
     } finally {
       setTestingConnection(false);
