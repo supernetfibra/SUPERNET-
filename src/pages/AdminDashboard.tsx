@@ -378,32 +378,63 @@ export default function AdminDashboard() {
 
       // Fallback: test directly from browser (pode falhar por CORS/SSL)
       const baseUrl = apiUrl.replace(/\/$/, "");
-      const url = `${baseUrl}/clientes?cpf_cnpj=00000000000&limit=1`;
+      const testPaths = [
+        { path: "/clientes", label: "rota padrão" },
+        { path: "/api/clientes", label: "rota com /api/" },
+      ];
 
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-      });
+      let testedUrls: string[] = [];
+      let lastError: string | null = null;
 
-      if (response.ok) {
-        setConnectionResult({
-          success: true,
-          message: "Conexão estabelecida com sucesso!",
-        });
-      } else if (response.status === 401 || response.status === 403) {
-        setConnectionResult({
-          success: false,
-          message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
-        });
-      } else {
-        setConnectionResult({
-          success: false,
-          message: `Erro HTTP ${response.status}: ${response.statusText}`,
-        });
+      for (const { path, label } of testPaths) {
+        const url = `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`;
+        testedUrls.push(url);
+
+        try {
+          const response = await fetch(url, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${apiToken}`,
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (response.ok) {
+            setConnectionResult({
+              success: true,
+              message: `Conexão estabelecida com sucesso! (${label})`,
+            });
+            return;
+          }
+
+          if (response.status === 404) {
+            lastError = `Erro HTTP 404 (${label})`;
+            continue; // Try next path
+          }
+
+          if (response.status === 401 || response.status === 403) {
+            setConnectionResult({
+              success: false,
+              message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
+            });
+            return;
+          }
+
+          lastError = `Erro HTTP ${response.status}: ${response.statusText}`;
+        } catch {
+          lastError = "Falha de rede (possível CORS ou SSL)";
+          continue;
+        }
       }
+
+      // All paths failed
+      setConnectionResult({
+        success: false,
+        message: `Nenhuma rota funcionou. URLs testadas:
+${testedUrls.join("\n")}
+
+Verifique se a URL da API está correta.`,
+      });
     } catch (err) {
       setConnectionResult({
         success: false,

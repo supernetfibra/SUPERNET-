@@ -78,40 +78,66 @@ export const testApiConnection = action({
     apiToken: v.string(),
   },
   handler: async (_ctx, args) => {
-    try {
-      const url = `${args.apiUrl.replace(/\/$/, "")}/clientes?cpf_cnpj=00000000000&limit=1`;
+    const baseUrl = args.apiUrl.replace(/\/$/, "");
 
-      const response = await apiFetch(url, args.apiToken);
+    // Try the most common MikWeb API paths
+    const paths = [
+      { path: "/clientes", label: "cliente" },
+      { path: "/api/clientes", label: "cliente (com /api/)" },
+    ];
 
-      if (response.ok) {
-        return { success: true, message: "Conexão estabelecida com sucesso!" };
-      }
-
-      // Try to parse the response body for a better error message
-      let errorBody = "";
+    for (const { path, label } of paths) {
       try {
-        const parsed = JSON.parse(response.body);
-        errorBody = parsed.error || parsed.message || "";
-      } catch {
-        errorBody = response.body.slice(0, 200);
-      }
+        const url = `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`;
 
-      if (response.status === 401 || response.status === 403) {
+        const response = await apiFetch(url, args.apiToken);
+
+        if (response.ok) {
+          return {
+            success: true,
+            message: `Conexão estabelecida com sucesso! (rota: ${label})`,
+          };
+        }
+
+        // If we got a 404 on the first path, try the next one
+        if (response.status === 404) {
+          continue;
+        }
+
+        // For other status codes, return immediately
+        let errorBody = "";
+        try {
+          const parsed = JSON.parse(response.body);
+          errorBody = parsed.error || parsed.message || "";
+        } catch {
+          errorBody = response.body.slice(0, 200);
+        }
+
+        if (response.status === 401 || response.status === 403) {
+          return {
+            success: false,
+            message: `Token inválido ou sem permissão (HTTP ${response.status}).${errorBody ? ` ${errorBody}` : ""}`,
+          };
+        }
+
         return {
           success: false,
-          message: `Token inválido ou sem permissão (HTTP ${response.status}).${errorBody ? ` ${errorBody}` : ""}`,
+          message: `Erro HTTP ${response.status}: ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`,
         };
+      } catch (err) {
+        // Network error — skip to next path
+        continue;
       }
-
-      return {
-        success: false,
-        message: `Erro HTTP ${response.status}: ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`,
-      };
-    } catch (err) {
-      return {
-        success: false,
-        message: `Erro de conexão: ${err instanceof Error ? err.message : "Desconhecido"}`,
-      };
     }
+
+    // All paths failed — show the exact URLs attempted
+    const attemptedPaths = paths
+      .map(({ path }) => `${baseUrl}${path}?cpf_cnpj=00000000000&limit=1`)
+      .join("\n");
+
+    return {
+      success: false,
+      message: `Não foi possível conectar. URLs testadas:\n${attemptedPaths}\n\nVerifique se a URL da API está correta no campo acima. Se precisar, tente também "https://api.mikweb.com.br" ou "https://www.api.mikweb.com.br" como URL base.`,
+    };
   },
 });
