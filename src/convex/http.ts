@@ -448,7 +448,7 @@ const adminSaveBrandingHandler = httpAction(async (ctx, request) => {
 const adminTestConnectionHandler = httpAction(async (ctx, request) => {
   try {
     const body = (await request.json()) as { apiUrl: string; apiToken: string };
-    const result = await ctx.runAction(api.admin.testApiConnection, { apiUrl: body.apiUrl, apiToken: body.apiToken });
+    const result = await ctx.runAction(api.adminNode.testApiConnection, { apiUrl: body.apiUrl, apiToken: body.apiToken });
     return new Response(JSON.stringify(result), {
       status: 200,
       headers: { "Content-Type": "application/json" },
