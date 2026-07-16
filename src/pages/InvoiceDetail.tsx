@@ -19,29 +19,21 @@ import {
   Copy,
   CopyCheck,
   ArrowLeft,
-  AlertCircle,
   CheckCircle2,
-  Clock,
   Loader2,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
-import { useState } from "react";
 import { useBillings } from "@/hooks/use-billings";
 import { useAuth } from "@/lib/auth-context";
-
-const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
-  pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
-  pago: { label: "Pago", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400", icon: CheckCircle2 },
-  vencido: { label: "Vencido", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400", icon: AlertCircle },
-  cancelado: { label: "Cancelado", color: "text-gray-500 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400", icon: AlertCircle },
-};
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { statusConfig } from "@/lib/status-config";
 
 export default function InvoiceDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { billings, isLoading } = useBillings();
   const { customer } = useAuth();
-  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [copiedField, handleCopy] = useCopyToClipboard();
 
   const rawBilling = billings.find((b) => b.id === id);
 
@@ -74,23 +66,6 @@ export default function InvoiceDetail() {
 
   const status = statusConfig[billing.status] || statusConfig.pendente;
   const StatusIcon = status.icon;
-
-  const handleCopy = async (text: string, field: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
-    }
-  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">

@@ -16,51 +16,26 @@ import {
   Copy,
   CopyCheck,
   ChevronRight,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
   Loader2,
 } from "lucide-react";
-import { useNavigate } from "react-router";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { useBillings } from "@/hooks/use-billings";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
-
-const statusConfig = {
-  pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
-  pago: { label: "Pago", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400", icon: CheckCircle2 },
-  vencido: { label: "Vencido", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400", icon: AlertCircle },
-  cancelado: { label: "Cancelado", color: "text-gray-500 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400", icon: AlertCircle },
-};
 
 type FilterStatus = "all" | "pendente" | "pago" | "vencido";
 
 export default function Invoices() {
   const navigate = useNavigate();
   const { billings, isLoading } = useBillings();
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedId, handleCopy] = useCopyToClipboard();
   const [filter, setFilter] = useState<FilterStatus>("all");
 
   const filteredBillings = filter === "all"
     ? billings
     : billings.filter((b: BillingSummary) => b.status === filter);
-
-  const handleCopy = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    }
-  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">

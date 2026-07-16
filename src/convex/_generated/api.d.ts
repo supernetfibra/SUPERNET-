@@ -15,6 +15,7 @@ import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as http from "../http.js";
 import type * as mikweb from "../mikweb.js";
 import type * as sessions from "../sessions.js";
+import type * as shared from "../shared.js";
 import type * as users from "../users.js";
 
 import type {
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   mikweb: typeof mikweb;
   sessions: typeof sessions;
+  shared: typeof shared;
   users: typeof users;
 }>;
 

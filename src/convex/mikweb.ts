@@ -342,20 +342,15 @@ export const getCustomerContacts = action({
       });
     }
 
-    const cellFields = [
-      { key: "cell_phone_number_1", label: "Celular 1" },
-      { key: "cell_phone_number_2", label: "Celular 2" },
-      { key: "cell_phone_number_3", label: "Celular 3" },
-      { key: "cell_phone_number_4", label: "Celular 4" },
-    ];
+    const cellFields = ["cell_phone_number_1", "cell_phone_number_2", "cell_phone_number_3", "cell_phone_number_4"] as const;
 
-    for (const field of cellFields) {
-      const phone = (customer as any)[field.key];
-      if (phone) {
+    for (const key of cellFields) {
+      const phone = customer[key];
+      if (typeof phone === "string" && phone) {
         contacts.push({
-          id: `${customer.id}-${field.key}`,
+          id: `${customer.id}-${key}`,
           phone: phone,
-          label: field.label,
+          label: key === "cell_phone_number_1" ? "Celular 1" : key === "cell_phone_number_2" ? "Celular 2" : key === "cell_phone_number_3" ? "Celular 3" : "Celular 4",
         });
       }
     }

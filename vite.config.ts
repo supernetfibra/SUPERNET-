@@ -6,8 +6,6 @@ import { defineConfig } from "vite";
 
 // https://vite.dev/config/
 export default defineConfig({
-  // NOTE: vlyPlugin() temporarily removed to isolate a removeChild crash.
-  // If this fixes /admin, the plugin's transformIndexHtml runtime is the cause.
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

@@ -20,54 +20,26 @@ import {
   Copy,
   CopyCheck,
   Calendar,
-  AlertCircle,
-  CheckCircle2,
-  Clock,
   ChevronRight,
-  Wifi,
   TrendingDown,
-  TrendingUp,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { useState } from "react";
 import { useBillings } from "@/hooks/use-billings";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
-
-const statusConfig = {
-  pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
-  pago: { label: "Pago", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400", icon: CheckCircle2 },
-  vencido: { label: "Vencido", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400", icon: AlertCircle },
-  cancelado: { label: "Cancelado", color: "text-gray-500 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400", icon: AlertCircle },
-};
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { customer } = useAuth();
   const { billings, isLoading } = useBillings();
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedId, handleCopy] = useCopyToClipboard();
 
   const pendingBillings = billings.filter((b: BillingSummary) => b.status === "pendente");
   const pendingCount = pendingBillings.length;
   const pendingTotal = pendingBillings.reduce((sum: number, b: BillingSummary) => sum + b.valor, 0);
   const nextDueDate = pendingBillings[0]?.vencimento;
-
-  const handleCopy = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    }
-  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">

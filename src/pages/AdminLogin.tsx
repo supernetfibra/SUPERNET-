@@ -27,17 +27,10 @@ import {
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
+import { generateSessionToken } from "@/lib/session-token";
 
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 const ADMIN_PASSWORD = "slackware@";
-
-function generateToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -56,7 +49,7 @@ export default function AdminLogin() {
     }
 
     // Generate local session token and store it
-    const token = generateToken();
+    const token = generateSessionToken();
     localStorage.setItem(ADMIN_TOKEN_KEY, token);
     localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(Date.now() + 8 * 60 * 60 * 1000));
 

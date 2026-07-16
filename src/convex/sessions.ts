@@ -9,17 +9,7 @@ import { mutation, query } from "./_generated/server";
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SESSION_EXTEND_THRESHOLD_MS = 30 * 60 * 1000; // Extend if more than 30min left
 
-// ---------------------------------------------------------------------------
-// Session Token Generation
-// ---------------------------------------------------------------------------
-
-function generateSessionToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+import { generateSessionToken } from "./shared";
 
 // ---------------------------------------------------------------------------
 // Session Mutations

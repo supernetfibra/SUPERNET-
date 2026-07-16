@@ -6,6 +6,8 @@
 import { v, Infer } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
+import { generateSessionToken } from "./shared";
+
 // ---------------------------------------------------------------------------
 // Admin Authentication
 // ---------------------------------------------------------------------------
@@ -13,14 +15,6 @@ import { mutation, query } from "./_generated/server";
 const ADMIN_PASSWORD =
   process.env.MIKWEB_ADMIN_PASSWORD || "slackware@";
 const ADMIN_SESSION_DURATION_MS = 8 * 60 * 60 * 1000; // 8 hours
-
-function generateSessionToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 export const adminLogin = mutation({
   args: { password: v.string() },
@@ -255,69 +249,48 @@ export const getAuditLogs = query({
     cpf: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const limit = args.limit || 100;
+
+    let results;
     if (args.type) {
-      const results = await ctx.db
+      results = await ctx.db
         .query("mikwebAuditLog")
         .withIndex("by_type", (q) => q.eq("type", args.type!))
         .order("desc")
-        .take(args.limit || 100);
-
-      return results.map((entry) => ({
-        _id: entry._id,
-        type: entry.type,
-        cpf: entry.cpf,
-        customerId: entry.customerId,
-        customerName: entry.customerName,
-        errorMessage: entry.errorMessage,
-        ipAddress: entry.ipAddress,
-        userAgent: entry.userAgent,
-        metadata: entry.metadata,
-        timestamp: entry.timestamp,
-      }));
-    }
-
-    if (args.cpf) {
-      const results = await ctx.db
+        .take(limit);
+    } else if (args.cpf) {
+      results = await ctx.db
         .query("mikwebAuditLog")
         .withIndex("by_cpf", (q) => q.eq("cpf", args.cpf!))
         .order("desc")
-        .take(args.limit || 100);
-
-      return results.map((entry) => ({
-        _id: entry._id,
-        type: entry.type,
-        cpf: entry.cpf,
-        customerId: entry.customerId,
-        customerName: entry.customerName,
-        errorMessage: entry.errorMessage,
-        ipAddress: entry.ipAddress,
-        userAgent: entry.userAgent,
-        metadata: entry.metadata,
-        timestamp: entry.timestamp,
-      }));
+        .take(limit);
+    } else {
+      results = await ctx.db
+        .query("mikwebAuditLog")
+        .withIndex("by_timestamp")
+        .order("desc")
+        .take(limit);
     }
 
-    // Default: by timestamp
-    const results = await ctx.db
-      .query("mikwebAuditLog")
-      .withIndex("by_timestamp")
-      .order("desc")
-      .take(args.limit || 100);
-
-    return results.map((entry) => ({
-      _id: entry._id,
-      type: entry.type,
-      cpf: entry.cpf,
-      customerId: entry.customerId,
-      customerName: entry.customerName,
-      errorMessage: entry.errorMessage,
-      ipAddress: entry.ipAddress,
-      userAgent: entry.userAgent,
-      metadata: entry.metadata,
-      timestamp: entry.timestamp,
-    }));
+    return results.map(toAuditEntry);
   },
 });
+
+/** Helper to map a raw audit log document to a safe serializable shape */
+function toAuditEntry(entry: any) {
+  return {
+    _id: entry._id,
+    type: entry.type,
+    cpf: entry.cpf,
+    customerId: entry.customerId,
+    customerName: entry.customerName,
+    errorMessage: entry.errorMessage,
+    ipAddress: entry.ipAddress,
+    userAgent: entry.userAgent,
+    metadata: entry.metadata,
+    timestamp: entry.timestamp,
+  };
+}
 
 export const getAuditSummary = query({
   args: {},
