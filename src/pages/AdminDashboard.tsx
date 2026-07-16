@@ -149,7 +149,7 @@ export default function AdminDashboard() {
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
 
   // Config form
-  const [apiUrl, setApiUrl] = useState("");
+  const [apiUrl, setApiUrl] = useState("https://api.mikweb.com.br/v1/admin/");
   const [apiToken, setApiToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [configSaved, setConfigSaved] = useState(false);
@@ -720,7 +720,7 @@ export default function AdminDashboard() {
                 <Input
                   id="api-url"
                   type="url"
-                  placeholder="https://seu-mikweb.com.br/api (opicional se configurado via env)"
+                  placeholder="https://api.mikweb.com.br/v1/admin/ (opcional se configurado via env)"
                   value={apiUrl}
                   onChange={(e) => setApiUrl(e.target.value)}
                   className="h-9 text-xs font-mono"
