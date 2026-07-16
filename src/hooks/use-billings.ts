@@ -140,7 +140,14 @@ export function useBillings(): UseBillingsResult {
 
         if (!cancelled) {
           if (Array.isArray(data.billings)) {
-            setBillings(data.billings.map(mapBilling));
+            // Sort raw billings by due_day descending (most recent first)
+            // due_day format from API: yyyy-MM-dd
+            const sorted = (data.billings as RawBilling[]).sort((a, b) => {
+              const dateA = a.due_day || "";
+              const dateB = b.due_day || "";
+              return dateB.localeCompare(dateA);
+            });
+            setBillings(sorted.map(mapBilling));
           } else {
             setBillings([]);
           }
