@@ -263,6 +263,49 @@ const meHandler = httpAction(async (ctx, request) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/mikweb/customer — Get customer details
+// ---------------------------------------------------------------------------
+const customerHandler = httpAction(async (ctx, request) => {
+  try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(JSON.stringify({ error: "Sessão não encontrada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const session = await ctx.runQuery(api.sessions.getSession, { sessionToken });
+    if (!session) {
+      return new Response(JSON.stringify({ error: "Sessão expirada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await ctx.runMutation(api.sessions.touchSession, { sessionToken });
+
+    const customer = await ctx.runAction(api.mikweb.getCustomerById, {
+      customerId: session.customerId,
+    });
+
+    return new Response(JSON.stringify({ customer }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("[CUSTOMER_ERROR]", err);
+    return new Response(JSON.stringify({ error: "Erro ao buscar dados do cliente." }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/mikweb/select-contact
 // ---------------------------------------------------------------------------
 const selectContactHandler = httpAction(async (ctx, request) => {

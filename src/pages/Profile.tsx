@@ -1,8 +1,9 @@
 /**
- * Profile Page — Shows customer information, contacts, and account details.
+ * Profile Page — Shows real customer information from the MikWeb API.
  * Uses CSS animations instead of framer-motion.
  */
 
+import { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -13,6 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import {
   User,
   Mail,
@@ -20,51 +22,99 @@ import {
   MapPin,
   Wifi,
   Shield,
-  Calendar,
   LogOut,
   Copy,
   CopyCheck,
+  AlertCircle,
+  Calendar,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { formatCpf } from "@/lib/cpf";
-import { useState } from "react";
+import { formatCpf, maskCpf } from "@/lib/cpf";
+import { formatPhone } from "@/lib/phone";
 
-// Mock data — replace with Convex API calls
-const MOCK_CUSTOMER = {
-  name: "João Silva",
-  cpf: "12345678901",
-  email: "joao.silva@email.com",
-  endereco: "Rua das Flores, 123",
-  bairro: "Centro",
-  cidade: "São Paulo",
-  estado: "SP",
-  cep: "01001-001",
-  telefone: "(11) 91234-5678",
-  contatos: [
-    { id: "1", nome: "João Silva", telefone: "(11) 91234-5678", tipo: "Principal" },
-    { id: "2", nome: "Maria Silva", telefone: "(11) 98765-4321", tipo: "Recado" },
-  ],
-  planos: ["Internet 300MB Fibra"],
-  status: "Ativo",
-  clienteDesde: "Jan 2024",
-};
+interface CustomerData {
+  id: number;
+  full_name: string;
+  login: string;
+  email?: string;
+  cpf_cnpj?: string;
+  rg?: string;
+  person_type?: string;
+  phone_number?: string;
+  cell_phone_number_1?: string;
+  cell_phone_number_2?: string;
+  cell_phone_number_3?: string;
+  cell_phone_number_4?: string;
+  status: string;
+  due_day?: number;
+  zip_code?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  server?: { id: number; name: string };
+  plan?: { id: number; name: string; value: string };
+  financial_status?: string;
+}
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, customer: sessionCustomer } = useAuth();
+  const [customer, setCustomer] = useState<CustomerData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const customer = MOCK_CUSTOMER;
+  // Fetch real customer data from the API
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchCustomer = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch("/api/mikweb/customer", {
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Erro ao carregar dados do cliente.");
+        }
+
+        const data = await response.json();
+        if (!cancelled) {
+          setCustomer(data.customer);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Erro ao conectar com o servidor."
+          );
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    fetchCustomer();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleLogout = async () => {
     await logout();
-    navigate("/login");
+    navigate("/");
   };
 
   const handleCopyCpf = async () => {
+    if (!customer?.cpf_cnpj) return;
     try {
-      await navigator.clipboard.writeText(formatCpf(customer.cpf));
+      await navigator.clipboard.writeText(formatCpf(customer.cpf_cnpj));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -72,13 +122,90 @@ export default function Profile() {
     }
   };
 
+  // Collect all phone numbers as contacts
+  const phoneContacts: Array<{ phone: string; label: string }> = [];
+  if (customer?.phone_number) {
+    phoneContacts.push({ phone: customer.phone_number, label: "Telefone" });
+  }
+  if (customer?.cell_phone_number_1) {
+    phoneContacts.push({ phone: customer.cell_phone_number_1, label: "Celular 1" });
+  }
+  if (customer?.cell_phone_number_2) {
+    phoneContacts.push({ phone: customer.cell_phone_number_2, label: "Celular 2" });
+  }
+  if (customer?.cell_phone_number_3) {
+    phoneContacts.push({ phone: customer.cell_phone_number_3, label: "Celular 3" });
+  }
+  if (customer?.cell_phone_number_4) {
+    phoneContacts.push({ phone: customer.cell_phone_number_4, label: "Celular 4" });
+  }
+
+  // Build full address
+  const addressParts = [
+    customer?.street,
+    customer?.number,
+    customer?.complement,
+  ].filter(Boolean);
+  const addressLine = addressParts.length > 0 ? addressParts.join(", ") : null;
+  const neighborhoodLine = [
+    customer?.neighborhood,
+    customer?.city && customer?.state
+      ? `${customer.city}/${customer.state}`
+      : customer?.city || customer?.state,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh]">
+        <div className="flex flex-col items-center gap-3">
+          <Spinner className="h-6 w-6 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Carregando perfil...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error || !customer) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh]">
+        <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+          <AlertCircle className="h-8 w-8 text-destructive" />
+          <p className="text-sm font-medium text-foreground">
+            Erro ao carregar perfil
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {error || "Cliente não encontrado."}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => window.location.reload()}
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const planName = customer.plan?.name || "—";
+  const isActive = customer.status?.toLowerCase() === "ativo";
+  const statusLabel =
+    customer.financial_status || customer.status || "Ativo";
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-medium tracking-tight text-foreground">Perfil</h1>
+        <h1 className="text-xl font-medium tracking-tight text-foreground">
+          Perfil
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Seus dados cadastrados na MikWeb.
+          Seus dados cadastrados.
         </p>
       </div>
 
@@ -90,46 +217,62 @@ export default function Profile() {
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center">
                   <span className="text-lg font-medium text-foreground">
-                    {customer.name.charAt(0).toUpperCase()}
+                    {customer.full_name?.charAt(0).toUpperCase() || "?"}
                   </span>
                 </div>
                 <div>
-                  <CardTitle className="text-base font-medium">{customer.name}</CardTitle>
+                  <CardTitle className="text-base font-medium">
+                    {customer.full_name || "Cliente"}
+                  </CardTitle>
                   <CardDescription className="text-xs text-muted-foreground">
-                    Cliente desde {customer.clienteDesde}
+                    {customer.login && `Login: ${customer.login}`}
                   </CardDescription>
                 </div>
                 <Badge
                   variant="outline"
-                  className="ml-auto text-[10px] font-medium px-2 py-0.5 border-none text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400"
+                  className={`ml-auto text-[10px] font-medium px-2 py-0.5 border-none ${
+                    isActive
+                      ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400"
+                      : "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400"
+                  }`}
                 >
                   <Wifi className="h-3 w-3 mr-1" />
-                  {customer.status}
+                  {statusLabel}
                 </Badge>
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* CPF */}
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <User className="h-3.5 w-3.5" />
-                  <span>CPF</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground">{formatCpf(customer.cpf)}</span>
-                  <button
-                    onClick={handleCopyCpf}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {copied ? (
-                      <CopyCheck className="h-3.5 w-3.5" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-              </div>
-              <Separator />
+              {customer.cpf_cnpj && (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <User className="h-3.5 w-3.5" />
+                      <span>
+                        {customer.person_type === "juridica"
+                          ? "CNPJ"
+                          : "CPF"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-foreground">
+                        {formatCpf(customer.cpf_cnpj)}
+                      </span>
+                      <button
+                        onClick={handleCopyCpf}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {copied ? (
+                          <CopyCheck className="h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <Separator />
+                </>
+              )}
 
               {/* Email */}
               <div className="flex items-center justify-between text-sm">
@@ -137,7 +280,9 @@ export default function Profile() {
                   <Mail className="h-3.5 w-3.5" />
                   <span>E-mail</span>
                 </div>
-                <span className="text-foreground">{customer.email || "—"}</span>
+                <span className="text-foreground">
+                  {customer.email || "—"}
+                </span>
               </div>
               <Separator />
 
@@ -147,7 +292,13 @@ export default function Profile() {
                   <Phone className="h-3.5 w-3.5" />
                   <span>Telefone</span>
                 </div>
-                <span className="text-foreground">{customer.telefone}</span>
+                <span className="text-foreground">
+                  {customer.phone_number
+                    ? formatPhone(customer.phone_number)
+                    : customer.cell_phone_number_1
+                    ? formatPhone(customer.cell_phone_number_1)
+                    : "—"}
+                </span>
               </div>
               <Separator />
 
@@ -158,9 +309,19 @@ export default function Profile() {
                   <span>Endereço</span>
                 </div>
                 <span className="text-foreground text-right max-w-[250px]">
-                  {customer.endereco}, {customer.bairro} — {customer.cidade}/{customer.estado}
-                  <br />
-                  <span className="text-xs text-muted-foreground">CEP: {customer.cep}</span>
+                  {addressLine || "—"}
+                  {addressLine && <br />}
+                  {neighborhoodLine && (
+                    <span>
+                      {neighborhoodLine}
+                      <br />
+                    </span>
+                  )}
+                  {customer.zip_code && (
+                    <span className="text-xs text-muted-foreground">
+                      CEP: {customer.zip_code}
+                    </span>
+                  )}
                 </span>
               </div>
               <Separator />
@@ -171,18 +332,29 @@ export default function Profile() {
                   <Wifi className="h-3.5 w-3.5" />
                   <span>Plano</span>
                 </div>
-                <div className="flex flex-wrap gap-1 justify-end">
-                  {customer.planos.map((plano) => (
-                    <Badge
-                      key={plano}
-                      variant="outline"
-                      className="text-[10px] font-medium border-border"
-                    >
-                      {plano}
-                    </Badge>
-                  ))}
-                </div>
+                <Badge
+                  variant="outline"
+                  className="text-[10px] font-medium border-border"
+                >
+                  {planName}
+                </Badge>
               </div>
+
+              {/* Vencimento */}
+              {customer.due_day && (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Calendar className="h-3.5 w-3.5" />
+                      <span>Vencimento</span>
+                    </div>
+                    <span className="text-foreground">
+                      Dia {customer.due_day}
+                    </span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -190,34 +362,32 @@ export default function Profile() {
         {/* Sidebar */}
         <div className="space-y-4 animate-[slideUp_0.3s_ease-out_0.1s_both]">
           {/* Contacts */}
-          <Card className="border-border shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Contatos</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {customer.contatos.map((contact) => (
-                <div key={contact.id} className="flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                    <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+          {phoneContacts.length > 0 && (
+            <Card className="border-border shadow-none">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium">
+                  Contatos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {phoneContacts.map((contact, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                      <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">
+                        {contact.label}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {formatPhone(contact.phone)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-foreground truncate">
-                      {contact.nome}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">{contact.telefone}</p>
-                  </div>
-                  {contact.tipo === "Principal" && (
-                    <Badge
-                      variant="outline"
-                      className="text-[9px] px-1.5 py-0 border-none bg-secondary text-muted-foreground ml-auto"
-                    >
-                      Principal
-                    </Badge>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Account Actions */}
           <Card className="border-border shadow-none">
@@ -225,17 +395,6 @@ export default function Profile() {
               <CardTitle className="text-sm font-medium">Conta</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start text-xs h-9"
-                onClick={() => {
-                  // Change password action
-                }}
-              >
-                <Shield className="h-3.5 w-3.5 mr-2" />
-                Alterar senha
-              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -252,3 +411,5 @@ export default function Profile() {
     </div>
   );
 }
+
+
