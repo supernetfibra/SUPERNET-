@@ -142,7 +142,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       console.warn(`[LOGIN_FAILED] CPF: ${cpf}, IP: ${clientIp}`);
       await logEvent(ctx, { type: "login_failure", cpf, customerId: String(customer.id), customerName: customer.full_name, ipAddress: clientIp, userAgent, errorMessage: "Senha incorreta" });
       return new Response(
-        JSON.stringify({ error: "Senha incorreta. Use seu telefone de cadastro como senha inicial." }),
+        JSON.stringify({ error: "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial." }),
         { status: 401, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -158,7 +158,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       customerId: String(customer.id),
       customerName: customer.full_name,
       contacts: sessionContacts,
-      selectedContactId: validationResult.contactId,
+      selectedContactId: undefined,
     });
 
     const responseHeaders = new Headers({ "Content-Type": "application/json" });

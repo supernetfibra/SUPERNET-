@@ -118,7 +118,7 @@ export default function Login() {
               <CardDescription className="text-sm text-muted-foreground">
                 {step === "cpf"
                   ? "Informe seu CPF para continuar."
-                  : `Use seu número de telefone cadastrado como senha inicial.`}
+                  : `Use os 4 últimos dígitos do seu CPF como senha inicial.`}
               </CardDescription>
             </CardHeader>
 
@@ -198,7 +198,7 @@ export default function Login() {
                         <Input
                           id="password"
                           type={showPassword ? "text" : "password"}
-                          placeholder="Telefone cadastrado"
+                          placeholder="Últimos 4 dígitos do CPF"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="h-10 text-sm pr-10"
@@ -220,7 +220,7 @@ export default function Login() {
                         </button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Sua senha inicial é o número de telefone que você cadastrou em seu provedor.
+                        Sua senha inicial são os 4 últimos dígitos do seu CPF.
                       </p>
                     </div>
 

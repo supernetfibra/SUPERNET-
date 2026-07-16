@@ -215,19 +215,15 @@ export const getCustomerById = action({
 });
 
 /**
- * Validate the initial password (phone number without formatting).
- * The MikWeb API stores phone numbers in fields:
- *   phone_number, cell_phone_number_1, cell_phone_number_2,
- *   cell_phone_number_3, cell_phone_number_4
- *
- * We compare the user's password (digits only) against each phone field.
+ * Validate the initial password (last 4 digits of CPF).
+ * The user's initial password is the last 4 digits of their CPF/CNPJ.
  */
 export const validateInitialPassword = action({
   args: {
     customerId: v.string(),
     password: v.string(),
   },
-  handler: async (ctx, args): Promise<{ valid: boolean; contactId?: string }> => {
+  handler: async (ctx, args): Promise<{ valid: boolean }> => {
     const normalizedPassword = args.password.replace(/\D/g, "");
 
     const customer = await apiGet<MikWebCustomer>(
@@ -235,23 +231,12 @@ export const validateInitialPassword = action({
       `/customers/${args.customerId}`
     );
 
-    // Check all phone fields for a match
-    const phoneFields = [
-      customer.phone_number,
-      customer.cell_phone_number_1,
-      customer.cell_phone_number_2,
-      customer.cell_phone_number_3,
-      customer.cell_phone_number_4,
-    ];
+    // Extract the last 4 digits of the customer's CPF/CNPJ
+    const cpfDigits = (customer.cpf_cnpj || "").replace(/\D/g, "");
+    const last4Cpf = cpfDigits.slice(-4);
 
-    const matchingPhone = phoneFields.find((phone) => {
-      if (!phone) return false;
-      const digits = phone.replace(/\D/g, "");
-      return digits === normalizedPassword;
-    });
-
-    if (matchingPhone) {
-      return { valid: true, contactId: matchingPhone };
+    if (last4Cpf && normalizedPassword === last4Cpf) {
+      return { valid: true };
     }
 
     return { valid: false };
