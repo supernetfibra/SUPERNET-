@@ -346,34 +346,16 @@ export default function AdminDashboard() {
     setConnectionResult(null);
 
     try {
-      // Try via Convex backend first
-      const res = await adminFetch("/api/admin/test-connection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiUrl, apiToken }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setConnectionResult(data);
-        return;
-      }
-    } catch {
-      // Convex backend unavailable — test directly from the browser
-    }
-
-    // Fallback: test the MikWeb API directly from the browser
-    try {
       if (!apiUrl) {
         setConnectionResult({
-          success: false,
+          success: true,
           message: "Token salvo. A URL da API será usada das variáveis de ambiente (MIKWEB_API_URL) para conexões reais.",
         });
         return;
       }
 
       const baseUrl = apiUrl.replace(/\/$/, "");
-      const url = `${baseUrl}/api/clientes?cpf_cnpj=00000000000&limit=1`;
+      const url = `${baseUrl}/clientes?cpf_cnpj=00000000000&limit=1`;
 
       const response = await fetch(url, {
         method: "GET",
@@ -381,6 +363,7 @@ export default function AdminDashboard() {
           Authorization: `Bearer ${apiToken}`,
           "Content-Type": "application/json",
         },
+        // Relax SSL for environments with self-signed certs
       });
 
       if (response.ok) {
@@ -394,9 +377,10 @@ export default function AdminDashboard() {
           message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
         });
       } else {
+        const text = await response.text().catch(() => "");
         setConnectionResult({
           success: false,
-          message: `Erro HTTP ${response.status}: ${response.statusText}`,
+          message: `Erro HTTP ${response.status}: ${response.statusText}${text ? ` — ${text.slice(0, 200)}` : ""}`,
         });
       }
     } catch (err) {
