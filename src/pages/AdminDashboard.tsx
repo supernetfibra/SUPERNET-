@@ -654,7 +654,7 @@ export default function AdminDashboard() {
                     <img
                       src={logoInput}
                       alt="Preview"
-                      className="h-10 w-10 object-contain rounded-sm"
+                      className="h-10 w-10 rounded-full object-cover"
                     />
                   ) : (
                     <div className="h-10 w-10 rounded-sm bg-secondary flex items-center justify-center">

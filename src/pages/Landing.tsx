@@ -20,7 +20,7 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             {logoUrl ? (
-              <img src={logoUrl} alt={providerName} className="h-5 w-auto" />
+              <img src={logoUrl} alt={providerName} className="h-5 w-5 rounded-full object-cover" />
             ) : (
               <Wifi className="h-5 w-5 text-foreground" />
             )}
@@ -44,7 +44,7 @@ export default function Landing() {
             <div className="animate-[slideUp_0.5s_ease-out]">
               <div className="flex justify-center mb-8">
                 {logoUrl ? (
-                  <img src={logoUrl} alt={providerName} className="h-16 w-16 object-contain" />
+                  <img src={logoUrl} alt={providerName} className="h-16 w-16 rounded-full object-cover" />
                 ) : (
                   <div className="h-16 w-16 rounded-full bg-foreground flex items-center justify-center">
                     <Wifi className="h-8 w-8 text-background" />

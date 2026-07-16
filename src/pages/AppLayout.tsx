@@ -66,7 +66,7 @@ export default function AppLayout() {
           {/* Logo */}
           <div className="h-14 flex items-center gap-2 px-5 border-b border-border">
             {logoUrl ? (
-              <img src={logoUrl} alt={providerName} className="h-5 w-auto" />
+              <img src={logoUrl} alt={providerName} className="h-5 w-5 rounded-full object-cover" />
             ) : (
               <Wifi className="h-5 w-5 text-foreground shrink-0" />
             )}
@@ -156,7 +156,7 @@ export default function AppLayout() {
           </button>
           <div className="flex items-center gap-2">
             {logoUrl ? (
-              <img src={logoUrl} alt={providerName} className="h-4 w-auto" />
+              <img src={logoUrl} alt={providerName} className="h-4 w-4 rounded-full object-cover" />
             ) : (
               <Wifi className="h-4 w-4 text-foreground" />
             )}
