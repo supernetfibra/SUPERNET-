@@ -82,8 +82,8 @@ export const testApiConnection = action({
 
     // Try the MikWeb API endpoints as documented
     const paths = [
+      { path: "/customers?per_page=1", label: "/customers?per_page=1" },
       { path: "/customers", label: "/customers" },
-      { path: "/customers?limit=1", label: "/customers?limit=1" },
     ];
 
     for (const { path, label } of paths) {

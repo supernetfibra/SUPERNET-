@@ -1,6 +1,9 @@
 /**
  * MikWeb API Integration Service
  *
+ * Base URL: https://api.mikweb.com.br/v1/admin/
+ * Auth: Bearer Token (Authorization: Bearer <token>)
+ *
  * This module provides Convex actions to interact with the MikWeb REST API.
  * API configuration can come from environment variables OR from the
  * mikwebConfig table in the database (set by the admin UI).
@@ -19,55 +22,89 @@ import { action, ActionCtx } from "./_generated/server";
 import { api } from "./_generated/api";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — based on official MikWeb API response format
 // ---------------------------------------------------------------------------
 
 export interface MikWebCustomer {
-  id: string;
-  nome: string;
-  cpf_cnpj: string;
+  id: number;
+  full_name: string;
+  login: string;
+  password?: string;
   email?: string;
-  endereco?: string;
-  bairro?: string;
-  cidade?: string;
-  estado?: string;
-  cep?: string;
-  contato?: string;
-  contatos?: MikWebContact[];
-  telefone?: string;
-  celular?: string;
-  status?: string;
-  planos?: string[];
-}
-
-export interface MikWebContact {
-  id: string;
-  nome?: string;
-  telefone: string;
-  celular?: string;
-  email?: string;
-  tipo?: string;
-  principal?: boolean;
+  cpf_cnpj?: string;
+  rg?: string;
+  person_type?: string;
+  phone_number?: string;
+  cell_phone_number_1?: string;
+  cell_phone_number_2?: string;
+  cell_phone_number_3?: string;
+  cell_phone_number_4?: string;
+  status: string;
+  due_day?: number;
+  zip_code?: string;
+  street?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  server_id?: number;
+  plan_id?: number;
+  customer_group_id?: number;
+  financial_status?: string;
+  msg_payment_mk?: string;
+  authentication_type?: string;
+  ip?: string;
+  ip_pppoe?: string;
+  mac?: string;
+  observation?: string;
+  server?: { id: number; name: string; hash_server: string };
+  plan?: { id: number; name: string; value: string };
+  customer_group?: { id: number; name: string };
 }
 
 export interface MikWebBilling {
-  id: string;
-  cliente_id: string;
-  competencia: string;
-  vencimento: string;
-  valor: number;
-  status: "pendente" | "pago" | "vencido" | "cancelado";
-  linha_digitavel?: string;
-  codigo_barras?: string;
-  pix_copiaecola?: string;
-  url_boleto?: string;
-  multa?: number;
-  juros?: number;
-  desconto?: number;
-  data_pagamento?: string;
-  valor_pago?: number;
-  nosso_numero?: string;
-  observacoes?: string;
+  id: number;
+  customer_id: number;
+  value: number;
+  value_paid?: number | null;
+  date_payment?: string | null;
+  situation_id: number;
+  situation_name: string;
+  reference: string;
+  type_billing: string;
+  due_day: string;
+  observation?: string | null;
+  form_payment: string;
+  digitable_line?: string;
+  integration_link?: string;
+  pix_copy_paste_base64?: string;
+  pix_qr_code_image_base64?: string;
+  lock_in?: string | null;
+  customer?: { id: number; full_name: string };
+  situation?: { id: number; name: string };
+  payment_card_id?: number;
+  parcel_number?: number;
+  number_billet?: number;
+  our_number?: number;
+  generated_shipping?: boolean;
+  date_shipping?: string;
+  type_shipping?: string;
+  nf_issued?: boolean;
+  nf_issue_date?: string;
+}
+
+export interface MikWebApiResponse<T> {
+  [key: string]: unknown;
+  meta?: {
+    pages: {
+      current_page: number;
+      next_page: number | null;
+      prev_page: number | null;
+      total_pages: number;
+      total_count: number;
+    };
+  };
 }
 
 export interface MikWebApiError {
@@ -126,43 +163,35 @@ async function apiGet<T>(ctx: ActionCtx, path: string): Promise<T> {
     );
   }
 
-  return response.json();
-}
+  const data: Record<string, unknown> = await response.json();
 
-async function apiPost<T>(ctx: ActionCtx, path: string, body?: unknown): Promise<T> {
-  const { baseUrl, token } = await getApiConfig(ctx);
-  const url = `${baseUrl.replace(/\/$/, "")}${path}`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(
-      `MikWeb API error (${response.status}): ${errorBody || response.statusText}`
-    );
+  // The API wraps results in { "customer": {...} } or { "customers": [...], "meta": {...} }
+  // or { "billing": {...} } or { "billings": [...], "meta": {...} }
+  // Extract the first key's value as the result (skip "meta")
+  const keys = Object.keys(data).filter((k) => k !== "meta");
+  if (keys.length === 1) {
+    return data[keys[0]] as T;
   }
 
-  return response.json();
+  return data as T;
 }
 
 // ---------------------------------------------------------------------------
 // Customer Services
 // ---------------------------------------------------------------------------
 
+/**
+ * Find customers by CPF/CNPJ.
+ * API endpoint: GET /customers?search=<cpf>
+ * Response: { "customers": [...], "meta": {...} }
+ */
 export const findCustomerByCPF = action({
   args: { cpf: v.string() },
   handler: async (ctx, args): Promise<MikWebCustomer[]> => {
     const cpf = args.cpf.replace(/\D/g, "");
     const customers = await apiGet<MikWebCustomer[]>(
       ctx,
-      `/customers?cpf_cnpj=${cpf}`
+      `/customers?search=${cpf}`
     );
 
     if (!customers || customers.length === 0) {
@@ -173,47 +202,56 @@ export const findCustomerByCPF = action({
   },
 });
 
-export const getCustomerContacts = action({
-  args: { customerId: v.string() },
-  handler: async (ctx, args): Promise<MikWebContact[]> => {
-    const contacts = await apiGet<MikWebContact[]>(
-      ctx,
-      `/customers/${args.customerId}/contacts`
-    );
-    return contacts || [];
+/**
+ * Get a single customer by ID.
+ * API endpoint: GET /customers/<ID>
+ * Response: { "customer": {...} }
+ */
+export const getCustomerById = action({
+  args: { customerId: v.union(v.string(), v.number()) },
+  handler: async (ctx, args): Promise<MikWebCustomer> => {
+    return apiGet<MikWebCustomer>(ctx, `/customers/${args.customerId}`);
   },
 });
 
+/**
+ * Validate the initial password (phone number without formatting).
+ * The MikWeb API stores phone numbers in fields:
+ *   phone_number, cell_phone_number_1, cell_phone_number_2,
+ *   cell_phone_number_3, cell_phone_number_4
+ *
+ * We compare the user's password (digits only) against each phone field.
+ */
 export const validateInitialPassword = action({
   args: {
-    customerId: v.string(),
+    customerId: v.union(v.string(), v.number()),
     password: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean; contactId?: string }> => {
     const normalizedPassword = args.password.replace(/\D/g, "");
 
-    const contacts = await apiGet<MikWebContact[]>(
-      ctx,
-      `/customers/${args.customerId}/contacts`
-    );
-
-    const matchingContact = contacts?.find((contact) => {
-      const contactPhone = (contact.telefone || contact.celular || "").replace(/\D/g, "");
-      return contactPhone === normalizedPassword;
-    });
-
-    if (matchingContact) {
-      return { valid: true, contactId: matchingContact.id };
-    }
-
     const customer = await apiGet<MikWebCustomer>(
       ctx,
       `/customers/${args.customerId}`
     );
-    const customerPhone = (customer.telefone || customer.celular || "").replace(/\D/g, "");
 
-    if (customerPhone === normalizedPassword) {
-      return { valid: true, contactId: undefined };
+    // Check all phone fields for a match
+    const phoneFields = [
+      customer.phone_number,
+      customer.cell_phone_number_1,
+      customer.cell_phone_number_2,
+      customer.cell_phone_number_3,
+      customer.cell_phone_number_4,
+    ];
+
+    const matchingPhone = phoneFields.find((phone) => {
+      if (!phone) return false;
+      const digits = phone.replace(/\D/g, "");
+      return digits === normalizedPassword;
+    });
+
+    if (matchingPhone) {
+      return { valid: true, contactId: matchingPhone };
     }
 
     return { valid: false };
@@ -224,43 +262,104 @@ export const validateInitialPassword = action({
 // Billing Services
 // ---------------------------------------------------------------------------
 
+/**
+ * List billings by customer ID.
+ * API endpoint: GET /billings?customer_id=<ID>
+ * Response: { "billings": [...], "meta": {...} }
+ */
 export const listBillingsByCustomerId = action({
-  args: { customerId: v.string() },
+  args: { customerId: v.union(v.string(), v.number()) },
   handler: async (ctx, args): Promise<MikWebBilling[]> => {
     const billings = await apiGet<MikWebBilling[]>(
       ctx,
-      `/customers/${args.customerId}/billings`
+      `/billings?customer_id=${args.customerId}`
     );
     return billings || [];
   },
 });
 
+/**
+ * Get a single billing by ID.
+ * API endpoint: GET /billings/<ID>
+ * Response: { "billing": {...} }
+ */
 export const getBillingById = action({
-  args: { billingId: v.string() },
+  args: { billingId: v.union(v.string(), v.number()) },
   handler: async (ctx, args): Promise<MikWebBilling> => {
     return apiGet<MikWebBilling>(ctx, `/billings/${args.billingId}`);
   },
 });
 
+/**
+ * Get the PDF download URL for a billing.
+ * API endpoint: GET /billings/<ID>/download?valid=true
+ * Returns a PDF file. We return the download URL instead.
+ */
 export const downloadBillingPdf = action({
-  args: { billingId: v.string() },
+  args: { billingId: v.union(v.string(), v.number()) },
   handler: async (ctx, args): Promise<{ url: string }> => {
-    const billing = await apiGet<MikWebBilling>(
-      ctx,
-      `/billings/${args.billingId}`
-    );
+    const { baseUrl, token } = await getApiConfig(ctx);
+    const url = `${baseUrl.replace(/\/$/, "")}/billings/${args.billingId}/download?valid=true`;
 
-    if (!billing.url_boleto) {
-      throw new Error("Boleto não disponível para esta cobrança.");
+    // Verify the download endpoint is accessible
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Boleto não disponível (HTTP ${response.status}). Verifique se a cobrança possui forma de emissão com boleto registrado.`
+      );
     }
 
-    return { url: billing.url_boleto };
+    return { url };
   },
 });
 
-export const getCustomerById = action({
-  args: { customerId: v.string() },
-  handler: async (ctx, args): Promise<MikWebCustomer> => {
-    return apiGet<MikWebCustomer>(ctx, `/customers/${args.customerId}`);
+/**
+ * Get previous phone numbers/contacts from a customer.
+ * The MikWeb API doesn't have a separate contacts endpoint.
+ * We extract all phone fields from the customer record.
+ */
+export const getCustomerContacts = action({
+  args: { customerId: v.union(v.string(), v.number()) },
+  handler: async (ctx, args): Promise<Array<{ id: string; phone: string; label?: string }>> => {
+    const customer = await apiGet<MikWebCustomer>(
+      ctx,
+      `/customers/${args.customerId}`
+    );
+
+    const contacts: Array<{ id: string; phone: string; label?: string }> = [];
+
+    if (customer.phone_number) {
+      contacts.push({
+        id: `${customer.id}-phone`,
+        phone: customer.phone_number,
+        label: "Telefone",
+      });
+    }
+
+    const cellFields = [
+      { key: "cell_phone_number_1", label: "Celular 1" },
+      { key: "cell_phone_number_2", label: "Celular 2" },
+      { key: "cell_phone_number_3", label: "Celular 3" },
+      { key: "cell_phone_number_4", label: "Celular 4" },
+    ];
+
+    for (const field of cellFields) {
+      const phone = (customer as any)[field.key];
+      if (phone) {
+        contacts.push({
+          id: `${customer.id}-${field.key}`,
+          phone: phone,
+          label: field.label,
+        });
+      }
+    }
+
+    return contacts;
   },
 });

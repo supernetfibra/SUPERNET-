@@ -378,7 +378,7 @@ export default function AdminDashboard() {
 
       // Fallback: test directly from browser (pode falhar por CORS/SSL)
       const baseUrl = apiUrl.replace(/\/$/, "");
-      const testPaths = ["/customers", "/customers?limit=1"];
+      const testPaths = ["/customers?per_page=1", "/customers"];
 
       let testedUrls: string[] = [];
 

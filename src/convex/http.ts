@@ -115,7 +115,7 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     const customer = customers[0];
 
-    let contacts: Array<{ id: string; nome?: string; telefone?: string; celular?: string; email?: string; tipo?: string; principal?: boolean }> = [];
+    let contacts: Array<{ id: string; phone: string; label?: string }> = [];
     try {
       contacts = await ctx.runAction(api.mikweb.getCustomerContacts, { customerId: customer.id });
     } catch (err) {
@@ -131,7 +131,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       });
     } catch (err) {
       console.error(`[LOGIN_ERROR] validatePassword: ${err}`);
-      await logEvent(ctx, { type: "login_failure", cpf, customerId: customer.id, customerName: customer.nome, ipAddress: clientIp, userAgent, errorMessage: "Erro ao validar senha na API" });
+      await logEvent(ctx, { type: "login_failure", cpf, customerId: String(customer.id), customerName: customer.full_name, ipAddress: clientIp, userAgent, errorMessage: "Erro ao validar senha na API" });
       return new Response(
         JSON.stringify({ error: "Erro ao validar credenciais. Tente novamente." }),
         { status: 500, headers: { "Content-Type": "application/json" } }
@@ -140,7 +140,7 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     if (!validationResult.valid) {
       console.warn(`[LOGIN_FAILED] CPF: ${cpf}, IP: ${clientIp}`);
-      await logEvent(ctx, { type: "login_failure", cpf, customerId: customer.id, customerName: customer.nome, ipAddress: clientIp, userAgent, errorMessage: "Senha incorreta" });
+      await logEvent(ctx, { type: "login_failure", cpf, customerId: String(customer.id), customerName: customer.full_name, ipAddress: clientIp, userAgent, errorMessage: "Senha incorreta" });
       return new Response(
         JSON.stringify({ error: "Senha incorreta. Use seu telefone de cadastro como senha inicial." }),
         { status: 401, headers: { "Content-Type": "application/json" } }
@@ -149,14 +149,14 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     const sessionContacts = contacts.map((c) => ({
       id: c.id,
-      phone: c.telefone || c.celular || "",
-      label: c.nome || c.tipo || undefined,
+      phone: c.phone,
+      label: c.label,
     }));
 
     const sessionResult = await ctx.runMutation(api.sessions.createSession, {
       cpf,
-      customerId: customer.id,
-      customerName: customer.nome,
+      customerId: String(customer.id),
+      customerName: customer.full_name,
       contacts: sessionContacts,
       selectedContactId: validationResult.contactId,
     });
@@ -164,13 +164,13 @@ const loginHandler = httpAction(async (ctx, request) => {
     const responseHeaders = new Headers({ "Content-Type": "application/json" });
     responseHeaders.append("Set-Cookie", `mikweb_session=${sessionResult.sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${24 * 60 * 60}`);
 
-    console.log(`[LOGIN_SUCCESS] CPF: ${cpf}, Customer: ${customer.nome}, Duration: ${Date.now() - startTime}ms`);
+    console.log(`[LOGIN_SUCCESS] CPF: ${cpf}, Customer: ${customer.full_name}, Duration: ${Date.now() - startTime}ms`);
 
     await logEvent(ctx, {
       type: "login_success",
       cpf,
-      customerId: customer.id,
-      customerName: customer.nome,
+      customerId: String(customer.id),
+      customerName: customer.full_name,
       ipAddress: clientIp,
       userAgent,
       metadata: { duration: Date.now() - startTime },
@@ -178,12 +178,12 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     return new Response(JSON.stringify({
       success: true,
-      customer: { id: customer.id, name: customer.nome, email: customer.email },
+      customer: { id: String(customer.id), name: customer.full_name, email: customer.email },
       hasMultipleContacts: contacts.length > 1,
       contacts: contacts.map((c) => ({
         id: c.id,
-        label: c.nome || c.tipo || "Contato",
-        phoneMasked: maskPhone(c.telefone || c.celular || ""),
+        label: c.label || "Contato",
+        phoneMasked: maskPhone(c.phone),
       })),
       sessionToken: sessionResult.sessionToken,
       expiresAt: sessionResult.expiresAt,
