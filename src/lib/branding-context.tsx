@@ -1,17 +1,45 @@
 /**
- * Branding Context — Provides the provider name and logo URL
- * to all pages in the app. Loaded from localStorage first (instant),
+ * Branding Context — Provides the provider name, logo URL,
+ * and accent color (extracted from the logo) to all pages.
+ * When the accent color changes, it's applied as the --primary CSS variable
+ * so all primary buttons and accents use the logo's dominant color.
+ *
+ * Loaded from localStorage first (instant),
  * then attempts to sync from the server.
  */
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { extractDominantColor } from "./extract-dominant-color";
 
 interface BrandingConfig {
   providerName: string;
   logoUrl: string;
+  accentColor: string;
 }
 
 const BRANDING_STORAGE_KEY = "mikweb_branding";
+const DEFAULT_ACCENT = "#3b82f6"; // default blue
+
+/**
+ * Apply the accent color as the --primary CSS variable on the document root.
+ * Also sets --primary-foreground for text contrast (white on dark, near-black on light).
+ */
+function applyAccentColor(hex: string) {
+  const root = document.documentElement;
+  root.style.setProperty("--primary", hex);
+
+  // Determine if color is light or dark to pick contrasting text
+  const r = Number.parseInt(hex.slice(1, 3), 16);
+  const g = Number.parseInt(hex.slice(3, 5), 16);
+  const b = Number.parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const foreground = luminance > 0.55 ? "oklch(0.13 0 0)" : "oklch(0.98 0 0)";
+
+  root.style.setProperty("--primary-foreground", foreground);
+
+  // Also tint the ring color for focus indicators
+  root.style.setProperty("--ring", hex + "80"); // 50% alpha
+}
 
 function loadFromStorage(): BrandingConfig | null {
   try {
@@ -22,7 +50,11 @@ function loadFromStorage(): BrandingConfig | null {
   }
 }
 
-const defaults: BrandingConfig = { providerName: "Seu Provedor", logoUrl: "" };
+const defaults: BrandingConfig = {
+  providerName: "Seu Provedor",
+  logoUrl: "",
+  accentColor: DEFAULT_ACCENT,
+};
 
 const BrandingContext = createContext<BrandingConfig>(defaults);
 
@@ -31,18 +63,51 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   const stored = loadFromStorage();
   const [branding, setBranding] = useState<BrandingConfig>(stored || defaults);
 
+  // Apply accent color on mount and when it changes
   useEffect(() => {
-    // Try to sync from server in the background
+    if (branding.accentColor) {
+      applyAccentColor(branding.accentColor);
+    }
+  }, [branding.accentColor]);
+
+  // Extract dominant color from logo URL
+  const updateAccentFromLogo = useCallback(async (logoUrl: string) => {
+    if (!logoUrl) return;
+    const color = await extractDominantColor(logoUrl);
+    if (color) {
+      setBranding((prev) => ({ ...prev, accentColor: color }));
+      // Update localStorage too
+      try {
+        const current = loadFromStorage() || defaults;
+        current.accentColor = color;
+        localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(current));
+      } catch {}
+    }
+  }, []);
+
+  // Extract accent color when logoUrl changes
+  useEffect(() => {
+    const currentLogo = branding.logoUrl;
+    if (currentLogo) {
+      updateAccentFromLogo(currentLogo);
+    } else {
+      // No logo — reset to default accent
+      setBranding((prev) => ({ ...prev, accentColor: DEFAULT_ACCENT }));
+    }
+  }, [branding.logoUrl, updateAccentFromLogo]);
+
+  // Sync from server in the background
+  useEffect(() => {
     fetch("/api/admin/branding", { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.providerName) {
-          const fresh = {
+          const fresh: BrandingConfig = {
             providerName: data.providerName,
             logoUrl: data.logoUrl || "",
+            accentColor: branding.accentColor, // preserve current accent
           };
           setBranding(fresh);
-          // Sync to localStorage
           try {
             localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(fresh));
           } catch {}
@@ -63,3 +128,5 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 export function useBranding() {
   return useContext(BrandingContext);
 }
+
+export type { BrandingConfig };
