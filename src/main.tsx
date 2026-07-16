@@ -27,7 +27,7 @@ const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
-const convexUrl = import.meta.env.VITE_CONVEX_URL || 'https://handsome-mandrill-33.convex.site';
+const convexUrl = import.meta.env.VITE_CONVEX_URL || 'https://small-sparrow-797.convex.cloud';
 const convex = new ConvexReactClient(convexUrl);
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {

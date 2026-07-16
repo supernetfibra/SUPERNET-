@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://handsome-mandrill-33.convex.site/api/$1"
+      "destination": "https://small-sparrow-797.convex.site/api/$1"
     },
     {
       "source": "/(.*)",
@@ -23,5 +23,9 @@
         }
       ]
     }
-  ]
+  ],
+  "env": {
+    "VITE_CONVEX_URL": "https://small-sparrow-797.convex.cloud",
+    "CONVEX_SITE_URL": "https://small-sparrow-797.convex.site"
+  }
 }
