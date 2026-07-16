@@ -5,7 +5,11 @@
   "installCommand": "bun install",
   "rewrites": [
     {
-      "source": "/((?!api/).*)",
+      "source": "/api/(.*)",
+      "destination": "https://handsome-mandrill-33.convex.site/api/$1"
+    },
+    {
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ],
