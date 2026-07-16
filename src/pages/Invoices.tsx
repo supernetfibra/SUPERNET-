@@ -19,39 +19,12 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Loader2,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useState } from "react";
-
-// Mock data — replace with Convex action calls
-const MOCK_BILLINGS = [
-  {
-    id: "1", competencia: "06/2026", vencimento: "15/07/2026",
-    valor: 129.90, status: "pendente" as const,
-    linha_digitavel: "34191.79001 01043.510047 91020.150008 7 85620000012990",
-    pix_copiaecola: "00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-4266141740005204000053039865802BR5913Fulano de Tal6009SAOPAULO62070503***63041D3F",
-  },
-  {
-    id: "2", competencia: "05/2026", vencimento: "15/06/2026",
-    valor: 129.90, status: "pago" as const,
-    data_pagamento: "10/06/2026", valor_pago: 129.90,
-  },
-  {
-    id: "3", competencia: "04/2026", vencimento: "15/05/2026",
-    valor: 129.90, status: "pago" as const,
-    data_pagamento: "12/05/2026", valor_pago: 129.90,
-  },
-  {
-    id: "4", competencia: "03/2026", vencimento: "15/04/2026",
-    valor: 129.90, status: "pago" as const,
-    data_pagamento: "08/04/2026", valor_pago: 129.90,
-  },
-  {
-    id: "5", competencia: "02/2026", vencimento: "15/03/2026",
-    valor: 139.90, status: "pago" as const,
-    data_pagamento: "10/03/2026", valor_pago: 139.90,
-  },
-];
+import { useBillings } from "@/hooks/use-billings";
+import type { BillingSummary } from "@/hooks/use-billings";
 
 const statusConfig = {
   pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
@@ -64,12 +37,13 @@ type FilterStatus = "all" | "pendente" | "pago" | "vencido";
 
 export default function Invoices() {
   const navigate = useNavigate();
+  const { billings, isLoading } = useBillings();
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterStatus>("all");
 
-  const billings = filter === "all"
-    ? MOCK_BILLINGS
-    : MOCK_BILLINGS.filter(b => b.status === filter);
+  const filteredBillings = filter === "all"
+    ? billings
+    : billings.filter((b: BillingSummary) => b.status === filter);
 
   const handleCopy = async (text: string, id: string) => {
     try {
@@ -118,20 +92,25 @@ export default function Invoices() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground ml-auto">
-          {billings.length} fatura{billings.length !== 1 ? "s" : ""}
+          {filteredBillings.length} fatura{filteredBillings.length !== 1 ? "s" : ""}
         </p>
       </div>
 
       {/* Billing List */}
-      {billings.length === 0 ? (
+      {isLoading ? (
+        <div className="text-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">Carregando faturas...</p>
+        </div>
+      ) : filteredBillings.length === 0 ? (
         <div className="text-center py-16">
           <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">Nenhuma fatura encontrada.</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {billings.map((billing, index) => {
-            const status = statusConfig[billing.status];
+          {filteredBillings.map((billing, index) => {
+            const status = statusConfig[billing.status] || statusConfig.pendente;
             const StatusIcon = status.icon;
 
             return (

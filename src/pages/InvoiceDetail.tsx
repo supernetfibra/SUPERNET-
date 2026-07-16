@@ -22,48 +22,12 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-  Calendar,
-  DollarSign,
-  Barcode,
-  Wifi,
-  QrCode,
-  Printer,
+  Loader2,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router";
 import { useState } from "react";
-
-// Mock data — replace with Convex action call
-const MOCK_BILLINGS: Record<string, any> = {
-  "1": {
-    id: "1",
-    cliente_id: "123",
-    cliente_nome: "João Silva",
-    competencia: "06/2026",
-    vencimento: "15/07/2026",
-    valor: 129.90,
-    status: "pendente",
-    linha_digitavel: "34191.79001 01043.510047 91020.150008 7 85620000012990",
-    codigo_barras: "34197856200000129901790010104351004791020150",
-    pix_copiaecola: "00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-4266141740005204000053039865802BR5913Fulano de Tal6009SAOPAULO62070503***63041D3F",
-    url_boleto: "#",
-    multa: 2.60,
-    juros: 0.06,
-    nosso_numero: "123456789-0",
-    observacoes: "Fatura referente ao plano Internet 300MB",
-  },
-  "2": {
-    id: "2",
-    cliente_id: "123",
-    cliente_nome: "João Silva",
-    competencia: "05/2026",
-    vencimento: "15/06/2026",
-    valor: 129.90,
-    status: "pago",
-    data_pagamento: "10/06/2026",
-    valor_pago: 129.90,
-    nosso_numero: "123456788-1",
-  },
-};
+import { useBillings } from "@/hooks/use-billings";
+import { useAuth } from "@/lib/auth-context";
 
 const statusConfig: Record<string, { label: string; color: string; icon: any }> = {
   pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
@@ -75,11 +39,22 @@ const statusConfig: Record<string, { label: string; color: string; icon: any }> 
 export default function InvoiceDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const { billings, isLoading } = useBillings();
+  const { customer } = useAuth();
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const billing = MOCK_BILLINGS[id || ""];
+  const rawBilling = billings.find((b) => b.id === id);
 
-  if (!billing) {
+  if (isLoading) {
+    return (
+      <div className="max-w-3xl mx-auto text-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
+        <p className="text-sm text-muted-foreground">Carregando fatura...</p>
+      </div>
+    );
+  }
+
+  if (!rawBilling) {
     return (
       <div className="max-w-4xl mx-auto text-center py-20">
         <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
@@ -94,6 +69,8 @@ export default function InvoiceDetail() {
       </div>
     );
   }
+
+  const billing = rawBilling;
 
   const status = statusConfig[billing.status] || statusConfig.pendente;
   const StatusIcon = status.icon;
@@ -142,9 +119,6 @@ export default function InvoiceDetail() {
                 {status.label}
               </Badge>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              Nosso número: {billing.nosso_numero || "—"}
-            </p>
           </div>
 
           <p className="text-2xl font-light tracking-tight text-foreground">
@@ -194,16 +168,6 @@ export default function InvoiceDetail() {
                   </div>
                 </>
               )}
-
-              {billing.observacoes && (
-                <>
-                  <Separator />
-                  <div className="text-sm">
-                    <span className="text-muted-foreground block">Observações</span>
-                    <span className="text-foreground text-xs">{billing.observacoes}</span>
-                  </div>
-                </>
-              )}
             </CardContent>
           </Card>
         </div>
@@ -230,34 +194,9 @@ export default function InvoiceDetail() {
                           variant="ghost"
                           size="sm"
                           className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCopy(billing.linha_digitavel, "linha")}
+                          onClick={() => handleCopy(billing.linha_digitavel!, "linha")}
                         >
                           {copiedField === "linha" ? (
-                            <CopyCheck className="h-3 w-3" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {billing.codigo_barras && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                        Código de Barras
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-[10px] font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm truncate">
-                          {billing.codigo_barras}
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCopy(billing.codigo_barras, "barcode")}
-                        >
-                          {copiedField === "barcode" ? (
                             <CopyCheck className="h-3 w-3" />
                           ) : (
                             <Copy className="h-3 w-3" />
@@ -280,7 +219,7 @@ export default function InvoiceDetail() {
                           variant="ghost"
                           size="sm"
                           className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCopy(billing.pix_copiaecola, "pix")}
+                          onClick={() => handleCopy(billing.pix_copiaecola!, "pix")}
                         >
                           {copiedField === "pix" ? (
                             <CopyCheck className="h-3 w-3" />
@@ -299,20 +238,17 @@ export default function InvoiceDetail() {
                       variant="outline"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => handleCopy(billing.linha_digitavel || billing.codigo_barras, "all")}
+                      onClick={() => handleCopy(billing.linha_digitavel || "", "all")}
+                      disabled={!billing.linha_digitavel}
                     >
                       <Copy className="h-3.5 w-3.5 mr-1.5" />
-                      Copiar dados
+                      Copiar linha
                     </Button>
                     <Button
                       variant="default"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => {
-                        if (billing.url_boleto) {
-                          window.open(billing.url_boleto, "_blank");
-                        }
-                      }}
+                      disabled
                     >
                       <Download className="h-3.5 w-3.5 mr-1.5" />
                       Download PDF
@@ -334,33 +270,6 @@ export default function InvoiceDetail() {
           </Card>
         </div>
       </div>
-
-      {/* Fine/Juros for overdue */}
-      {billing.status === "pendente" && (billing.multa || billing.juros) && (
-        <div className="animate-[slideUp_0.3s_ease-out_0.2s_both]">
-          <Card className="border-border shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Encargos por Atraso</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground block">Multa</span>
-                  <span className="text-foreground font-medium">
-                    {billing.multa?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block">Juros por dia</span>
-                  <span className="text-foreground font-medium">
-                    {billing.juros?.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }

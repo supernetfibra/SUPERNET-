@@ -30,38 +30,9 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { useState, useEffect } from "react";
-
-// Mock data for demonstration — replace with actual API calls
-const MOCK_BILLINGS = [
-  {
-    id: "1",
-    competencia: "06/2026",
-    vencimento: "15/07/2026",
-    valor: 129.90,
-    status: "pendente" as const,
-    linha_digitavel: "34191.79001 01043.510047 91020.150008 7 85620000012990",
-    pix_copiaecola: "00020126580014br.gov.bcb.pix0136123e4567-e12b-12d1-a456-4266141740005204000053039865802BR5913Fulano de Tal6009SAOPAULO62070503***63041D3F",
-  },
-  {
-    id: "2",
-    competencia: "05/2026",
-    vencimento: "15/06/2026",
-    valor: 129.90,
-    status: "pago" as const,
-    data_pagamento: "10/06/2026",
-    valor_pago: 129.90,
-  },
-  {
-    id: "3",
-    competencia: "04/2026",
-    vencimento: "15/05/2026",
-    valor: 129.90,
-    status: "pago" as const,
-    data_pagamento: "12/05/2026",
-    valor_pago: 129.90,
-  },
-];
+import { useState } from "react";
+import { useBillings } from "@/hooks/use-billings";
+import type { BillingSummary } from "@/hooks/use-billings";
 
 const statusConfig = {
   pendente: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400", icon: Clock },
@@ -73,11 +44,12 @@ const statusConfig = {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { customer } = useAuth();
+  const { billings, isLoading } = useBillings();
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const pendingBillings = MOCK_BILLINGS.filter(b => b.status === "pendente");
+  const pendingBillings = billings.filter((b: BillingSummary) => b.status === "pendente");
   const pendingCount = pendingBillings.length;
-  const pendingTotal = pendingBillings.reduce((sum, b) => sum + b.valor, 0);
+  const pendingTotal = pendingBillings.reduce((sum: number, b: BillingSummary) => sum + b.valor, 0);
   const nextDueDate = pendingBillings[0]?.vencimento;
 
   const handleCopy = async (text: string, id: string) => {
@@ -180,8 +152,8 @@ export default function Dashboard() {
         </div>
 
         <div className="space-y-2">
-          {MOCK_BILLINGS.slice(0, 3).map((billing, index) => {
-            const status = statusConfig[billing.status];
+          {billings.slice(0, 3).map((billing, index) => {
+            const status = statusConfig[billing.status] || statusConfig.pendente;
             const StatusIcon = status.icon;
 
             return (

@@ -289,6 +289,49 @@ const selectContactHandler = httpAction(async (ctx, request) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/mikweb/billings — List billings for authenticated customer
+// ---------------------------------------------------------------------------
+const billingsHandler = httpAction(async (ctx, request) => {
+  try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(JSON.stringify({ error: "Sessão não encontrada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const session = await ctx.runQuery(api.sessions.getSession, { sessionToken });
+    if (!session) {
+      return new Response(JSON.stringify({ error: "Sessão expirada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await ctx.runMutation(api.sessions.touchSession, { sessionToken });
+
+    const billings = await ctx.runAction(api.mikweb.listBillingsByCustomerId, {
+      customerId: session.customerId,
+    });
+
+    return new Response(JSON.stringify({ billings, customerId: session.customerId }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("[BILLINGS_ERROR]", err);
+    return new Response(JSON.stringify({ error: "Erro ao buscar faturas.", billings: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Admin HTTP Endpoints
 // ---------------------------------------------------------------------------
 
@@ -516,6 +559,7 @@ http.route({ path: "/api/mikweb/login", method: "POST", handler: loginHandler })
 http.route({ path: "/api/mikweb/logout", method: "POST", handler: logoutHandler });
 http.route({ path: "/api/mikweb/me", method: "GET", handler: meHandler });
 http.route({ path: "/api/mikweb/select-contact", method: "POST", handler: selectContactHandler });
+http.route({ path: "/api/mikweb/billings", method: "GET", handler: billingsHandler });
 
 http.route({ path: "/api/admin/login", method: "POST", handler: adminLoginHandler });
 http.route({ path: "/api/admin/logout", method: "POST", handler: adminLogoutHandler });
