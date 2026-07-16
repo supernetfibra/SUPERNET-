@@ -19,8 +19,5 @@
         }
       ]
     }
-  ],
-  "env": {
-    "VITE_CONVEX_URL": "@vite_convex_url"
-  }
+  ]
 }
