@@ -420,7 +420,7 @@ export const testApiConnection = action({
   },
   handler: async (_ctx, args) => {
     try {
-      const url = `${args.apiUrl.replace(/\/$/, "")}/api/clientes?cpf_cnpj=00000000000&limit=1`;
+      const url = `${args.apiUrl.replace(/\/$/, "")}/clientes?cpf_cnpj=00000000000&limit=1`;
 
       const response = await apiFetch(url, args.apiToken);
 

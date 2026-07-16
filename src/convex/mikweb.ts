@@ -162,7 +162,7 @@ export const findCustomerByCPF = action({
     const cpf = args.cpf.replace(/\D/g, "");
     const customers = await apiGet<MikWebCustomer[]>(
       ctx,
-      `/api/clientes?cpf_cnpj=${cpf}`
+      `/clientes?cpf_cnpj=${cpf}`
     );
 
     if (!customers || customers.length === 0) {
@@ -178,7 +178,7 @@ export const getCustomerContacts = action({
   handler: async (ctx, args): Promise<MikWebContact[]> => {
     const contacts = await apiGet<MikWebContact[]>(
       ctx,
-      `/api/clientes/${args.customerId}/contatos`
+      `/clientes/${args.customerId}/contatos`
     );
     return contacts || [];
   },
@@ -194,7 +194,7 @@ export const validateInitialPassword = action({
 
     const contacts = await apiGet<MikWebContact[]>(
       ctx,
-      `/api/clientes/${args.customerId}/contatos`
+      `/clientes/${args.customerId}/contatos`
     );
 
     const matchingContact = contacts?.find((contact) => {
@@ -208,7 +208,7 @@ export const validateInitialPassword = action({
 
     const customer = await apiGet<MikWebCustomer>(
       ctx,
-      `/api/clientes/${args.customerId}`
+      `/clientes/${args.customerId}`
     );
     const customerPhone = (customer.telefone || customer.celular || "").replace(/\D/g, "");
 
@@ -229,7 +229,7 @@ export const listBillingsByCustomerId = action({
   handler: async (ctx, args): Promise<MikWebBilling[]> => {
     const billings = await apiGet<MikWebBilling[]>(
       ctx,
-      `/api/clientes/${args.customerId}/cobrancas`
+      `/clientes/${args.customerId}/cobrancas`
     );
     return billings || [];
   },
@@ -238,7 +238,7 @@ export const listBillingsByCustomerId = action({
 export const getBillingById = action({
   args: { billingId: v.string() },
   handler: async (ctx, args): Promise<MikWebBilling> => {
-    return apiGet<MikWebBilling>(ctx, `/api/cobrancas/${args.billingId}`);
+    return apiGet<MikWebBilling>(ctx, `/cobrancas/${args.billingId}`);
   },
 });
 
@@ -247,7 +247,7 @@ export const downloadBillingPdf = action({
   handler: async (ctx, args): Promise<{ url: string }> => {
     const billing = await apiGet<MikWebBilling>(
       ctx,
-      `/api/cobrancas/${args.billingId}`
+      `/cobrancas/${args.billingId}`
     );
 
     if (!billing.url_boleto) {
@@ -261,6 +261,6 @@ export const downloadBillingPdf = action({
 export const getCustomerById = action({
   args: { customerId: v.string() },
   handler: async (ctx, args): Promise<MikWebCustomer> => {
-    return apiGet<MikWebCustomer>(ctx, `/api/clientes/${args.customerId}`);
+    return apiGet<MikWebCustomer>(ctx, `/clientes/${args.customerId}`);
   },
 });
