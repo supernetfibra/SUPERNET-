@@ -380,13 +380,13 @@ const adminGetConfigHandler = httpAction(async (ctx) => {
 const adminSaveConfigHandler = httpAction(async (ctx, request) => {
   try {
     const body = (await request.json()) as { apiUrl: string; apiToken: string };
-    if (!body.apiUrl || !body.apiToken) {
-      return new Response(JSON.stringify({ error: "URL e token são obrigatórios." }), {
+    if (!body.apiToken) {
+      return new Response(JSON.stringify({ error: "Token é obrigatório." }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
-    await ctx.runMutation(api.admin.saveApiConfig, { apiUrl: body.apiUrl, apiToken: body.apiToken });
+    await ctx.runMutation(api.admin.saveApiConfig, { apiUrl: body.apiUrl || "", apiToken: body.apiToken });
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },

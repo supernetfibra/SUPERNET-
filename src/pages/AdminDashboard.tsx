@@ -222,17 +222,25 @@ export default function AdminDashboard() {
           const config = await configRes.json();
           if (config.apiUrl) {
             setApiUrl(config.apiUrl);
-            // Token comes masked from server (only first/last 4 chars)
-            // Only restore token from localStorage if server has one
-            if (config.hasToken) {
-              const stored = getStoredConfig();
-              if (stored?.apiToken) {
-                setApiToken(stored.apiToken);
-              }
-            }
-            storeConfig(config.apiUrl, "");
-            loadedConfig = true;
           }
+          // Token comes masked from server (only first/last 4 chars)
+          // Restore the full token from localStorage (preserve it)
+          if (config.hasToken) {
+            const stored = getStoredConfig();
+            if (stored?.apiToken) {
+              setApiToken(stored.apiToken);
+            }
+          } else {
+            // Server has no token saved — try to restore from localStorage anyway
+            const stored = getStoredConfig();
+            if (stored?.apiToken) {
+              setApiToken(stored.apiToken);
+            }
+          }
+          // Sync URL to localStorage without erasing token
+          const stored = getStoredConfig();
+          storeConfig(config.apiUrl, stored?.apiToken || apiToken);
+          loadedConfig = true;
         }
       } catch {
         // Server unavailable — fall through to localStorage
