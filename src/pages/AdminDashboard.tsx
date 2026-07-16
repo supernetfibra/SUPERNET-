@@ -364,6 +364,14 @@ export default function AdminDashboard() {
 
     // Fallback: test the MikWeb API directly from the browser
     try {
+      if (!apiUrl) {
+        setConnectionResult({
+          success: false,
+          message: "Token salvo. A URL da API será usada das variáveis de ambiente (MIKWEB_API_URL) para conexões reais.",
+        });
+        return;
+      }
+
       const baseUrl = apiUrl.replace(/\/$/, "");
       const url = `${baseUrl}/api/clientes?cpf_cnpj=00000000000&limit=1`;
 
@@ -710,12 +718,12 @@ export default function AdminDashboard() {
                   htmlFor="api-url"
                   className="text-xs font-medium text-muted-foreground"
                 >
-                  URL da API
+                  URL da API <span className="text-muted-foreground/50">(opcional)</span>
                 </Label>
                 <Input
                   id="api-url"
                   type="url"
-                  placeholder="https://seu-mikweb.com.br/api"
+                  placeholder="https://seu-mikweb.com.br/api (opicional se configurado via env)"
                   value={apiUrl}
                   onChange={(e) => setApiUrl(e.target.value)}
                   className="h-9 text-xs font-mono"
@@ -766,7 +774,7 @@ export default function AdminDashboard() {
                   size="sm"
                   className="flex-1 text-xs h-9"
                   onClick={handleTestConnection}
-                  disabled={testingConnection || !apiUrl || !apiToken}
+                  disabled={testingConnection || !apiToken}
                 >
                   {testingConnection ? (
                     <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
@@ -780,7 +788,7 @@ export default function AdminDashboard() {
                   size="sm"
                   className="flex-1 text-xs h-9"
                   onClick={handleSaveConfig}
-                  disabled={configSaving || !apiUrl || !apiToken}
+                  disabled={configSaving || !apiToken}
                 >
                   {configSaving ? (
                     <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
