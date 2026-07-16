@@ -150,7 +150,11 @@ export default function Invoices() {
                 style={{ animationDelay: `${0.03 * index}s` }}
               >
                 <Card
-                  className="border-border shadow-none hover:bg-secondary/30 transition-colors cursor-pointer"
+                  className={`border shadow-none transition-colors cursor-pointer ${
+                    billing.status === "vencido"
+                      ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
+                      : "border-border hover:bg-secondary/30"
+                  }`}
                   onClick={() => navigate(`/faturas/${billing.id}`)}
                 >
                   <CardContent className="p-4">

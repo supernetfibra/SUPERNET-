@@ -140,9 +140,19 @@ export function useBillings(): UseBillingsResult {
 
         if (!cancelled) {
           if (Array.isArray(data.billings)) {
-            // Sort raw billings by due_day descending (most recent first)
+            // Sort: vencido first (destaque), then by due_day descending (most recent first)
             // due_day format from API: yyyy-MM-dd
+            const isVencido = (s: string) =>
+              s === "Vencido" || s === "Em Atraso";
+
             const sorted = (data.billings as RawBilling[]).sort((a, b) => {
+              // Vencido sempre primeiro
+              const aVencido = isVencido(a.situation_name || "");
+              const bVencido = isVencido(b.situation_name || "");
+              if (aVencido && !bVencido) return -1;
+              if (!aVencido && bVencido) return 1;
+
+              // Dentro do mesmo grupo, ordena por data decrescente
               const dateA = a.due_day || "";
               const dateB = b.due_day || "";
               return dateB.localeCompare(dateA);
