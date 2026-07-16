@@ -349,11 +349,26 @@ export default function AdminDashboard() {
       if (!apiUrl) {
         setConnectionResult({
           success: true,
-          message: "Token salvo. A URL da API será usada das variáveis de ambiente (MIKWEB_API_URL) para conexões reais.",
+          message: "Token salvo. A URL será usada das variáveis de ambiente (MIKWEB_API_URL) para as conexões reais.",
         });
         return;
       }
 
+      // Try via Convex backend first (server-side, sem restrições CORS)
+      try {
+        const res = await adminFetch("/api/admin/test-connection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiUrl, apiToken }),
+        });
+        const data = await res.json();
+        setConnectionResult(data);
+        return;
+      } catch {
+        // Convex unavailable — try browser directly
+      }
+
+      // Fallback: test directly from browser (pode falhar por CORS/SSL)
       const baseUrl = apiUrl.replace(/\/$/, "");
       const url = `${baseUrl}/clientes?cpf_cnpj=00000000000&limit=1`;
 
@@ -363,7 +378,6 @@ export default function AdminDashboard() {
           Authorization: `Bearer ${apiToken}`,
           "Content-Type": "application/json",
         },
-        // Relax SSL for environments with self-signed certs
       });
 
       if (response.ok) {
@@ -377,16 +391,15 @@ export default function AdminDashboard() {
           message: `Token inválido ou sem permissão (HTTP ${response.status}).`,
         });
       } else {
-        const text = await response.text().catch(() => "");
         setConnectionResult({
           success: false,
-          message: `Erro HTTP ${response.status}: ${response.statusText}${text ? ` — ${text.slice(0, 200)}` : ""}`,
+          message: `Erro HTTP ${response.status}: ${response.statusText}`,
         });
       }
     } catch (err) {
       setConnectionResult({
         success: false,
-        message: `Erro de conexão: ${err instanceof Error ? err.message : "Desconhecido"}`,
+        message: "Não foi possível conectar à API. Verifique se a URL está correta e se o servidor está acessível.",
       });
     } finally {
       setTestingConnection(false);
