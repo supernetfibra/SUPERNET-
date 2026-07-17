@@ -1,7 +1,7 @@
 {
-  "name": "freebuff.com application",
-  "short_name": "freebuff.com",
-  "description": "freebuff.com application",
+  "name": "Minha Supernet",
+  "short_name": "Supernet",
+  "description": "Portal do Cliente - Minha Supernet",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

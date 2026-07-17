@@ -17,7 +17,7 @@ export default function Landing() {
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
       <header className="border-b border-border">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             {logoUrl ? (
               <img src={logoUrl} alt={providerName} className="h-5 w-5 rounded-full object-cover" />
@@ -39,7 +39,7 @@ export default function Landing() {
 
       {/* Hero */}
       <main className="flex-1 flex flex-col">
-        <div className="flex-1 flex items-center justify-center px-6 py-20">
+        <div className="flex-1 flex items-center justify-center px-4 sm:px-6 py-16 sm:py-20">
           <div className="max-w-2xl mx-auto text-center">
             <div className="animate-[slideUp_0.5s_ease-out]">
               <div className="flex justify-center mb-8">
@@ -60,7 +60,7 @@ export default function Landing() {
                 e gerencie seus serviços de forma simples e rápida.
               </p>
 
-              <div className="mt-10 flex items-center justify-center gap-3">
+              <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <Button
                   className="h-10 px-6 text-sm"
                   onClick={() => navigate("/login")}
@@ -78,8 +78,7 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Features */}
-            <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left animate-[slideUp_0.5s_ease-out_0.2s_both]">
+            {/* Features */}              <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 text-left animate-[slideUp_0.5s_ease-out_0.2s_both]">
               {[
                 {
                   icon: FileText,
@@ -116,7 +115,7 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="border-t border-border">
-        <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-center">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-12 flex items-center justify-center">
           <p className="text-xs text-muted-foreground">
             {providerName} — Provedora de Internet &copy; {new Date().getFullYear()}
           </p>

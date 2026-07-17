@@ -6,6 +6,14 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  isTestCpf,
+  validateTestPassword,
+  getTestLoginResponse,
+  storeTestSession,
+  clearTestSession,
+  getStoredTestSession,
+} from "@/lib/test-user";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,8 +57,20 @@ export function useMikWebAuth() {
 
   // Check session on mount
   const checkSession = useCallback(async () => {
+    // ---- TEST USER - check localStorage ----
+    const testSession = getStoredTestSession();
+    if (testSession) {
+      setState({
+        isLoading: false,
+        isAuthenticated: true,
+        customer: { id: testSession.customerId, name: testSession.customerName, cpf: testSession.cpf },
+        error: null,
+      });
+      return;
+    }
+    // ---- END TEST USER ----
+
     try {
-      // We use a relative path since Convex HTTP actions are proxied
       const response = await fetch("/api/mikweb/me", {
         method: "GET",
         credentials: "include",
@@ -93,6 +113,27 @@ export function useMikWebAuth() {
   const login = useCallback(
     async (cpf: string, password: string, keepConnected?: boolean): Promise<LoginResponse> => {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
+      // ---- TEST USER - handle locally ----
+      const normalizedCpf = cpf.replace(/\D/g, "");
+      if (isTestCpf(normalizedCpf)) {
+        if (!validateTestPassword(normalizedCpf, password)) {
+          const errMsg = "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial.";
+          setState((prev) => ({ ...prev, isLoading: false, error: errMsg }));
+          throw new Error(errMsg);
+        }
+
+        storeTestSession();
+        const testData = getTestLoginResponse();
+        setState({
+          isLoading: false,
+          isAuthenticated: true,
+          customer: { id: testData.customer.id, name: testData.customer.name, cpf: normalizedCpf },
+          error: null,
+        });
+        return testData;
+      }
+      // ---- END TEST USER ----
 
       try {
         const response = await fetch("/api/mikweb/login", {
@@ -185,6 +226,9 @@ export function useMikWebAuth() {
   // Logout
   const logout = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true }));
+
+    // Clear any test session
+    clearTestSession();
 
     try {
       await fetch("/api/mikweb/logout", {

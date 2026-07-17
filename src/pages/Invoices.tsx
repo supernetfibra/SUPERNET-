@@ -1,7 +1,7 @@
 /**
- * Invoices Page — Full list of customer invoices with filtering,
- * status indicators, and quick actions (download PDF, copy PIX/linha).
- * Uses CSS animations instead of framer-motion.
+ * Invoices Page — Full list of customer invoices with smart filtering,
+ * intelligent status labels, and quick actions (download PDF, copy PIX/linha).
+ * Overdue invoices are always highlighted first.
  */
 
 import { Button } from "@/components/ui/button";
@@ -29,15 +29,18 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Loader2,
+  AlertTriangle,
+  Clock,
+  Zap,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { useBillings, formatVencimentoComMes } from "@/hooks/use-billings";
+import { useBillings, formatVencimentoComMes, getSmartLabel } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
 
-type FilterStatus = "all" | "pendente" | "pago" | "vencido";
+type FilterStatus = "abertas" | "vencidas" | "pagas";
 
 const ITEMS_PER_PAGE = 10;
 
@@ -45,13 +48,21 @@ export default function Invoices() {
   const navigate = useNavigate();
   const { billings, isLoading } = useBillings();
   const [copiedId, handleCopy] = useCopyToClipboard();
-  const [filter, setFilter] = useState<FilterStatus>("all");
+  const [filter, setFilter] = useState<FilterStatus>("abertas");
   const [page, setPage] = useState(1);
 
   const filteredBillings = useMemo(() => {
-    return filter === "all"
-      ? billings
-      : billings.filter((b: BillingSummary) => b.status === filter);
+    if (filter === "abertas") {
+      // Abertas = pendente + vencido (tudo que não está pago nem cancelado)
+      return billings.filter(
+        (b: BillingSummary) => b.status === "pendente" || b.status === "vencido"
+      );
+    }
+    if (filter === "vencidas") {
+      return billings.filter((b: BillingSummary) => b.status === "vencido");
+    }
+    // pagas
+    return billings.filter((b: BillingSummary) => b.status === "pago");
   }, [billings, filter]);
 
   const totalPages = Math.ceil(filteredBillings.length / ITEMS_PER_PAGE);
@@ -65,7 +76,7 @@ export default function Invoices() {
     setPage(1);
   }, [filter]);
 
-  // Clamp page if it exceeds total pages (e.g., after filter change)
+  // Clamp page if it exceeds total pages
   useEffect(() => {
     if (page > totalPages && totalPages > 0) {
       setPage(totalPages);
@@ -92,38 +103,51 @@ export default function Invoices() {
   const startItem = filteredBillings.length > 0 ? (page - 1) * ITEMS_PER_PAGE + 1 : 0;
   const endItem = Math.min(page * ITEMS_PER_PAGE, filteredBillings.length);
 
+  const filterCounts = useMemo(() => {
+    const abertas = billings.filter(
+      (b: BillingSummary) => b.status === "pendente" || b.status === "vencido"
+    ).length;
+    const vencidas = billings.filter((b: BillingSummary) => b.status === "vencido").length;
+    const pagas = billings.filter((b: BillingSummary) => b.status === "pago").length;
+    return { abertas, vencidas, pagas };
+  }, [billings]);
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-medium tracking-tight text-foreground">Faturas</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Histórico completo de suas cobranças.
-          </p>
-        </div>
+      <div>
+        <h1 className="text-xl font-medium tracking-tight text-foreground">Faturas</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Acompanhe suas cobranças de forma inteligente.
+        </p>
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3">
-        <div className="flex rounded-sm border border-border overflow-hidden">
-          {(["all", "pendente", "pago"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-4 py-1.5 text-xs transition-colors ${
-                filter === f
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-              }`}
-            >
-              {f === "all" ? "Todas" : f === "pendente" ? "Pendentes" : "Pagas"}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground ml-auto">
-          {filteredBillings.length} fatura{filteredBillings.length !== 1 ? "s" : ""}
-        </p>
+      {/* Smart Filters */}
+      <div className="flex items-center gap-2 flex-wrap overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-none">
+        {([
+          { key: "abertas" as const, label: "Abertas" },
+          { key: "vencidas" as const, label: "Vencidas" },
+          { key: "pagas" as const, label: "Pagas" },
+        ]).map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            className={`relative px-4 py-1.5 text-xs rounded-full border transition-all ${
+              filter === f.key
+                ? f.key === "vencidas"
+                  ? "bg-red-50 dark:bg-red-950/20 border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 font-medium"
+                  : f.key === "abertas"
+                  ? "bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 font-medium"
+                  : "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 font-medium"
+                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+            }`}
+          >
+            {f.label}
+            <span className="ml-1.5 opacity-60 text-[10px]">
+              {filterCounts[f.key]}
+            </span>
+          </button>
+        ))}
       </div>
 
       {/* Billing List */}
@@ -135,13 +159,49 @@ export default function Invoices() {
       ) : filteredBillings.length === 0 ? (
         <div className="text-center py-16">
           <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Nenhuma fatura encontrada.</p>
+          <p className="text-sm text-muted-foreground">
+            {filter === "abertas"
+              ? "Nenhuma fatura aberta. 🎉"
+              : filter === "vencidas"
+              ? "Nenhuma fatura vencida. 🎉"
+              : "Nenhuma fatura paga encontrada."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2">
           {paginatedBillings.map((billing, index) => {
             const status = statusConfig[billing.status] || statusConfig.pendente;
             const StatusIcon = status.icon;
+            const smartLabel = getSmartLabel(billing);
+
+            // Card styling based on smart label type
+            const cardStyle =
+              smartLabel.type === "vencida"
+                ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
+                : smartLabel.type === "vence-hoje"
+                ? "border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40"
+                : smartLabel.type === "a-vencer"
+                ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
+                : "border-border hover:bg-secondary/30";
+
+            // Smart label badge styling
+            const labelBadgeStyle =
+              smartLabel.type === "vencida"
+                ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                : smartLabel.type === "vence-hoje"
+                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
+                : smartLabel.type === "a-vencer"
+                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+                : "bg-secondary text-muted-foreground";
+
+            const SmartIcon =
+              smartLabel.type === "vencida"
+                ? AlertTriangle
+                : smartLabel.type === "vence-hoje"
+                ? Zap
+                : smartLabel.type === "a-vencer"
+                ? Clock
+                : FileText;
 
             return (
               <div
@@ -150,24 +210,44 @@ export default function Invoices() {
                 style={{ animationDelay: `${0.03 * index}s` }}
               >
                 <Card
-                  className={`border shadow-none transition-colors cursor-pointer ${
-                    billing.status === "vencido"
-                      ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
-                      : "border-border hover:bg-secondary/30"
-                  }`}
+                  className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
                   onClick={() => navigate(`/faturas/${billing.id}`)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4 min-w-0">
-                        <div className="h-9 w-9 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                          <FileText className="h-4 w-4 text-muted-foreground" />
+                        <div
+                          className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
+                            smartLabel.type === "vencida"
+                              ? "bg-red-100 dark:bg-red-900/30"
+                              : smartLabel.type === "vence-hoje"
+                              ? "bg-orange-100 dark:bg-orange-900/30"
+                              : smartLabel.type === "a-vencer"
+                              ? "bg-amber-100 dark:bg-amber-900/30"
+                              : "bg-secondary"
+                          }`}
+                        >
+                          <SmartIcon
+                            className={`h-4 w-4 ${
+                              smartLabel.type === "vencida"
+                                ? "text-red-600 dark:text-red-400"
+                                : smartLabel.type === "vence-hoje"
+                                ? "text-orange-600 dark:text-orange-400"
+                                : smartLabel.type === "a-vencer"
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-muted-foreground"
+                            }`}
+                          />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {formatVencimentoComMes(billing.vencimento)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelBadgeStyle}`}
+                            >
+                              {smartLabel.text}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
                             {billing.competencia}
                             {billing.status === "pago" && billing.data_pagamento && (
                               <> · Pago em: {billing.data_pagamento}</>
@@ -176,9 +256,9 @@ export default function Invoices() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                         <div className="text-right">
-                          <p className="text-sm font-medium text-foreground">
+                          <p className="text-sm font-medium text-foreground whitespace-nowrap">
                             {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                           </p>
                           {billing.status === "pago" && billing.valor_pago && (
@@ -189,17 +269,17 @@ export default function Invoices() {
                         </div>
                         <Badge
                           variant="outline"
-                          className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color}`}
+                          className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
                         >
                           <StatusIcon className="h-3 w-3 mr-1" />
                           {status.label}
                         </Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
                       </div>
                     </div>
 
                     {/* Quick actions for pending */}
-                    {billing.status === "pendente" && (
+                    {(billing.status === "pendente" || billing.status === "vencido") && (
                       <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
                         {billing.linha_digitavel && (
                           <Button

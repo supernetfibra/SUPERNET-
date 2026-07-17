@@ -570,7 +570,7 @@ export default function AdminDashboard() {
   // Main dashboard
   // ---------------------------------------------------------------------------
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-12 px-4 animate-[fadeIn_0.3s_ease-out]">
+    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-12 px-4 animate-[fadeIn_0.3s_ease-out]">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -594,7 +594,7 @@ export default function AdminDashboard() {
 
       {/* Summary Cards */}
       {auditSummary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           {summaryCards.map((card) => (
             <Card key={card.label} className="border-border shadow-none animate-[slideUp_0.3s_ease-out]">
               <CardContent className="p-4">
@@ -613,7 +613,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
         {/* Branding Section */}
         <div className="lg:col-span-2 animate-[slideUp_0.3s_ease-out_0.1s_both]">
           <Card className="border-border shadow-none">
@@ -628,7 +628,7 @@ export default function AdminDashboard() {
                 Personalize o nome e a logo da sua provedora.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3 sm:space-y-4">
               <div className="space-y-2">
                 <Label
                   htmlFor="provider-name"

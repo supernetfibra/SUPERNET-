@@ -60,7 +60,7 @@ export default function ContactSelect() {
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
       <header className="border-b border-border">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             {logoUrl ? (
               <img src={logoUrl} alt={providerName} className="h-5 w-5 rounded-full object-cover" />

@@ -96,6 +96,92 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     }
   }, [branding.logoUrl, updateAccentFromLogo]);
 
+  // Update <title> when providerName changes
+  useEffect(() => {
+    if (branding.providerName && branding.providerName !== "Seu Provedor") {
+      document.title = branding.providerName;
+    } else {
+      // Fallback to default title
+      document.title = "Minha Supernet";
+    }
+  }, [branding.providerName]);
+
+  // Update favicon when logoUrl changes
+  useEffect(() => {
+    if (!branding.logoUrl) {
+      // No logo — reset favicon to default SVG
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.href = "/logo.svg";
+      link.type = "image/svg+xml";
+      return;
+    }
+
+    // Convert logo URL to a favicon-friendly format
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      // Draw the logo onto a 32x32 canvas for a proper favicon
+      const canvas = document.createElement("canvas");
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Use the image as favicon (centered, rounded)
+      // Check if image is already square — if so, just scale it
+      const size = Math.min(img.width, img.height);
+      const sx = (img.width - size) / 2;
+      const sy = (img.height - size) / 2;
+
+      // Draw and round the corners slightly
+      ctx.beginPath();
+      ctx.arc(16, 16, 14, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, 32, 32);
+
+      const dataUrl = canvas.toDataURL("image/png");
+
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.href = dataUrl;
+      link.type = "image/png";
+
+      // Also update apple-touch-icon for iOS
+      let appleLink = document.querySelector<HTMLLinkElement>("link[rel~='apple-touch-icon']");
+      if (!appleLink) {
+        appleLink = document.createElement("link");
+        appleLink.rel = "apple-touch-icon";
+        document.head.appendChild(appleLink);
+      }
+      appleLink.href = dataUrl;
+    };
+    img.onerror = () => {
+      // If the logo fails to load, keep default favicon
+    };
+    img.src = branding.logoUrl;
+  }, [branding.logoUrl]);
+
+  // Update theme-color meta tag for browser chrome
+  useEffect(() => {
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "theme-color";
+      document.head.appendChild(meta);
+    }
+    meta.content = branding.accentColor || "#000000";
+  }, [branding.accentColor]);
+
   // Sync from server in the background
   useEffect(() => {
     fetch("/api/admin/branding", { credentials: "include" })

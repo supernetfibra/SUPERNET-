@@ -80,15 +80,15 @@ export default function InvoiceDetail() {
 
       {/* Header */}
       <div className="animate-[fadeIn_0.25s_ease-out]">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-medium tracking-tight text-foreground">
                 Fatura {billing.competencia}
               </h1>
               <Badge
                 variant="outline"
-                className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color}`}
+                className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
               >
                 <StatusIcon className="h-3 w-3 mr-1" />
                 {status.label}
@@ -96,7 +96,7 @@ export default function InvoiceDetail() {
             </div>
           </div>
 
-          <p className="text-2xl font-light tracking-tight text-foreground">
+          <p className="text-xl sm:text-2xl font-light tracking-tight text-foreground">
             {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
           </p>
         </div>

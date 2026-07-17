@@ -32,6 +32,7 @@ import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
 import { formatCpf, maskCpf } from "@/lib/cpf";
 import { formatPhone } from "@/lib/phone";
+import { getTestCustomerData, isTestCpf } from "@/lib/test-user";
 
 interface CustomerData {
   id: number;
@@ -75,22 +76,45 @@ export default function Profile() {
     const fetchCustomer = async () => {
       try {
         setLoading(true);
+
+        // ---- TEST USER - return mock data ----
+        if (sessionCustomer?.id?.startsWith("test-") && isTestCpf(sessionCustomer.cpf)) {
+          if (!cancelled) {
+            setCustomer(getTestCustomerData() as CustomerData);
+            setError(null);
+            setLoading(false);
+          }
+          return;
+        }
+        // ---- END TEST USER ----
+
         const response = await fetch("/api/mikweb/customer", {
           credentials: "include",
         });
 
+        let errorDetail = "";
+        try {
+          const body = await response.clone().json();
+          errorDetail = body.error || "";
+        } catch {}
+
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Erro ao carregar dados do cliente.");
+          throw new Error(errorDetail || `Erro HTTP ${response.status}: Servidor retornou erro ao buscar cliente.`);
         }
 
         const data = await response.json();
         if (!cancelled) {
-          setCustomer(data.customer);
-          setError(null);
+          if (!data.customer) {
+            console.warn("[PERFIL] Resposta sem customer:", JSON.stringify(data).slice(0, 300));
+            setError("Dados do cliente não encontrados na resposta.");
+          } else {
+            setCustomer(data.customer);
+            setError(null);
+          }
         }
       } catch (err) {
         if (!cancelled) {
+          console.error("[PERFIL_ERRO]", err);
           setError(
             err instanceof Error
               ? err.message
@@ -104,7 +128,7 @@ export default function Profile() {
 
     fetchCustomer();
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionCustomer]);
 
   const handleLogout = async () => {
     await logout();
@@ -245,9 +269,9 @@ export default function Profile() {
               {/* CPF */}
               {customer.cpf_cnpj && (
                 <>
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between text-sm gap-1 sm:gap-0">
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <User className="h-3.5 w-3.5" />
+                      <User className="h-3.5 w-3.5 shrink-0" />
                       <span>
                         {customer.person_type === "juridica"
                           ? "CNPJ"
@@ -255,12 +279,12 @@ export default function Profile() {
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-foreground">
+                      <span className="text-foreground text-xs sm:text-sm">
                         {formatCpf(customer.cpf_cnpj)}
                       </span>
                       <button
                         onClick={handleCopyCpf}
-                        className="text-muted-foreground hover:text-foreground transition-colors"
+                        className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
                       >
                         {copied ? (
                           <CopyCheck className="h-3.5 w-3.5" />
@@ -275,24 +299,24 @@ export default function Profile() {
               )}
 
               {/* Email */}
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between text-sm gap-1 sm:gap-0">
                 <div className="flex items-center gap-2 text-muted-foreground">
-                  <Mail className="h-3.5 w-3.5" />
+                  <Mail className="h-3.5 w-3.5 shrink-0" />
                   <span>E-mail</span>
                 </div>
-                <span className="text-foreground">
+                <span className="text-foreground break-all text-xs sm:text-sm">
                   {customer.email || "—"}
                 </span>
               </div>
               <Separator />
 
               {/* Phone */}
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between text-sm gap-1 sm:gap-0">
                 <div className="flex items-center gap-2 text-muted-foreground">
-                  <Phone className="h-3.5 w-3.5" />
+                  <Phone className="h-3.5 w-3.5 shrink-0" />
                   <span>Telefone</span>
                 </div>
-                <span className="text-foreground">
+                <span className="text-foreground text-xs sm:text-sm">
                   {customer.phone_number
                     ? formatPhone(customer.phone_number)
                     : customer.cell_phone_number_1
@@ -303,12 +327,12 @@ export default function Profile() {
               <Separator />
 
               {/* Address */}
-              <div className="flex items-start justify-between text-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <MapPin className="h-3.5 w-3.5 mt-0.5" />
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between text-sm gap-1 sm:gap-0">
+                <div className="flex items-center gap-2 text-muted-foreground shrink-0">
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>Endereço</span>
                 </div>
-                <span className="text-foreground text-right max-w-[250px]">
+                <span className="text-foreground text-right text-xs sm:text-sm w-full sm:max-w-[250px]">
                   {addressLine || "—"}
                   {addressLine && <br />}
                   {neighborhoodLine && (
@@ -327,14 +351,14 @@ export default function Profile() {
               <Separator />
 
               {/* Plan */}
-              <div className="flex items-center justify-between text-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between text-sm gap-1 sm:gap-0">
                 <div className="flex items-center gap-2 text-muted-foreground">
-                  <Wifi className="h-3.5 w-3.5" />
+                  <Wifi className="h-3.5 w-3.5 shrink-0" />
                   <span>Plano</span>
                 </div>
                 <Badge
                   variant="outline"
-                  className="text-[10px] font-medium border-border"
+                  className="text-[10px] font-medium border-border w-fit sm:w-auto"
                 >
                   {planName}
                 </Badge>
@@ -344,12 +368,12 @@ export default function Profile() {
               {customer.due_day && (
                 <>
                   <Separator />
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between text-sm gap-1 sm:gap-0">
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      <Calendar className="h-3.5 w-3.5" />
+                      <Calendar className="h-3.5 w-3.5 shrink-0" />
                       <span>Vencimento</span>
                     </div>
-                    <span className="text-foreground">
+                    <span className="text-foreground text-xs sm:text-sm">
                       Dia {customer.due_day}
                     </span>
                   </div>

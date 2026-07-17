@@ -15,6 +15,103 @@ const http = httpRouter();
 auth.addHttpRoutes(http);
 
 // ---------------------------------------------------------------------------
+// Test user configuration — bypasses MikWeb API for development/preview
+// CPF: 12345678900  |  Password: últimos 4 dígitos (8900)
+// ---------------------------------------------------------------------------
+const TEST_CPFS = ["12345678900"];
+
+function isTestCpf(cpf: string): boolean {
+  return TEST_CPFS.includes(cpf.replace(/\D/g, ""));
+}
+
+function getTestCustomerId(cpf: string): string {
+  return `test-${cpf.replace(/\D/g, "")}`;
+}
+
+// Mock customer data for test user
+const MOCK_TEST_CUSTOMER = {
+  id: 999,
+  full_name: "Usuário Teste",
+  login: "teste",
+  email: "teste@exemplo.com",
+  cpf_cnpj: "12345678900",
+  person_type: "Física",
+  phone_number: "11987654321",
+  cell_phone_number_1: "11912345678",
+  status: "Ativo",
+  due_day: 15,
+  zip_code: "01234-567",
+  street: "Rua das Flores",
+  number: "123",
+  complement: "Apto 45",
+  neighborhood: "Centro",
+  city: "São Paulo",
+  state: "SP",
+  server: { id: 1, name: "Servidor Principal", hash_server: "abc123" },
+  plan: { id: 1, name: "Plano 500 Mega", value: "129.90" },
+  customer_group: { id: 1, name: "Residencial" },
+  financial_status: "L",
+};
+
+// Mock billings for test user
+const MOCK_TEST_BILLINGS = [
+  {
+    id: 1001,
+    customer_id: 999,
+    value: 129.90,
+    value_paid: null,
+    date_payment: null,
+    situation_id: 2,
+    situation_name: "Vencido",
+    reference: "Junho/2026",
+    type_billing: "Mensalidade",
+    due_day: "2026-06-15",
+    form_payment: "Boleto",
+    digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901234",
+    pix_copy_paste_base64: "000201010212261060014br.gov.bcb.pix2558api.pix.com/v2/cobv/12345678901234567890123456785204000053039865406129.905802BR5913Cliente Teste6009Sao Paulo62070503***63041234",
+    observation: null,
+    our_number: "123456",
+  },
+  {
+    id: 1002,
+    customer_id: 999,
+    value: 129.90,
+    value_paid: null,
+    date_payment: null,
+    situation_id: 1,
+    situation_name: "Em Aberto",
+    reference: "Julho/2026",
+    type_billing: "Mensalidade",
+    due_day: "2026-07-15",
+    form_payment: "Boleto",
+    digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901235",
+    pix_copy_paste_base64: "000201010212261060014br.gov.bcb.pix2558api.pix.com/v2/cobv/12345678901234567890123456785204000053039865406129.905802BR5913Cliente Teste6009Sao Paulo62070503***63041235",
+    observation: null,
+    our_number: "123457",
+    integration_link: "https://boleto.exemplo.com/pdf/1002",
+  },
+  {
+    id: 1003,
+    customer_id: 999,
+    value: 129.90,
+    value_paid: 129.90,
+    date_payment: "2026-06-10",
+    situation_id: 3,
+    situation_name: "Pago",
+    reference: "Maio/2026",
+    type_billing: "Mensalidade",
+    due_day: "2026-05-15",
+    form_payment: "PIX",
+    observation: null,
+    our_number: "123455",
+  },
+];
+
+function isTestCustomerId(id: string): boolean {
+  return id.startsWith("test-");
+}
+
+// ---------------------------------------------------------------------------
 // Rate limiting state
 // ---------------------------------------------------------------------------
 interface RateLimitEntry {
@@ -94,13 +191,56 @@ const loginHandler = httpAction(async (ctx, request) => {
     const cpf = body.cpf.replace(/\D/g, "");
     const rateLimitKey = `${clientIp}:${cpf}`;
     if (!checkRateLimit(rateLimitKey)) {
-      console.warn(`[LOGIN_RATE_LIMIT] IP: ${clientIp}, CPF: ${cpf}`);
-      await logEvent(ctx, { type: "login_rate_limited", cpf, ipAddress: clientIp, userAgent, errorMessage: "Rate limit excedido" });
       return new Response(
         JSON.stringify({ error: "Muitas tentativas. Tente novamente em 15 minutos." }),
         { status: 429, headers: { "Content-Type": "application/json" } }
       );
     }
+
+    // ---- TEST USER - bypass real API ----
+    if (isTestCpf(cpf)) {
+      const testPassword = cpf.slice(-4); // "8900"
+      const normalizedPassword = body.password.replace(/\D/g, "");
+
+      if (normalizedPassword !== testPassword) {
+        return new Response(
+          JSON.stringify({ error: "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial." }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const mockCustomer = MOCK_TEST_CUSTOMER;
+      const mockContacts = [
+        { id: `${mockCustomer.id}-phone`, phone: mockCustomer.phone_number, label: "Telefone" },
+        { id: `${mockCustomer.id}-cell1`, phone: mockCustomer.cell_phone_number_1, label: "Celular 1" },
+      ];
+      const sessionContacts = mockContacts.map((c) => ({ id: c.id, phone: c.phone, label: c.label }));
+
+      const keepConnected = body.keepConnected === true;
+      const sessionMaxAge = keepConnected ? 7 * 24 * 60 * 60 : 24 * 60 * 60;
+
+      const sessionResult = await ctx.runMutation(api.sessions.createSession, {
+        cpf,
+        customerId: getTestCustomerId(cpf),
+        customerName: mockCustomer.full_name,
+        contacts: sessionContacts,
+        selectedContactId: undefined,
+        keepConnected,
+      });
+
+      const responseHeaders = new Headers({ "Content-Type": "application/json" });
+      responseHeaders.append("Set-Cookie", `mikweb_session=${sessionResult.sessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${sessionMaxAge}`);
+
+      return new Response(JSON.stringify({
+        success: true,
+        customer: { id: getTestCustomerId(cpf), name: mockCustomer.full_name, email: mockCustomer.email },
+        hasMultipleContacts: mockContacts.length > 1,
+        contacts: mockContacts.map((c) => ({ id: c.id, label: c.label, phoneMasked: maskPhone(c.phone) })),
+        sessionToken: sessionResult.sessionToken,
+        expiresAt: sessionResult.expiresAt,
+      }), { status: 200, headers: responseHeaders });
+    }
+    // ---- END TEST USER ----
 
     let customers;
     try {
@@ -293,17 +433,35 @@ const customerHandler = httpAction(async (ctx, request) => {
 
     await ctx.runMutation(api.sessions.touchSession, { sessionToken });
 
+    // ---- TEST USER - return mock data ----
+    if (isTestCustomerId(session.customerId)) {
+      return new Response(JSON.stringify({ customer: MOCK_TEST_CUSTOMER }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    // ---- END TEST USER ----
+
     const customer = await ctx.runAction(api.mikweb.getCustomerById, {
       customerId: session.customerId,
     });
+
+    if (!customer) {
+      console.warn("[CUSTOMER] API retornou null para customerId:", session.customerId);
+      return new Response(JSON.stringify({ error: "Cliente não encontrado na API MikWeb." }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(JSON.stringify({ customer }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    console.error("[CUSTOMER_ERROR]", err);
-    return new Response(JSON.stringify({ error: "Erro ao buscar dados do cliente." }), {
+    const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    console.error("[CUSTOMER_ERROR]", msg);
+    return new Response(JSON.stringify({ error: `Erro ao buscar dados do cliente: ${msg}` }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
@@ -361,6 +519,15 @@ const billingsHandler = httpAction(async (ctx, request) => {
     }
 
     await ctx.runMutation(api.sessions.touchSession, { sessionToken });
+
+    // ---- TEST USER - return mock billings ----
+    if (isTestCustomerId(session.customerId)) {
+      return new Response(JSON.stringify({ billings: MOCK_TEST_BILLINGS, customerId: session.customerId }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    // ---- END TEST USER ----
 
     const billings = await ctx.runAction(api.mikweb.listBillingsByCustomerId, {
       customerId: session.customerId,

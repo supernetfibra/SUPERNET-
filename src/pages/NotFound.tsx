@@ -11,8 +11,11 @@ export default function NotFound() {
         <div className="max-w-5xl mx-auto relative px-4">
           <div className="flex items-center justify-center min-h-[200px]">
             <div className="text-center">
-              <h1 className="text-4xl font-bold text-gray-900 mb-4">404</h1>
-              <p className="text-lg text-gray-600">Page Not Found</p>
+              <h1 className="text-5xl sm:text-6xl font-bold text-foreground mb-3">404</h1>
+              <p className="text-base sm:text-lg text-muted-foreground">Página não encontrada</p>
+              <a href="/" className="inline-block mt-6 text-sm text-muted-foreground hover:text-foreground underline transition-colors">
+                Voltar ao início
+              </a>
             </div>
           </div>
         </div>

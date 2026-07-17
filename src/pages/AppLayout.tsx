@@ -147,7 +147,7 @@ export default function AppLayout() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar (mobile) */}
-        <header className="h-14 border-b border-border flex items-center px-4 md:px-6 bg-card md:hidden">
+        <header className="h-14 border-b border-border flex items-center px-4 md:px-6 bg-card md:hidden sticky top-0 z-30">
           <button
             onClick={() => setSidebarOpen(true)}
             className="text-muted-foreground hover:text-foreground transition-colors mr-3"
@@ -165,7 +165,7 @@ export default function AppLayout() {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 p-6 md:p-8 lg:p-10 overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 lg:p-10 overflow-y-auto">
           <div key={location.pathname} className="animate-[fadeIn_0.25s_ease-out]">
             <Outlet />
           </div>
