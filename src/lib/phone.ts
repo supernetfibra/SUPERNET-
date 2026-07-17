@@ -33,20 +33,23 @@ export function formatPhone(phone: string): string {
 }
 
 /**
- * Mask a phone number showing only first 4 and last 2 digits.
+ * Mask a phone number showing only first few and last 2 digits.
  */
 export function maskPhone(phone: string): string {
   const digits = normalizePhone(phone);
   if (digits.length < 10) return phone;
   
   const ddd = digits.slice(0, 2);
-  const first = digits.slice(2, 6);
   const last = digits.slice(-2);
   
   if (digits.length === 11) {
-    return `(${ddd}) ${first}**-${last}`;
+    // (XX) XXXXX**-XX
+    const first5 = digits.slice(2, 7);
+    return `(${ddd}) ${first5}**-${last}`;
   }
-  return `(${ddd}) ${first}**-${last}`;
+  // (XX) XXXX**-XX
+  const first4 = digits.slice(2, 6);
+  return `(${ddd}) ${first4}**-${last}`;
 }
 
 /**

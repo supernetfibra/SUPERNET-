@@ -218,6 +218,7 @@ export function useMikWebAuth() {
               ? err.message
               : "Erro ao selecionar contato.",
         }));
+        throw err; // Re-throw so callers (e.g. ContactSelect) can prevent navigation on error
       }
     },
     [checkSession]

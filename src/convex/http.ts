@@ -818,10 +818,13 @@ function maskPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 10) return phone;
   const ddd = digits.slice(0, 2);
-  const first = digits.slice(2, 6);
   const last = digits.slice(-2);
-  if (digits.length === 11) return `(${ddd}) ${first}**-${last}`;
-  return `(${ddd}) ${first}**-${last}`;
+  if (digits.length === 11) {
+    const first5 = digits.slice(2, 7);
+    return `(${ddd}) ${first5}**-${last}`;
+  }
+  const first4 = digits.slice(2, 6);
+  return `(${ddd}) ${first4}**-${last}`;
 }
 
 // ---------------------------------------------------------------------------

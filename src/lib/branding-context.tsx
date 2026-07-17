@@ -8,7 +8,7 @@
  * then attempts to sync from the server.
  */
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { extractDominantColor } from "./extract-dominant-color";
 
 interface BrandingConfig {
@@ -182,7 +182,15 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     meta.content = branding.accentColor || "#000000";
   }, [branding.accentColor]);
 
-  // Sync from server in the background
+  // Keep a ref to the latest accent color so the server-sync effect
+  // never uses a stale closure value (avoids race with logo extraction).
+  const accentColorRef = useRef(branding.accentColor);
+  useEffect(() => {
+    accentColorRef.current = branding.accentColor;
+  }, [branding.accentColor]);
+
+  // Sync from server in the background — reads accentColorRef for latest value,
+  // avoiding the stale closure that would otherwise capture mount-time state.
   useEffect(() => {
     fetch("/api/admin/branding", { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
@@ -191,7 +199,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
           const fresh: BrandingConfig = {
             providerName: data.providerName,
             logoUrl: data.logoUrl || "",
-            accentColor: branding.accentColor, // preserve current accent
+            accentColor: accentColorRef.current, // latest accent, not stale closure
           };
           setBranding(fresh);
           try {
