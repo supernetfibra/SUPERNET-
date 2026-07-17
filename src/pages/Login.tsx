@@ -14,10 +14,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ArrowRight, Loader2, AlertCircle, Wifi, Eye, EyeOff, ArrowLeft } from "lucide-react";
+import { ArrowRight, Loader2, AlertCircle, Wifi, Eye, EyeOff, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { normalizeCpf, formatCpf } from "@/lib/cpf";
+import { normalizeCpf, formatCpf, isValidCpf } from "@/lib/cpf";
 import { useAuth } from "@/lib/auth-context";
 import { useBranding } from "@/lib/branding-context";
 
@@ -34,13 +34,21 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [keepConnected, setKeepConnected] = useState(false);
+  const [cpfTouched, setCpfTouched] = useState(false);
+
+  const cpfDigits = normalizeCpf(cpf);
+  const cpfValid = cpfDigits.length === 11 && isValidCpf(cpfDigits);
+  const cpfComplete = cpfDigits.length === 11;
+  const showCpfError = cpfTouched && cpfDigits.length > 0 && !cpfComplete;
+  const showCpfSuccess = cpfTouched && cpfValid;
 
   const handleCpfSubmit = (e: FormEvent) => {
     e.preventDefault();
+    setCpfTouched(true);
     clearError();
 
     const normalized = normalizeCpf(cpf);
-    if (normalized.length !== 11) {
+    if (normalized.length !== 11 || !isValidCpf(normalized)) {
       return;
     }
 
@@ -80,6 +88,9 @@ export default function Login() {
   const handleCpfInput = (value: string) => {
     const digits = value.replace(/\D/g, "").slice(0, 11);
     setCpf(digits);
+    if (!cpfTouched && digits.length > 0) {
+      setCpfTouched(true);
+    }
   };
 
   return (
@@ -123,11 +134,23 @@ export default function Login() {
               </CardDescription>
             </CardHeader>
 
-            <CardContent>
+            <CardContent className="relative overflow-hidden">
+              {/* Step indicator */}
+              <div className="flex items-center justify-center gap-2 mb-6">
+                <div className={`h-1.5 w-8 rounded-full transition-colors duration-300 ${
+                  step === "cpf" ? "bg-foreground" : "bg-muted-foreground/30"
+                }`} />
+                <div className={`h-1.5 w-8 rounded-full transition-colors duration-300 ${
+                  step === "password" ? "bg-foreground" : "bg-muted-foreground/30"
+                }`} />
+              </div>
+
               {/* CPF Step */}
               <div
-                className={`transition-all duration-200 ${
-                  step === "cpf" ? "opacity-100" : "opacity-0 hidden"
+                className={`transition-all duration-300 ease-in-out ${
+                  step === "cpf"
+                    ? "opacity-100 translate-y-0 max-h-96"
+                    : "opacity-0 translate-y-2 max-h-0 pointer-events-none"
                 }`}
               >
                 <form onSubmit={handleCpfSubmit}>
@@ -136,18 +159,47 @@ export default function Login() {
                       <Label htmlFor="cpf" className="text-xs font-medium text-muted-foreground">
                         CPF
                       </Label>
-                      <Input
-                        id="cpf"
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="000.000.000-00"
-                        value={formatCpf(cpf)}
-                        onChange={(e) => handleCpfInput(e.target.value)}
-                        className="h-10 text-sm tracking-wider"
-                        autoFocus
-                        autoComplete="off"
-                        required
-                      />
+                      <div className="relative">
+                        <Input
+                          id="cpf"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="000.000.000-00"
+                          value={formatCpf(cpf)}
+                          onChange={(e) => handleCpfInput(e.target.value)}
+                          onBlur={() => setCpfTouched(true)}
+                          className={`h-10 text-sm tracking-wider pr-10 transition-all duration-200 ${
+                            showCpfSuccess
+                              ? "border-emerald-400 dark:border-emerald-600 ring-1 ring-emerald-400/20"
+                              : showCpfError
+                              ? "border-destructive/60 ring-1 ring-destructive/20"
+                              : ""
+                          }`}
+                          autoFocus
+                          autoComplete="off"
+                          required
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                          {showCpfSuccess && (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500 animate-[fadeIn_0.2s_ease-out]" />
+                          )}
+                          {showCpfError && (
+                            <AlertCircle className="h-4 w-4 text-destructive/70 animate-[fadeIn_0.2s_ease-out]" />
+                          )}
+                        </div>
+                      </div>
+                      {showCpfError && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-destructive/80 animate-[fadeIn_0.2s_ease-out]">
+                          <AlertCircle className="h-3 w-3" />
+                          CPF deve ter 11 dígitos
+                        </p>
+                      )}
+                      {showCpfSuccess && (
+                        <p className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 animate-[fadeIn_0.2s_ease-out]">
+                          <CheckCircle2 className="h-3 w-3" />
+                          CPF válido
+                        </p>
+                      )}
                     </div>
 
                     {error && (
@@ -160,7 +212,7 @@ export default function Login() {
                     <Button
                       type="submit"
                       className="w-full h-10 text-sm"
-                      disabled={normalizeCpf(cpf).length !== 11}
+                      disabled={!cpfComplete}
                     >
                       Continuar
                       <ArrowRight className="ml-2 h-4 w-4" />
@@ -171,8 +223,10 @@ export default function Login() {
 
               {/* Password Step */}
               <div
-                className={`transition-all duration-200 ${
-                  step === "password" ? "opacity-100" : "opacity-0 hidden"
+                className={`transition-all duration-300 ease-in-out ${
+                  step === "password"
+                    ? "opacity-100 translate-y-0 max-h-96"
+                    : "opacity-0 translate-y-2 max-h-0 pointer-events-none"
                 }`}
               >
                 <form onSubmit={handlePasswordSubmit}>
