@@ -153,7 +153,10 @@ function InvoiceCard({
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {billing.competencia}
+                  {billing.vencimento}
+                  {billing.competencia && (
+                    <> · Ref. {billing.competencia}</>
+                  )}
                 </p>
               </div>
             </div>

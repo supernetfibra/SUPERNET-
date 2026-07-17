@@ -218,6 +218,33 @@ const MESES: string[] = [
 ];
 
 /**
+ * Extract month info from a vencimento string (dd/MM/yyyy).
+ * Returns Portuguese month name and a sortable "YYYY-MM" key.
+ * Ex: "15/01/2026" → { mesNome: "Janeiro", mesAno: "2026-01", ano: "2026", mes: "01", dia: "15" }
+ */
+export function extractMesInfo(vencimento: string): {
+  mesNome: string;
+  mesAno: string;
+  ano: string;
+  mes: string;
+  dia: string;
+} | null {
+  if (!vencimento) return null;
+  const parts = vencimento.split("/");
+  if (parts.length !== 3) return null;
+  const [dia, mes, ano] = parts;
+  const mesNum = parseInt(mes, 10);
+  if (mesNum < 1 || mesNum > 12) return null;
+  return {
+    mesNome: MESES[mesNum - 1],
+    mesAno: `${ano}-${mes}`,
+    ano,
+    mes,
+    dia,
+  };
+}
+
+/**
  * Format vencimento (dd/MM/yyyy) to show month name in Portuguese.
  * Ex: "10/03/2025" → "10 de Março de 2025"
  */

@@ -32,10 +32,11 @@ import {
   AlertTriangle,
   Clock,
   Zap,
+  CalendarDays,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { useBillings, formatVencimentoComMes, getSmartLabel } from "@/hooks/use-billings";
+import { useBillings, formatVencimentoComMes, getSmartLabel, extractMesInfo } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
@@ -99,6 +100,38 @@ export default function Invoices() {
     }
     return pages;
   }, [page, totalPages]);
+
+  // Group paginated invoices by month for section headers
+  const monthGroups = useMemo(() => {
+    const groups: { mesNome: string; mesAno: string; invoices: BillingSummary[] }[] = [];
+    const map = new Map<string, BillingSummary[]>();
+
+    for (const b of paginatedBillings) {
+      const info = extractMesInfo(b.vencimento);
+      const key = info?.mesAno || "outros";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(b);
+    }
+
+    // Sort groups chronologically descending (most recent first)
+    const sortedKeys = [...map.keys()]
+      .filter((k) => k !== "outros")
+      .sort()
+      .reverse();
+    if (map.has("outros")) sortedKeys.push("outros");
+
+    for (const key of sortedKeys) {
+      const invoices = map.get(key)!;
+      const firstInfo = extractMesInfo(invoices[0]?.vencimento || "");
+      groups.push({
+        mesNome: firstInfo?.mesNome || key,
+        mesAno: key,
+        invoices,
+      });
+    }
+
+    return groups;
+  }, [paginatedBillings]);
 
   const startItem = filteredBillings.length > 0 ? (page - 1) * ITEMS_PER_PAGE + 1 : 0;
   const endItem = Math.min(page * ITEMS_PER_PAGE, filteredBillings.length);
@@ -168,176 +201,198 @@ export default function Invoices() {
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {paginatedBillings.map((billing, index) => {
-            const status = statusConfig[billing.status] || statusConfig.pendente;
-            const StatusIcon = status.icon;
-            const smartLabel = getSmartLabel(billing);
-
-            // Card styling based on smart label type
-            const cardStyle =
-              smartLabel.type === "vencida"
-                ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
-                : smartLabel.type === "vence-hoje"
-                ? "border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40"
-                : smartLabel.type === "a-vencer"
-                ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
-                : "border-border hover:bg-secondary/30";
-
-            // Smart label badge styling
-            const labelBadgeStyle =
-              smartLabel.type === "vencida"
-                ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                : smartLabel.type === "vence-hoje"
-                ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
-                : smartLabel.type === "a-vencer"
-                ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-                : "bg-secondary text-muted-foreground";
-
-            const SmartIcon =
-              smartLabel.type === "vencida"
-                ? AlertTriangle
-                : smartLabel.type === "vence-hoje"
-                ? Zap
-                : smartLabel.type === "a-vencer"
-                ? Clock
-                : FileText;
-
-            return (
-              <div
-                key={billing.id}
-                className="animate-[slideUp_0.2s_ease-out]"
-                style={{ animationDelay: `${0.03 * index}s` }}
-              >
-                <Card
-                  className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
-                  onClick={() => navigate(`/faturas/${billing.id}`)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 min-w-0">
-                        <div
-                          className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
-                            smartLabel.type === "vencida"
-                              ? "bg-red-100 dark:bg-red-900/30"
-                              : smartLabel.type === "vence-hoje"
-                              ? "bg-orange-100 dark:bg-orange-900/30"
-                              : smartLabel.type === "a-vencer"
-                              ? "bg-amber-100 dark:bg-amber-900/30"
-                              : "bg-secondary"
-                          }`}
-                        >
-                          <SmartIcon
-                            className={`h-4 w-4 ${
-                              smartLabel.type === "vencida"
-                                ? "text-red-600 dark:text-red-400"
-                                : smartLabel.type === "vence-hoje"
-                                ? "text-orange-600 dark:text-orange-400"
-                                : smartLabel.type === "a-vencer"
-                                ? "text-amber-600 dark:text-amber-400"
-                                : "text-muted-foreground"
-                            }`}
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span
-                              className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelBadgeStyle}`}
-                            >
-                              {smartLabel.text}
-                            </span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {billing.competencia}
-                            {billing.status === "pago" && billing.data_pagamento && (
-                              <> · Pago em: {billing.data_pagamento}</>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                        <div className="text-right">
-                          <p className="text-sm font-medium text-foreground whitespace-nowrap">
-                            {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                          </p>
-                          {billing.status === "pago" && billing.valor_pago && (
-                            <p className="text-[10px] text-muted-foreground">
-                              Pago
-                            </p>
-                          )}
-                        </div>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
-                        >
-                          <StatusIcon className="h-3 w-3 mr-1" />
-                          {status.label}
-                        </Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-                      </div>
-                    </div>
-
-                    {/* Quick actions for pending */}
-                    {(billing.status === "pendente" || billing.status === "vencido") && (
-                      <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
-                        {billing.linha_digitavel && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
-                            }}
-                          >
-                            {copiedId === `line-${billing.id}` ? (
-                              <CopyCheck className="h-3 w-3 mr-1" />
-                            ) : (
-                              <Copy className="h-3 w-3 mr-1" />
-                            )}
-                            Linha digitável
-                          </Button>
-                        )}
-                        {billing.pix_copiaecola && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
-                            }}
-                          >
-                            {copiedId === `pix-${billing.id}` ? (
-                              <CopyCheck className="h-3 w-3 mr-1" />
-                            ) : (
-                              <Copy className="h-3 w-3 mr-1" />
-                            )}
-                            PIX
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
-                          }}
-                        >
-                          <Download className="h-3 w-3 mr-1" />
-                          PDF
-                        </Button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+        <div className="space-y-6">
+          {monthGroups.map((group, gi) => (
+            <div key={group.mesAno}>
+              {/* Month header */}
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-px flex-1 bg-border/30" />
+                <div className="flex items-center gap-2 shrink-0">
+                  <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
+                    {group.mesNome} {group.mesAno.split("-")[0]}
+                  </span>
+                </div>
+                <div className="h-px flex-1 bg-border/30" />
               </div>
-            );
-          })}
+
+              {/* Invoices in this month */}
+              <div className="space-y-2">
+                {group.invoices.map((billing, index) => {
+                  const status = statusConfig[billing.status] || statusConfig.pendente;
+                  const StatusIcon = status.icon;
+                  const smartLabel = getSmartLabel(billing);
+
+                  // Card styling based on smart label type
+                  const cardStyle =
+                    smartLabel.type === "vencida"
+                      ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
+                      : smartLabel.type === "vence-hoje"
+                      ? "border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40"
+                      : smartLabel.type === "a-vencer"
+                      ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
+                      : "border-border hover:bg-secondary/30";
+
+                  // Smart label badge styling
+                  const labelBadgeStyle =
+                    smartLabel.type === "vencida"
+                      ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                      : smartLabel.type === "vence-hoje"
+                      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
+                      : smartLabel.type === "a-vencer"
+                      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+                      : "bg-secondary text-muted-foreground";
+
+                  const SmartIcon =
+                    smartLabel.type === "vencida"
+                      ? AlertTriangle
+                      : smartLabel.type === "vence-hoje"
+                      ? Zap
+                      : smartLabel.type === "a-vencer"
+                      ? Clock
+                      : FileText;
+
+                  return (
+                    <div
+                      key={billing.id}
+                      className="animate-[slideUp_0.2s_ease-out]"
+                      style={{ animationDelay: `${0.03 * index}s` }}
+                    >
+                      <Card
+                        className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
+                        onClick={() => navigate(`/faturas/${billing.id}`)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-4 min-w-0">
+                              <div
+                                className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
+                                  smartLabel.type === "vencida"
+                                    ? "bg-red-100 dark:bg-red-900/30"
+                                    : smartLabel.type === "vence-hoje"
+                                    ? "bg-orange-100 dark:bg-orange-900/30"
+                                    : smartLabel.type === "a-vencer"
+                                    ? "bg-amber-100 dark:bg-amber-900/30"
+                                    : "bg-secondary"
+                                }`}
+                              >
+                                <SmartIcon
+                                  className={`h-4 w-4 ${
+                                    smartLabel.type === "vencida"
+                                      ? "text-red-600 dark:text-red-400"
+                                      : smartLabel.type === "vence-hoje"
+                                      ? "text-orange-600 dark:text-orange-400"
+                                      : smartLabel.type === "a-vencer"
+                                      ? "text-amber-600 dark:text-amber-400"
+                                      : "text-muted-foreground"
+                                  }`}
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span
+                                    className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelBadgeStyle}`}
+                                  >
+                                    {smartLabel.text}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {billing.vencimento}
+                                  {billing.competencia && (
+                                    <> · Ref. {billing.competencia}</>
+                                  )}
+                                  {billing.status === "pago" && billing.data_pagamento && (
+                                    <> · Pago em: {billing.data_pagamento}</>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+                              <div className="text-right">
+                                <p className="text-sm font-medium text-foreground whitespace-nowrap">
+                                  {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                                </p>
+                                {billing.status === "pago" && billing.valor_pago && (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Pago
+                                  </p>
+                                )}
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
+                              >
+                                <StatusIcon className="h-3 w-3 mr-1" />
+                                {status.label}
+                              </Badge>
+                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
+                            </div>
+                          </div>
+
+                          {/* Quick actions for pending */}
+                          {(billing.status === "pendente" || billing.status === "vencido") && (
+                            <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
+                              {billing.linha_digitavel && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+                                  }}
+                                >
+                                  {copiedId === `line-${billing.id}` ? (
+                                    <CopyCheck className="h-3 w-3 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3 w-3 mr-1" />
+                                  )}
+                                  Linha digitável
+                                </Button>
+                              )}
+                              {billing.pix_copiaecola && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+                                  }}
+                                >
+                                  {copiedId === `pix-${billing.id}` ? (
+                                    <CopyCheck className="h-3 w-3 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3 w-3 mr-1" />
+                                  )}
+                                  PIX
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
+                                }}
+                              >
+                                <Download className="h-3 w-3 mr-1" />
+                                PDF
+                              </Button>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
-      )}
+      )
 
       {/* Pagination */}
       {!isLoading && filteredBillings.length > 0 && totalPages > 1 && (
