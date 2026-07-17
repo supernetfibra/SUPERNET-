@@ -392,7 +392,7 @@ export default function Invoices() {
             </div>
           ))}
         </div>
-      )
+      )}
 
       {/* Pagination */}
       {!isLoading && filteredBillings.length > 0 && totalPages > 1 && (
