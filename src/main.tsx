@@ -12,14 +12,14 @@ import "./types/global.d.ts";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { BrandingProvider } from "@/lib/branding-context";
 
-// Eager imports — no lazy() for admin pages (avoids Suspense transitions)
-import AdminLogin from "./pages/AdminLogin";
-import AdminDashboard from "./pages/AdminDashboard";
-
-// Lazy imports for other pages
+// All pages are lazy-loaded for optimal code splitting.
+// Admin pages were previously eager but are on obscure routes (/admin,*)
+// and contain heavy components (Select, icons, complex forms).
 const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
 const ContactSelect = lazy(() => import("./pages/ContactSelect"));
+const AdminLogin = lazy(() => import("./pages/AdminLogin"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Invoices = lazy(() => import("./pages/Invoices"));
@@ -94,9 +94,9 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/login" element={<Suspense fallback={PageFallback}><Login /></Suspense>} />
               <Route path="/selecao-contato" element={<Suspense fallback={PageFallback}><ContactSelect /></Suspense>} />
 
-              {/* Admin routes — eagerly imported, NO Suspense */}
-              <Route path="/admin" element={<AdminLogin />} />
-              <Route path="/admin/dashboard" element={<AdminDashboard />} />
+              {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
+              <Route path="/admin" element={<Suspense fallback={PageFallback}><AdminLogin /></Suspense>} />
+              <Route path="/admin/dashboard" element={<Suspense fallback={PageFallback}><AdminDashboard /></Suspense>} />
 
               {/* Protected routes — lazy loaded */}
               <Route

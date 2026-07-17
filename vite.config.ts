@@ -22,41 +22,46 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Manual chunk splitting for better caching and lazy loading
-        manualChunks: {
+        manualChunks(id) {
           // Vendor chunks for large libraries
-          'react-vendor': ['react', 'react-dom', 'react-router'],
-          'convex-vendor': ['convex'],
-          // Large UI library chunks
-          'radix-ui': [
-            '@radix-ui/react-accordion',
-            '@radix-ui/react-alert-dialog',
-            '@radix-ui/react-avatar',
-            '@radix-ui/react-checkbox',
-            '@radix-ui/react-collapsible',
-            '@radix-ui/react-context-menu',
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-dropdown-menu',
-            '@radix-ui/react-hover-card',
-            '@radix-ui/react-label',
-            '@radix-ui/react-menubar',
-            '@radix-ui/react-navigation-menu',
-            '@radix-ui/react-popover',
-            '@radix-ui/react-progress',
-            '@radix-ui/react-radio-group',
-            '@radix-ui/react-scroll-area',
-            '@radix-ui/react-select',
-            '@radix-ui/react-separator',
-            '@radix-ui/react-slider',
-            '@radix-ui/react-switch',
-            '@radix-ui/react-tabs',
-            '@radix-ui/react-toggle',
-            '@radix-ui/react-toggle-group',
-            '@radix-ui/react-tooltip',
-          ],
-          // Heavy optional libraries - separate chunks for better lazy loading
-          'framer-motion': ['framer-motion'],
-          'charts': ['recharts'],
-          'forms': ['react-hook-form', '@hookform/resolvers', 'zod'],
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/') || id.includes('node_modules/react-router') || id.includes('node_modules/@remix-run')) {
+            return 'react-vendor';
+          }
+          if (id.includes('node_modules/convex/') || id.includes('node_modules/@convex-dev/')) {
+            return 'convex-vendor';
+          }
+          // Radix UI — used across most pages, good to cache together
+          if (id.includes('node_modules/@radix-ui/')) {
+            return 'radix-ui';
+          }
+          // Heavy libraries used only on specific pages — separate chunks
+          if (id.includes('node_modules/recharts/')) {
+            return 'charts';
+          }
+          if (id.includes('node_modules/react-hook-form') || id.includes('node_modules/@hookform/resolvers') || id.includes('node_modules/zod')) {
+            return 'forms';
+          }
+          if (id.includes('node_modules/framer-motion/')) {
+            return 'framer-motion';
+          }
+          if (id.includes('node_modules/embla-carousel/') || id.includes('node_modules/embla-carousel-react/')) {
+            return 'carousel';
+          }
+          if (id.includes('node_modules/react-day-picker/') || id.includes('node_modules/date-fns/')) {
+            return 'calendar';
+          }
+          if (id.includes('node_modules/cmdk/')) {
+            return 'command';
+          }
+          if (id.includes('node_modules/vaul/')) {
+            return 'drawer';
+          }
+          if (id.includes('node_modules/input-otp/')) {
+            return 'input-otp';
+          }
+          if (id.includes('node_modules/lucide-react/')) {
+            return 'icons';
+          }
         },
         // Optimize chunk size
         chunkFileNames: 'assets/[name]-[hash].js',
