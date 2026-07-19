@@ -45,8 +45,6 @@ export interface MeResponse {
 // Hook
 // ---------------------------------------------------------------------------
 
-const API_BASE = import.meta.env.VITE_CONVEX_URL;
-
 export function useMikWebAuth() {
   const [state, setState] = useState<AuthState>({
     isLoading: true,
@@ -154,25 +152,17 @@ export function useMikWebAuth() {
           throw new Error(data.error || "Erro ao fazer login.");
         }
 
-        if (!data.hasMultipleContacts || !data.contacts?.length) {
-          // Single contact or no contacts needed — authentication complete
-          setState({
-            isLoading: false,
-            isAuthenticated: true,
-            customer: {
-              id: data.customer.id,
-              name: data.customer.name,
-              cpf,
-            },
-            error: null,
-          });
-        } else {
-          // Multiple contacts — need to select one
-          setState((prev) => ({
-            ...prev,
-            isLoading: false,
-          }));
-        }
+        // Authentication complete — always go straight to dashboard
+        setState({
+          isLoading: false,
+          isAuthenticated: true,
+          customer: {
+            id: data.customer.id,
+            name: data.customer.name,
+            cpf,
+          },
+          error: null,
+        });
 
         return data;
       } catch (err) {
@@ -187,41 +177,6 @@ export function useMikWebAuth() {
       }
     },
     []
-  );
-
-  // Select contact after multiple contacts found
-  const selectContact = useCallback(
-    async (contactId: string): Promise<void> => {
-      setState((prev) => ({ ...prev, isLoading: true }));
-
-      try {
-        const response = await fetch("/api/mikweb/select-contact", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ contactId }),
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Erro ao selecionar contato.");
-        }
-
-        // Re-check session to get updated customer data
-        await checkSession();
-      } catch (err) {
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          error:
-            err instanceof Error
-              ? err.message
-              : "Erro ao selecionar contato.",
-        }));
-        throw err; // Re-throw so callers (e.g. ContactSelect) can prevent navigation on error
-      }
-    },
-    [checkSession]
   );
 
   // Logout
@@ -257,7 +212,6 @@ export function useMikWebAuth() {
     ...state,
     login,
     logout,
-    selectContact,
     clearError,
     checkSession,
   };

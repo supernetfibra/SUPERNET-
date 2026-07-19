@@ -70,6 +70,6 @@ This runs `npm run build`, then copies the output from `dist/` to `isolate/`.
 
 ## Notes
 
-- The app uses a test-user mode (CPF: `12345678900`, password: last 4 digits = `8900`) that bypasses the real MikWeb API — you can interact with the full UI without a backend.
+- The app uses a test-user mode (CPF: `12345678909`, password: last 4 digits = `8909`) that bypasses the real MikWeb API — you can interact with the full UI without a backend.
 - The Convex backend (`src/convex/`) requires a deployed Convex project to receive HTTP requests. The static preview in Option A uses pre-built mock data for testing.
 - HMR is disabled in `vite.config.ts` to avoid React 19 concurrent reconciliation crashes when proxied through Freebuff.

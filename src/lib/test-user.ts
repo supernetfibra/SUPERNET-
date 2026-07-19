@@ -2,11 +2,11 @@
  * Test User Module — fornece dados mockados para testes em preview/desenvolvimento
  * sem precisar da API MikWeb real ou deploy no Convex.
  *
- * CPF de teste: 12345678900
- * Senha: 8900 (4 últimos dígitos do CPF)
+ * CPF de teste: 12345678909
+ * Senha: 8909 (4 últimos dígitos do CPF)
  */
 
-const TEST_CPFS = ["12345678900"];
+const TEST_CPFS = ["12345678909"];
 const TEST_SESSION_KEY = "mikweb_test_session";
 
 interface TestSession {
@@ -34,7 +34,7 @@ export function getTestCustomerData() {
     full_name: "Usuário Teste",
     login: "teste",
     email: "teste@exemplo.com",
-    cpf_cnpj: "12345678900",
+    cpf_cnpj: "12345678909",
     rg: "12.345.678-9",
     person_type: "Física",
     phone_number: "11987654321",
@@ -117,12 +117,9 @@ export function getTestBillings() {
 export function getTestLoginResponse() {
   return {
     success: true,
-    customer: { id: "test-12345678900", name: "Usuário Teste", email: "teste@exemplo.com" },
-    hasMultipleContacts: true,
-    contacts: [
-      { id: "999-phone", label: "Telefone", phoneMasked: "(11) 9876****21" },
-      { id: "999-cell1", label: "Celular 1", phoneMasked: "(11) 9123****78" },
-    ],
+    customer: { id: "test-12345678909", name: "Usuário Teste", email: "teste@exemplo.com" },
+    hasMultipleContacts: false,
+    contacts: [],
     sessionToken: "test-session-token",
     expiresAt: Date.now() + 86400000,
   };
@@ -130,8 +127,8 @@ export function getTestLoginResponse() {
 
 export function storeTestSession() {
   const session: TestSession = {
-    cpf: "12345678900",
-    customerId: "test-12345678900",
+    cpf: "12345678909",
+    customerId: "test-12345678909",
     customerName: "Usuário Teste",
     email: "teste@exemplo.com",
     createdAt: Date.now(),

@@ -15,7 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ArrowRight, Loader2, AlertCircle, Wifi, Eye, EyeOff, ArrowLeft, CheckCircle2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { normalizeCpf, formatCpf, isValidCpf } from "@/lib/cpf";
 import { useAuth } from "@/lib/auth-context";
@@ -35,6 +35,7 @@ export default function Login() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [keepConnected, setKeepConnected] = useState(false);
   const [cpfTouched, setCpfTouched] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const cpfDigits = normalizeCpf(cpf);
   const cpfValid = cpfDigits.length === 11 && isValidCpf(cpfDigits);
@@ -61,24 +62,24 @@ export default function Login() {
     setIsSubmitting(true);
 
     try {
-      const result = await login(normalizeCpf(cpf), password, keepConnected);
-
-      if (result?.hasMultipleContacts && result?.contacts?.length > 0) {
-        navigate("/selecao-contato", {
-          state: {
-            contacts: result.contacts,
-            sessionToken: result.sessionToken,
-          },
-        });
-      } else {
-        navigate("/dashboard");
-      }
+      await login(normalizeCpf(cpf), password, keepConnected);
+      navigate("/dashboard");
     } catch {
       // Error is handled by the auth hook
     } finally {
       setIsSubmitting(false);
     }
   };
+  // Focus the password input when step transitions to "password"
+  useEffect(() => {
+    if (step === "password" && passwordRef.current) {
+      // Small delay to let the CSS transition start before focusing
+      const timer = setTimeout(() => {
+        passwordRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [step]);
 
   const goBack = () => {
     setStep("cpf");
@@ -251,13 +252,13 @@ export default function Login() {
                       </Label>
                       <div className="relative">
                         <Input
+                          ref={passwordRef}
                           id="password"
                           type={showPassword ? "text" : "password"}
                           placeholder="Últimos 4 dígitos do CPF"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="h-10 text-sm pr-10"
-                          autoFocus
                           autoComplete="off"
                           required
                         />

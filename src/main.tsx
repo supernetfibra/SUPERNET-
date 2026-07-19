@@ -17,7 +17,6 @@ import { BrandingProvider } from "@/lib/branding-context";
 // and contain heavy components (Select, icons, complex forms).
 const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
-const ContactSelect = lazy(() => import("./pages/ContactSelect"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
@@ -92,7 +91,6 @@ createRoot(document.getElementById("root")!).render(
               {/* Public routes — lazy loaded */}
               <Route path="/" element={<Suspense fallback={PageFallback}><Landing /></Suspense>} />
               <Route path="/login" element={<Suspense fallback={PageFallback}><Login /></Suspense>} />
-              <Route path="/selecao-contato" element={<Suspense fallback={PageFallback}><ContactSelect /></Suspense>} />
 
               {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
               <Route path="/admin" element={<Suspense fallback={PageFallback}><AdminLogin /></Suspense>} />

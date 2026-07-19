@@ -9,7 +9,6 @@ import { useMikWebAuth, type AuthState } from "@/hooks/use-mikweb-auth";
 interface AuthContextValue extends AuthState {
   login: (cpf: string, password: string, keepConnected?: boolean) => Promise<any>;
   logout: () => Promise<void>;
-  selectContact: (contactId: string) => Promise<void>;
   clearError: () => void;
   checkSession: () => Promise<void>;
 }
