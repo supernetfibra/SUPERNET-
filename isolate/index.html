@@ -7,11 +7,18 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Minha Supernet</title>
-  <script type="module" crossorigin src="/assets/index-BZBw5wXX.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/react-vendor-CAZhs5R0.js">
-  <link rel="modulepreload" crossorigin href="/assets/radix-ui-CH0O1Anr.js">
-  <link rel="modulepreload" crossorigin href="/assets/charts-BDnDyvis.js">
-  <link rel="stylesheet" crossorigin href="/assets/index-sQey9vLz.css">
+
+  <!-- Preconnect to API server for faster API calls (Lighthouse recommendation) -->
+  <link rel="preconnect" href="https://small-sparrow-797.convex.cloud" />
+  <link rel="dns-prefetch" href="https://small-sparrow-797.convex.cloud" />
+
+  <!-- DNS prefetch for external API -->
+  <link rel="dns-prefetch" href="https://api.mikweb.com.br" />
+  <script type="module" crossorigin src="/assets/index-eJkOP7jz.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/react-vendor-50LVkpl0.js">
+  <link rel="modulepreload" crossorigin href="/assets/icons-BBiwuxsk.js">
+  <link rel="modulepreload" crossorigin href="/assets/convex-vendor-D8q8AaLu.js">
+  <link rel="stylesheet" crossorigin href="/assets/index-DeBf8jtD.css">
 </head>
 
 
