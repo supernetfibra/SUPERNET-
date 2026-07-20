@@ -831,17 +831,28 @@ function maskPhone(phone: string): string {
 
 // ---------------------------------------------------------------------------
 // POST /api/push/subscribe — Save push notification subscription
+// Extracts session from cookie (like all other handlers)
 // ---------------------------------------------------------------------------
 const pushSubscribeHandler = httpAction(async (ctx, request) => {
   try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(
+        JSON.stringify({ error: "Sessão não encontrada." }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     const body = (await request.json()) as {
       endpoint: string;
       keys: { p256dh: string; auth: string };
-      sessionToken: string;
       userAgent?: string;
     };
 
-    if (!body.endpoint || !body.keys || !body.sessionToken) {
+    if (!body.endpoint || !body.keys) {
       return new Response(
         JSON.stringify({ error: "Dados da inscrição incompletos." }),
         { status: 400, headers: { "Content-Type": "application/json" } }
@@ -851,7 +862,7 @@ const pushSubscribeHandler = httpAction(async (ctx, request) => {
     await ctx.runMutation(api.pushNotifications.saveSubscription, {
       endpoint: body.endpoint,
       keys: body.keys,
-      sessionToken: body.sessionToken,
+      sessionToken,
       userAgent: body.userAgent,
     });
 
@@ -876,7 +887,6 @@ const pushUnsubscribeHandler = httpAction(async (ctx, request) => {
   try {
     const body = (await request.json()) as {
       endpoint: string;
-      sessionToken: string;
     };
 
     if (!body.endpoint) {
@@ -888,7 +898,6 @@ const pushUnsubscribeHandler = httpAction(async (ctx, request) => {
 
     await ctx.runMutation(api.pushNotifications.removeSubscription, {
       endpoint: body.endpoint,
-      sessionToken: body.sessionToken || "",
     });
 
     return new Response(JSON.stringify({ success: true }), {

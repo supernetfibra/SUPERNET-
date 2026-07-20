@@ -89,7 +89,6 @@ const schema = defineSchema(
     }).index("by_type", ["type"])
       .index("by_cpf", ["cpf"])
       .index("by_timestamp", ["timestamp"]),
-  },
 
     // Push notification subscriptions
     pushSubscriptions: defineTable({

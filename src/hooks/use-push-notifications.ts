@@ -10,7 +10,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/hooks/use-toast";
 
 // Public VAPID key — must be set as VITE_VAPID_PUBLIC_KEY in .env
@@ -35,7 +34,6 @@ interface PushNotificationState {
 }
 
 export function usePushNotifications() {
-  const { customer, sessionToken } = useAuth();
   const [state, setState] = useState<PushNotificationState>({
     status: "unsupported",
     isSubscribed: false,
@@ -187,7 +185,7 @@ export function usePushNotifications() {
       const applicationServerKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey,
+        applicationServerKey: applicationServerKey as BufferSource,
       });
 
       // Send subscription to the server
@@ -200,10 +198,10 @@ export function usePushNotifications() {
       const response = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           endpoint: subJSON.endpoint,
           keys: subJSON.keys,
-          sessionToken: sessionToken || "",
           userAgent: navigator.userAgent,
         }),
       });
@@ -225,7 +223,7 @@ export function usePushNotifications() {
       });
       return false;
     }
-  }, [sessionToken, updateState, registerServiceWorker]);
+  }, [updateState, registerServiceWorker]);
 
   // -----------------------------------------------------------------------
   // Unsubscribe from push notifications
@@ -244,9 +242,9 @@ export function usePushNotifications() {
         await fetch("/api/push/unsubscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({
             endpoint: subJSON.endpoint || "",
-            sessionToken: sessionToken || "",
           }),
         });
       }
@@ -263,7 +261,7 @@ export function usePushNotifications() {
       });
       return false;
     }
-  }, [sessionToken, updateState, getSubscription]);
+  }, [updateState, getSubscription]);
 
   // -----------------------------------------------------------------------
   // Toggle subscription on/off

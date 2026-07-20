@@ -14,8 +14,28 @@
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { action, mutation, query, internalAction, internalMutation } from "./_generated/server";
+import { action, mutation, query, internalAction } from "./_generated/server";
 import webPush from "web-push";
+
+// Helper to bypass circular type references when calling queries from actions
+// in the same module. The runtime still resolves correctly via the Convex
+// internal API — this is purely a TypeScript workaround.
+const PN = internal.pushNotifications as any;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface PushSubInfo {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+interface PushResult {
+  success: boolean;
+  statusCode?: number;
+  error?: string;
+}
 
 // ---------------------------------------------------------------------------
 // VAPID configuration
@@ -31,7 +51,6 @@ function getVapidConfig() {
 
 // ---------------------------------------------------------------------------
 // Subscribe / Unsubscribe Mutations
-// Called from the client when the user opts in or out of push notifications.
 // ---------------------------------------------------------------------------
 
 export const saveSubscription = mutation({
@@ -45,17 +64,15 @@ export const saveSubscription = mutation({
     userAgent: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Find the session to associate subscriber with customer data
     const session = await ctx.db
       .query("mikwebSessions")
       .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.sessionToken))
       .first();
 
     if (!session) {
-      throw new Error("Sessão não encontrada ou expirada.");
+      throw new Error("Sess\u00e3o n\u00e3o encontrada ou expirada.");
     }
 
-    // Remove any existing subscription with the same endpoint (device re-subscribes)
     const existing = await ctx.db
       .query("pushSubscriptions")
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
@@ -92,7 +109,6 @@ export const removeSubscription = mutation({
       .first();
 
     if (existing) {
-      // Optional: only allow removal if the session matches or no session required
       await ctx.db.delete(existing._id);
     }
 
@@ -164,16 +180,13 @@ export const getAllSubscriptions = query({
 // Send push notification to a single subscription
 // ---------------------------------------------------------------------------
 
-async function sendPushToSubscription(subscription: {
-  endpoint: string;
-  keys: { p256dh: string; auth: string };
-}, payload: {
+async function sendPushToSubscription(subscription: PushSubInfo, payload: {
   title: string;
   body: string;
   tag?: string;
   data?: Record<string, unknown>;
   actions?: Array<{ action: string; title: string }>;
-}): Promise<{ success: boolean; statusCode?: number; error?: string }> {
+}): Promise<PushResult> {
   const vapid = getVapidConfig();
 
   if (!vapid.publicKey || !vapid.privateKey) {
@@ -190,19 +203,36 @@ async function sendPushToSubscription(subscription: {
       },
       JSON.stringify(payload),
       {
-        TTL: 86400, // 24 hours
+        TTL: 86400,
         urgency: "high",
       }
     );
 
     return { success: true, statusCode: result.statusCode };
   } catch (err: any) {
-    // Handle 410/404 — subscription is expired or invalid
     if (err.statusCode === 410 || err.statusCode === 404) {
       return { success: false, error: "subscription_expired", statusCode: err.statusCode };
     }
     return { success: false, error: err.message || "Unknown error", statusCode: err.statusCode };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers for counting results
+// ---------------------------------------------------------------------------
+
+function countSent(results: PromiseSettledResult<PushResult>[]): number {
+  return results.filter((r) => r.status === "fulfilled" && r.value.success).length;
+}
+
+function countFailed(results: PromiseSettledResult<PushResult>[]): number {
+  return results.filter(
+    (r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.success)
+  ).length;
+}
+
+function toPushSubInfo(raw: any): PushSubInfo {
+  return { endpoint: raw.endpoint, keys: raw.keys };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,40 +247,24 @@ export const sendNotificationToCustomer = internalAction({
     tag: v.optional(v.string()),
     data: v.optional(v.any()),
   },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.runQuery(internal.pushNotifications.getSubscriptionsByCpf, {
+  handler: async (ctx, args): Promise<{ sent: number; failed: number }> => {
+    const raw = await ctx.runQuery(PN.getSubscriptionsByCpf, {
       cpf: args.cpf,
     });
+    const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
 
     const results = await Promise.allSettled(
       subscriptions.map((sub) =>
-        sendPushToSubscription(
-          { endpoint: sub.endpoint, keys: sub.keys },
-          {
-            title: args.title,
-            body: args.body,
-            tag: args.tag || "billing",
-            data: { cpf: args.cpf, ...(args.data as Record<string, unknown>) },
-          }
-        )
+        sendPushToSubscription(sub, {
+          title: args.title,
+          body: args.body,
+          tag: args.tag || "billing",
+          data: { cpf: args.cpf, ...(args.data as Record<string, unknown>) },
+        })
       )
     );
 
-    // Clean up expired subscriptions
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (result.status === "fulfilled" && result.value.success === false && result.value.error === "subscription_expired") {
-        await ctx.runMutation(internal.pushNotifications.removeSubscription, {
-          endpoint: subscriptions[i].endpoint,
-          sessionToken: "",
-        });
-      }
-    }
-
-    return {
-      sent: results.filter((r) => r.status === "fulfilled" && r.value.success).length,
-      failed: results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.success)).length,
-    };
+    return { sent: countSent(results), failed: countFailed(results) };
   },
 });
 
@@ -265,27 +279,25 @@ export const broadcastNotification = internalAction({
     tag: v.optional(v.string()),
     data: v.optional(v.any()),
   },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.runQuery(internal.pushNotifications.getAllSubscriptions);
+  handler: async (ctx, args): Promise<{ total: number; sent: number; failed: number }> => {
+    const raw = await ctx.runQuery(PN.getAllSubscriptions);
+    const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
 
     const results = await Promise.allSettled(
       subscriptions.map((sub) =>
-        sendPushToSubscription(
-          { endpoint: sub.endpoint, keys: sub.keys },
-          {
-            title: args.title,
-            body: args.body,
-            tag: args.tag || "broadcast",
-            data: args.data as Record<string, unknown>,
-          }
-        )
+        sendPushToSubscription(sub, {
+          title: args.title,
+          body: args.body,
+          tag: args.tag || "broadcast",
+          data: args.data as Record<string, unknown>,
+        })
       )
     );
 
     return {
       total: subscriptions.length,
-      sent: results.filter((r) => r.status === "fulfilled" && r.value.success).length,
-      failed: results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.success)).length,
+      sent: countSent(results),
+      failed: countFailed(results),
     };
   },
 });
@@ -300,29 +312,24 @@ export const sendTestNotification = action({
     title: v.optional(v.string()),
     body: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.runQuery(internal.pushNotifications.getSubscriptionsBySession, {
+  handler: async (ctx, args): Promise<{ sent: number; failed: number }> => {
+    const raw = await ctx.runQuery(PN.getSubscriptionsBySession, {
       sessionToken: args.sessionToken,
     });
+    const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
 
     const results = await Promise.allSettled(
       subscriptions.map((sub) =>
-        sendPushToSubscription(
-          { endpoint: sub.endpoint, keys: sub.keys },
-          {
-            title: args.title || "\ud83d\udd14 Teste de Notifica\u00e7\u00e3o",
-            body: args.body || "Se voc\u00ea est\u00e1 vendo isso, as notifica\u00e7\u00f5es push est\u00e3o funcionando! \ud83c\udf89",
-            tag: "test",
-            data: { url: "/dashboard" },
-          }
-        )
+        sendPushToSubscription(sub, {
+          title: args.title || "\ud83d\udd14 Teste de Notifica\u00e7\u00e3o",
+          body: args.body || "Se voc\u00ea est\u00e1 vendo isso, as notifica\u00e7\u00f5es push est\u00e3o funcionando! \ud83c\udf89",
+          tag: "test",
+          data: { url: "/dashboard" },
+        })
       )
     );
 
-    return {
-      sent: results.filter((r) => r.status === "fulfilled" && r.value.success).length,
-      failed: results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.success)).length,
-    };
+    return { sent: countSent(results), failed: countFailed(results) };
   },
 });
 
@@ -332,58 +339,41 @@ export const sendTestNotification = action({
 
 export const checkAndNotify = internalAction({
   args: {},
-  handler: async (ctx) => {
-    const subscriptions = await ctx.runQuery(internal.pushNotifications.getAllSubscriptions);
-    if (subscriptions.length === 0) {
-      return { notified: 0, message: "No subscriptions" };
+  handler: async (ctx): Promise<{ notified: number; totalCpfs: number }> => {
+    const raw = await ctx.runQuery(PN.getAllSubscriptions);
+    const allSubs: any[] = raw || [];
+
+    if (allSubs.length === 0) {
+      return { notified: 0, totalCpfs: 0 };
     }
 
-    // Group unique CPFs
-    const uniqueCpfs = [...new Set(subscriptions.map((s) => s.cpf))];
+    const uniqueCpfs: string[] = [...new Set(allSubs.map((s: any) => s.cpf))];
 
     let totalNotified = 0;
 
     for (const cpf of uniqueCpfs) {
       try {
-        const customerSubscriptions = subscriptions.filter((s) => s.cpf === cpf);
-        const customerName = customerSubscriptions[0]?.customerName || "Cliente";
+        const customerSubs: any[] = allSubs.filter((s: any) => s.cpf === cpf);
+        const customerName: string = customerSubs[0]?.customerName || "Cliente";
+
+        const pushSubs: PushSubInfo[] = customerSubs.map(toPushSubInfo);
 
         const results = await Promise.allSettled(
-          customerSubscriptions.map((sub) =>
-            sendPushToSubscription(
-              { endpoint: sub.endpoint, keys: sub.keys },
-              {
-                title: "\ud83d\udccb Faturas Pendentes",
-                body: `${customerName}, verifique suas faturas no Portal do Cliente.`,
-                tag: `billing-reminder-${cpf}`,
-                data: { url: "/faturas", cpf },
-                actions: [
-                  { action: "open", title: "Ver faturas" },
-                  { action: "close", title: "Fechar" },
-                ],
-              }
-            )
+          pushSubs.map((sub) =>
+            sendPushToSubscription(sub, {
+              title: "\ud83d\udccb Faturas Pendentes",
+              body: `${customerName}, verifique suas faturas no Portal do Cliente.`,
+              tag: `billing-reminder-${cpf}`,
+              data: { url: "/faturas", cpf },
+              actions: [
+                { action: "open", title: "Ver faturas" },
+                { action: "close", title: "Fechar" },
+              ],
+            })
           )
         );
 
-        totalNotified += results.filter(
-          (r) => r.status === "fulfilled" && r.value.success
-        ).length;
-
-        // Clean up expired subscriptions
-        for (let i = 0; i < results.length; i++) {
-          const result = results[i];
-          if (
-            result.status === "fulfilled" &&
-            result.value.success === false &&
-            result.value.error === "subscription_expired"
-          ) {
-            await ctx.runMutation(internal.pushNotifications.removeSubscription, {
-              endpoint: customerSubscriptions[i].endpoint,
-              sessionToken: customerSubscriptions[i].sessionToken,
-            });
-          }
-        }
+        totalNotified += countSent(results);
       } catch (err) {
         console.error(`[CRON] Error notifying customer ${cpf}:`, err);
       }
