@@ -159,9 +159,9 @@ export default function Invoices() {
               </div>
 
               <div className="space-y-1">
-                {paid.map((billing: BillingSummary, index: number) => {
+                {paid.slice(0, 3).map((billing: BillingSummary, index: number) => {
                   const mesInfo = extractMesInfo(billing.vencimento);
-                  const mesLabel = billing.competencia || mesInfo?.mesNome || "";
+                  const mesLabel = mesInfo ? `${mesInfo.mesNome} de ${mesInfo.ano}` : billing.competencia || "";
                   return (
                     <button
                       key={billing.id}
