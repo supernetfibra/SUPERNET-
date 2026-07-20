@@ -16,9 +16,9 @@ auth.addHttpRoutes(http);
 
 // ---------------------------------------------------------------------------
 // Test user configuration — bypasses MikWeb API for development/preview
-// CPF: 12345678900  |  Password: últimos 4 dígitos (8900)
+// CPF: 12345678909  |  Password: últimos 4 dígitos (8909)
 // ---------------------------------------------------------------------------
-const TEST_CPFS = ["12345678900"];
+const TEST_CPFS = ["12345678909"];
 
 function isTestCpf(cpf: string): boolean {
   return TEST_CPFS.includes(cpf.replace(/\D/g, ""));
@@ -34,7 +34,7 @@ const MOCK_TEST_CUSTOMER = {
   full_name: "Usuário Teste",
   login: "teste",
   email: "teste@exemplo.com",
-  cpf_cnpj: "12345678900",
+  cpf_cnpj: "12345678909",
   person_type: "Física",
   phone_number: "11987654321",
   cell_phone_number_1: "11912345678",
@@ -71,6 +71,8 @@ const MOCK_TEST_BILLINGS = [
     pix_copy_paste_base64: "000201010212261060014br.gov.bcb.pix2558api.pix.com/v2/cobv/12345678901234567890123456785204000053039865406129.905802BR5913Cliente Teste6009Sao Paulo62070503***63041234",
     observation: null,
     our_number: "123456",
+    fine_amount: 12.99,
+    interest_amount: 2.60,
   },
   {
     id: 1002,
@@ -828,12 +830,128 @@ function maskPhone(phone: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/push/subscribe — Save push notification subscription
+// ---------------------------------------------------------------------------
+const pushSubscribeHandler = httpAction(async (ctx, request) => {
+  try {
+    const body = (await request.json()) as {
+      endpoint: string;
+      keys: { p256dh: string; auth: string };
+      sessionToken: string;
+      userAgent?: string;
+    };
+
+    if (!body.endpoint || !body.keys || !body.sessionToken) {
+      return new Response(
+        JSON.stringify({ error: "Dados da inscrição incompletos." }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    await ctx.runMutation(api.pushNotifications.saveSubscription, {
+      endpoint: body.endpoint,
+      keys: body.keys,
+      sessionToken: body.sessionToken,
+      userAgent: body.userAgent,
+    });
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    console.error("[PUSH_SUBSCRIBE_ERROR]", msg);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/push/unsubscribe — Remove push notification subscription
+// ---------------------------------------------------------------------------
+const pushUnsubscribeHandler = httpAction(async (ctx, request) => {
+  try {
+    const body = (await request.json()) as {
+      endpoint: string;
+      sessionToken: string;
+    };
+
+    if (!body.endpoint) {
+      return new Response(
+        JSON.stringify({ error: "Endpoint não informado." }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    await ctx.runMutation(api.pushNotifications.removeSubscription, {
+      endpoint: body.endpoint,
+      sessionToken: body.sessionToken || "",
+    });
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    console.error("[PUSH_UNSUBSCRIBE_ERROR]", msg);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Register routes
 // ---------------------------------------------------------------------------
+http.route({ path: "/api/push/subscribe", method: "POST", handler: pushSubscribeHandler });
+http.route({ path: "/api/push/unsubscribe", method: "POST", handler: pushUnsubscribeHandler });
+
+// ---------------------------------------------------------------------------
+// POST /api/push/test — Send a test push notification to the current session
+// ---------------------------------------------------------------------------
+const pushTestHandler = httpAction(async (ctx, request) => {
+  try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(
+        JSON.stringify({ error: "Sessão não encontrada." }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const result = await ctx.runAction(api.pushNotifications.sendTestNotification, {
+      sessionToken,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Erro desconhecido";
+    console.error("[PUSH_TEST_ERROR]", msg);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+http.route({ path: "/api/push/test", method: "POST", handler: pushTestHandler });
+
 http.route({ path: "/api/mikweb/login", method: "POST", handler: loginHandler });
 http.route({ path: "/api/mikweb/logout", method: "POST", handler: logoutHandler });
 http.route({ path: "/api/mikweb/me", method: "GET", handler: meHandler });
 http.route({ path: "/api/mikweb/select-contact", method: "POST", handler: selectContactHandler });
+http.route({ path: "/api/mikweb/customer", method: "GET", handler: customerHandler });
 http.route({ path: "/api/mikweb/billings", method: "GET", handler: billingsHandler });
 http.route({ path: "/api/mikweb/billings/:id/download", method: "GET", handler: billingDownloadHandler });
 

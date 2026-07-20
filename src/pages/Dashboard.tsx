@@ -8,32 +8,26 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   FileText,
-  Download,
-  Copy,
-  CopyCheck,
   Calendar,
   ChevronRight,
   TrendingDown,
   AlertTriangle,
   Clock,
-  Zap,
-  CreditCard,
   CheckCircle2,
-  Smartphone,
+  WifiOff,
+  RefreshCw,
+  X,
   type LucideIcon,
 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { useBillings, formatVencimentoComMes, getSmartLabel } from "@/hooks/use-billings";
+import InvoiceCard from "@/components/InvoiceCard";
+import { useBillings, diasAteVencimento, formatCacheAge } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
 
 // ---------------------------------------------------------------------------
@@ -54,196 +48,6 @@ function SummarySkeleton({ delay }: { delay: string }) {
               <div className="h-3 w-20 bg-secondary/50 rounded-sm animate-pulse" />
             </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Invoice card component (with Pagar CTA)
-// ---------------------------------------------------------------------------
-function InvoiceCard({
-  billing,
-  index,
-  copiedId,
-  handleCopy,
-  navigate,
-}: {
-  billing: BillingSummary;
-  index: number;
-  copiedId: string | null;
-  handleCopy: (text: string, id: string) => void;
-  navigate: (path: string) => void;
-}) {
-  const status = statusConfig[billing.status] || statusConfig.pendente;
-  const StatusIcon = status.icon;
-  const smartLabel = getSmartLabel(billing);
-
-  const isPending = billing.status === "pendente" || billing.status === "vencido";
-
-  const cardStyle =
-    smartLabel.type === "vencida"
-      ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
-      : smartLabel.type === "vence-hoje"
-      ? "border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40"
-      : smartLabel.type === "a-vencer"
-      ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
-      : "border-border hover:bg-secondary/30";
-
-  const labelBadgeStyle =
-    smartLabel.type === "vencida"
-      ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-      : smartLabel.type === "vence-hoje"
-      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
-      : smartLabel.type === "a-vencer"
-      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-      : "bg-secondary text-muted-foreground";
-
-  const SmartIcon =
-    smartLabel.type === "vencida"
-      ? AlertTriangle
-      : smartLabel.type === "vence-hoje"
-      ? Zap
-      : smartLabel.type === "a-vencer"
-      ? Clock
-      : FileText;
-
-  return (
-    <div
-      className="animate-[slideUp_0.2s_ease-out]"
-      style={{ animationDelay: `${0.05 * index}s` }}
-    >
-      <Card
-        className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
-        onClick={() => navigate(`/faturas/${billing.id}`)}
-      >
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 min-w-0">
-              <div
-                className={`hidden sm:flex h-9 w-9 rounded-full items-center justify-center shrink-0 ${
-                  smartLabel.type === "vencida"
-                    ? "bg-red-100 dark:bg-red-900/30"
-                    : smartLabel.type === "vence-hoje"
-                    ? "bg-orange-100 dark:bg-orange-900/30"
-                    : smartLabel.type === "a-vencer"
-                    ? "bg-amber-100 dark:bg-amber-900/30"
-                    : "bg-secondary"
-                }`}
-              >
-                <SmartIcon
-                  className={`h-4 w-4 ${
-                    smartLabel.type === "vencida"
-                      ? "text-red-600 dark:text-red-400"
-                      : smartLabel.type === "vence-hoje"
-                      ? "text-orange-600 dark:text-orange-400"
-                      : smartLabel.type === "a-vencer"
-                      ? "text-amber-600 dark:text-amber-400"
-                      : "text-muted-foreground"
-                  }`}
-                />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelBadgeStyle}`}
-                  >
-                    {smartLabel.text}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {billing.vencimento}
-                  {billing.competencia && (
-                    <> · Ref. {billing.competencia}</>
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm font-medium text-foreground">
-                  {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                </p>
-              </div>
-              <Badge
-                variant="outline"
-                className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color}`}
-              >
-                <StatusIcon className="h-3 w-3 mr-1" />
-                {status.label}
-              </Badge>
-              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-            </div>
-          </div>
-
-          {/* Quick actions */}
-          {isPending && (
-            <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center gap-2">
-              {/* Primary CTA: Pagar */}
-              <Button
-                size="sm"
-                className="h-8 text-xs font-medium"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/faturas/${billing.id}`);
-                }}
-              >
-                <CreditCard className="h-3.5 w-3.5 mr-1.5" />
-                Pagar
-              </Button>
-
-              {billing.linha_digitavel && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
-                  }}
-                >
-                  {copiedId === `line-${billing.id}` ? (
-                    <CopyCheck className="h-3 w-3 mr-1" />
-                  ) : (
-                    <Copy className="h-3 w-3 mr-1" />
-                  )}
-                  Copiar código
-                </Button>
-              )}
-              {billing.pix_copiaecola && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
-                  }}
-                >
-                  {copiedId === `pix-${billing.id}` ? (
-                    <CopyCheck className="h-3 w-3 mr-1" />
-                  ) : (
-                    <Smartphone className="h-3 w-3 mr-1" />
-                  )}
-                  Pix
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-muted-foreground hover:text-foreground ml-auto"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
-                }}
-              >
-                <Download className="h-3 w-3 mr-1" />
-                PDF
-              </Button>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>
@@ -280,7 +84,7 @@ function SectionHeader({
 export default function Dashboard() {
   const navigate = useNavigate();
   const { customer } = useAuth();
-  const { billings, isLoading } = useBillings();
+  const { billings, isLoading, isCached, cacheAge } = useBillings();
   const [copiedId, handleCopy] = useCopyToClipboard();
 
   const pendingBillings = billings.filter((b: BillingSummary) => b.status === "pendente");
@@ -294,11 +98,62 @@ export default function Dashboard() {
   const nextDueDate = activeBillings[0]?.vencimento;
 
   // Last payment info
+  // Retry when offline — reload to attempt fresh fetch
+  const handleRetry = () => window.location.reload();
+
   const lastPayment = paidBillings.sort((a, b) => {
     const dateA = a.data_pagamento || "";
     const dateB = b.data_pagamento || "";
     return dateB.localeCompare(dateA);
   })[0];
+
+  // ── Warning banner state ──
+  const [dismissedBanner, setDismissedBanner] = useState(() => {
+    try {
+      return sessionStorage.getItem("mikweb_dismissed_banner") === "true";
+    } catch { return false; }
+  });
+
+  const bannerInfo = useMemo(() => {
+    if (overdueBillings.length > 0) {
+      const total = overdueBillings.reduce((s: number, b: BillingSummary) => s + b.valor, 0);
+      return {
+        variant: "danger" as const,
+        title: `${overdueBillings.length} fatura${overdueBillings.length !== 1 ? "s" : ""} vencida${overdueBillings.length !== 1 ? "s" : ""}`,
+        message: `Você tem ${overdueBillings.length} fatura${overdueBillings.length !== 1 ? "s" : ""} em atraso, totalizando ${total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}. Regularize para evitar multas e juros.`,
+        action: "Ver faturas vencidas",
+      };
+    }
+
+    if (pendingBillings.length > 0) {
+      const expiringSoon = pendingBillings.filter((b: BillingSummary) => {
+        const dias = diasAteVencimento(b.vencimento);
+        return dias !== null && dias >= 0 && dias <= 3;
+      });
+
+      if (expiringSoon.length > 0) {
+        const dias = diasAteVencimento(expiringSoon[0].vencimento);
+        let msg = "";
+        if (dias === 0) msg = "Vence hoje! Não deixe para depois.";
+        else if (dias === 1) msg = "Vence amanhã! Evite atrasos.";
+        else msg = `Vence em ${dias} dias. Programe o pagamento.`;
+
+        return {
+          variant: "warning" as const,
+          title: `${expiringSoon.length} fatura${expiringSoon.length !== 1 ? "s" : ""} perto${expiringSoon.length !== 1 ? "s" : ""} do vencimento`,
+          message: msg,
+          action: "Ver faturas",
+        };
+      }
+    }
+
+    return null;
+  }, [overdueBillings, pendingBillings]);
+
+  const dismissBanner = () => {
+    setDismissedBanner(true);
+    try { sessionStorage.setItem("mikweb_dismissed_banner", "true"); } catch {}
+  };
 
   // Group invoices by overdue / to-expire
   const groupedActive = activeBillings.slice(0, 5);
@@ -320,6 +175,81 @@ export default function Dashboard() {
           Bem-vindo à sua área do cliente.
         </p>
       </div>
+
+      {/* Offline/Cached indicator */}
+      {!isLoading && isCached && (
+        <div className="animate-[slideUp_0.3s_ease-out] flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/10 text-xs text-amber-700 dark:text-amber-300">
+          <WifiOff className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Dados offline{formatCacheAge(cacheAge) ? ` — última atualização ${formatCacheAge(cacheAge)}` : ""}
+          </span>
+          <button
+            onClick={handleRetry}
+            className="flex items-center gap-1 font-medium hover:underline shrink-0"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {/* Warning Banner */}
+      {!dismissedBanner && !isLoading && bannerInfo && (
+        <div
+          className={`animate-[slideUp_0.3s_ease-out] rounded-lg border px-4 py-3 flex items-start gap-3 ${
+            bannerInfo.variant === "danger"
+              ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20"
+              : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20"
+          }`}
+        >
+          <div className={`shrink-0 mt-0.5 ${
+            bannerInfo.variant === "danger"
+              ? "text-red-500 dark:text-red-400"
+              : "text-amber-500 dark:text-amber-400"
+          }`}>
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`text-sm font-medium ${
+              bannerInfo.variant === "danger"
+                ? "text-red-800 dark:text-red-200"
+                : "text-amber-800 dark:text-amber-200"
+            }`}>
+              {bannerInfo.title}
+            </p>
+            <p className={`text-xs mt-1 ${
+              bannerInfo.variant === "danger"
+                ? "text-red-700 dark:text-red-300"
+                : "text-amber-700 dark:text-amber-300"
+            }`}>
+              {bannerInfo.message}
+            </p>
+            <Button
+              variant="link"
+              size="sm"
+              className={`h-auto p-0 mt-2 text-xs font-medium ${
+                bannerInfo.variant === "danger"
+                  ? "text-red-700 dark:text-red-300 hover:text-red-800"
+                  : "text-amber-700 dark:text-amber-300 hover:text-amber-800"
+              }`}
+              onClick={() => navigate("/faturas")}
+            >
+              {bannerInfo.action} →
+            </Button>
+          </div>
+          <button
+            onClick={dismissBanner}
+            className={`shrink-0 p-0.5 rounded-sm transition-opacity hover:opacity-70 ${
+              bannerInfo.variant === "danger"
+                ? "text-red-400 dark:text-red-500"
+                : "text-amber-400 dark:text-amber-500"
+            }`}
+            aria-label="Fechar aviso"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -466,14 +396,19 @@ export default function Dashboard() {
                 />
                 <div className="space-y-2">
                   {overdueGroup.map((billing, i) => (
-                    <InvoiceCard
+                    <div
                       key={billing.id}
-                      billing={billing}
-                      index={i}
-                      copiedId={copiedId}
-                      handleCopy={handleCopy}
-                      navigate={navigate}
-                    />
+                      className="animate-[slideUp_0.2s_ease-out]"
+                      style={{ animationDelay: `${0.05 * i}s` }}
+                    >
+                      <InvoiceCard
+                        variant="dashboard"
+                        billing={billing}
+                        copiedId={copiedId}
+                        handleCopy={handleCopy}
+                        onClick={() => navigate(`/faturas/${billing.id}`)}
+                      />
+                    </div>
                   ))}
                 </div>
               </div>
@@ -489,14 +424,19 @@ export default function Dashboard() {
                 />
                 <div className="space-y-2">
                   {toExpireGroup.map((billing, i) => (
-                    <InvoiceCard
+                    <div
                       key={billing.id}
-                      billing={billing}
-                      index={overdueGroup.length + i}
-                      copiedId={copiedId}
-                      handleCopy={handleCopy}
-                      navigate={navigate}
-                    />
+                      className="animate-[slideUp_0.2s_ease-out]"
+                      style={{ animationDelay: `${0.05 * (overdueGroup.length + i)}s` }}
+                    >
+                      <InvoiceCard
+                        variant="dashboard"
+                        billing={billing}
+                        copiedId={copiedId}
+                        handleCopy={handleCopy}
+                        onClick={() => navigate(`/faturas/${billing.id}`)}
+                      />
+                    </div>
                   ))}
                 </div>
               </div>

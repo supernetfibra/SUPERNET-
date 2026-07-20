@@ -15,6 +15,49 @@ import { BrandingProvider } from "@/lib/branding-context";
 // Theme provider
 import { ThemeProvider } from "@/lib/theme-provider";
 
+// Service Worker registration
+const SW_PATH = "/sw.js";
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  // Register on page load with a small delay to not block rendering
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register(SW_PATH, { scope: "/" })
+      .then((registration) => {
+        console.log("[SW] Registered:", registration.scope);
+
+        // If there's a waiting SW, activate it immediately
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+
+        // Handle updates — when a new SW is found, reload to activate
+        registration.addEventListener("updatefound", () => {
+          const newWorker = registration.installing;
+          if (newWorker) {
+            newWorker.addEventListener("statechange", () => {
+              if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                // New content is available, offer update
+                console.log("[SW] New version available — reload to update.");
+              }
+            });
+          }
+        });
+      })
+      .catch((err) => console.warn("[SW] Registration failed:", err));
+
+    // When a new SW takes over, reload the page for consistency
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      console.log("[SW] Controller changed — reloading.");
+      window.location.reload();
+    });
+  });
+}
+
+registerServiceWorker();
+
 // All pages are lazy-loaded for optimal code splitting.
 // Admin pages were previously eager but are on obscure routes (/admin,*)
 // and contain heavy components (Select, icons, complex forms).

@@ -100,45 +100,27 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (branding.providerName && branding.providerName !== "Seu Provedor") {
       document.title = branding.providerName;
-    } else {
-      // Fallback to default title
-      document.title = "Minha Supernet";
     }
+    // Otherwise keep the default title from index.html
   }, [branding.providerName]);
 
-  // Update favicon when logoUrl changes
+  // Update apple-touch-icon when logoUrl changes (for iOS share sheet)
   useEffect(() => {
-    if (!branding.logoUrl) {
-      // No logo — reset favicon to default SVG
-      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = "/logo.svg";
-      link.type = "image/svg+xml";
-      return;
-    }
+    if (!branding.logoUrl) return;
 
-    // Convert logo URL to a favicon-friendly format
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      // Draw the logo onto a 32x32 canvas for a proper favicon
       const canvas = document.createElement("canvas");
       canvas.width = 32;
       canvas.height = 32;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      // Use the image as favicon (centered, rounded)
-      // Check if image is already square — if so, just scale it
       const size = Math.min(img.width, img.height);
       const sx = (img.width - size) / 2;
       const sy = (img.height - size) / 2;
 
-      // Draw and round the corners slightly
       ctx.beginPath();
       ctx.arc(16, 16, 14, 0, Math.PI * 2);
       ctx.closePath();
@@ -147,16 +129,6 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
 
       const dataUrl = canvas.toDataURL("image/png");
 
-      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = dataUrl;
-      link.type = "image/png";
-
-      // Also update apple-touch-icon for iOS
       let appleLink = document.querySelector<HTMLLinkElement>("link[rel~='apple-touch-icon']");
       if (!appleLink) {
         appleLink = document.createElement("link");
@@ -164,9 +136,6 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         document.head.appendChild(appleLink);
       }
       appleLink.href = dataUrl;
-    };
-    img.onerror = () => {
-      // If the logo fails to load, keep default favicon
     };
     img.src = branding.logoUrl;
   }, [branding.logoUrl]);

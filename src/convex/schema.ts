@@ -90,6 +90,24 @@ const schema = defineSchema(
       .index("by_cpf", ["cpf"])
       .index("by_timestamp", ["timestamp"]),
   },
+
+    // Push notification subscriptions
+    pushSubscriptions: defineTable({
+      endpoint: v.string(),
+      keys: v.object({
+        p256dh: v.string(),
+        auth: v.string(),
+      }),
+      sessionToken: v.string(),
+      cpf: v.string(),
+      customerId: v.string(),
+      customerName: v.string(),
+      userAgent: v.optional(v.string()),
+      createdAt: v.number(),
+    }).index("by_sessionToken", ["sessionToken"])
+      .index("by_cpf", ["cpf"])
+      .index("by_endpoint", ["endpoint"]),
+  },
   {
     schemaValidation: false,
   },

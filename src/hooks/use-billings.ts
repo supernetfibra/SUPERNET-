@@ -21,13 +21,12 @@ export interface BillingSummary {
   linha_digitavel?: string;
   pix_copiaecola?: string;
   url_boleto?: string;
+  multa?: number;
+  juros?: number;
 }
 
 export interface BillingDetail extends BillingSummary {
   codigo_barras?: string;
-  url_boleto?: string;
-  multa?: number;
-  juros?: number;
   nosso_numero?: string;
   observacoes?: string;
 }
@@ -136,6 +135,9 @@ interface RawBilling {
   pix_copia_cola?: string;
   pix_code?: string;
   pix_copiaecola?: string;
+  // Late payment fees
+  fine_amount?: number;
+  interest_amount?: number;
 }
 
 /** Map raw API billing to frontend-friendly format */
@@ -151,7 +153,80 @@ function mapBilling(raw: RawBilling): BillingSummary {
     linha_digitavel: raw.digitable_line,
     pix_copiaecola: findPixCode(raw as unknown as Record<string, unknown>),
     url_boleto: raw.integration_link,
+    multa: raw.fine_amount ?? undefined,
+    juros: raw.interest_amount ?? undefined,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Offline cache — stores last successful billing response in localStorage
+// Keys are customer-specific so different users don't mix data.
+// ---------------------------------------------------------------------------
+
+const CACHE_PREFIX = "mikweb_billing_cache_";
+const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+
+interface BillingCache {
+  billings: BillingSummary[];
+  timestamp: number;
+  customerId: string;
+}
+
+function getCacheKey(customerId?: string): string | null {
+  if (!customerId) return null;
+  return CACHE_PREFIX + customerId;
+}
+
+function loadFromCache(customerId?: string): { billings: BillingSummary[]; age: number } | null {
+  const key = getCacheKey(customerId);
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const cached: BillingCache = JSON.parse(raw);
+    const age = Date.now() - cached.timestamp;
+    // Only use cache if it's from the same user and not too stale
+    if (cached.customerId !== customerId) return null;
+    if (age > CACHE_MAX_AGE) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return { billings: cached.billings, age };
+  } catch {
+    return null;
+  }
+}
+
+function saveToCache(customerId: string | undefined, billings: BillingSummary[]) {
+  if (!customerId) return;
+  const key = getCacheKey(customerId);
+  if (!key) return;
+  try {
+    const cache: BillingCache = {
+      billings,
+      timestamp: Date.now(),
+      customerId,
+    };
+    localStorage.setItem(key, JSON.stringify(cache));
+  } catch {
+    // localStorage full or unavailable — silently skip
+  }
+}
+
+function clearCache(customerId?: string) {
+  if (customerId) {
+    const key = getCacheKey(customerId);
+    if (key) {
+      try { localStorage.removeItem(key); } catch {}
+    }
+  } else {
+    // Clear all billing caches (used on logout)
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith(CACHE_PREFIX))
+        .forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,37 +237,43 @@ interface UseBillingsResult {
   billings: BillingSummary[];
   isLoading: boolean;
   error: string | null;
+  isCached: boolean;
+  cacheAge: number | null; // ms since last successful fetch, null if fresh
 }
 
 export function useBillings(): UseBillingsResult {
   const [billings, setBillings] = useState<BillingSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isCached, setIsCached] = useState(false);
+  const [cacheAge, setCacheAge] = useState<number | null>(null);
   const { customer } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
 
     async function fetchBillings() {
-      try {
-        // ---- TEST USER - return mock billings ----
-        if (customer?.id?.startsWith("test-") && isTestCpf(customer.cpf)) {
-          const mockRaw = getTestBillings() as RawBilling[];
-          const sorted = mockRaw.sort((a, b) => {
-            const aVencido = a.situation_name === "Vencido" || a.situation_name === "Em Atraso";
-            const bVencido = b.situation_name === "Vencido" || b.situation_name === "Em Atraso";
-            if (aVencido && !bVencido) return -1;
-            if (!aVencido && bVencido) return 1;
-            return (b.due_day || "").localeCompare(a.due_day || "");
-          });
-          if (!cancelled) {
-            setBillings(sorted.map(mapBilling));
-            setIsLoading(false);
-          }
-          return;
+      // ---- TEST USER - skip cache, return mock billings ----
+      if (customer?.id?.startsWith("test-") && isTestCpf(customer.cpf)) {
+        const mockRaw = getTestBillings() as RawBilling[];
+        const sorted = mockRaw.sort((a, b) => {
+          const aVencido = a.situation_name === "Vencido" || a.situation_name === "Em Atraso";
+          const bVencido = b.situation_name === "Vencido" || b.situation_name === "Em Atraso";
+          if (aVencido && !bVencido) return -1;
+          if (!aVencido && bVencido) return 1;
+          return (b.due_day || "").localeCompare(a.due_day || "");
+        });
+        if (!cancelled) {
+          setBillings(sorted.map(mapBilling));
+          setIsCached(false);
+          setCacheAge(null);
+          setIsLoading(false);
         }
-        // ---- END TEST USER ----
+        return;
+      }
+      // ---- END TEST USER ----
 
+      try {
         const response = await fetch("/api/mikweb/billings", {
           method: "GET",
           credentials: "include",
@@ -205,6 +286,7 @@ export function useBillings(): UseBillingsResult {
         const data = await response.json();
 
         if (!cancelled) {
+          let mapped: BillingSummary[] = [];
           if (Array.isArray(data.billings)) {
             const isVencido = (s: string) =>
               s === "Vencido" || s === "Em Atraso";
@@ -218,16 +300,36 @@ export function useBillings(): UseBillingsResult {
               const dateB = b.due_day || "";
               return dateB.localeCompare(dateA);
             });
-            setBillings(sorted.map(mapBilling));
-          } else {
-            setBillings([]);
+            mapped = sorted.map(mapBilling);
           }
+
+          // Save to cache for offline fallback
+          saveToCache(customer?.id, mapped);
+
+          setBillings(mapped);
+          setIsCached(false);
+          setCacheAge(null);
           setIsLoading(false);
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Erro ao carregar faturas.");
-          setIsLoading(false);
+        // ---- OFFLINE FALLBACK — try cache ----
+        const cached = loadFromCache(customer?.id);
+        if (cached && cached.billings.length > 0) {
+          if (!cancelled) {
+            setBillings(cached.billings);
+            setIsCached(true);
+            setCacheAge(cached.age);
+            setError(null); // Don't show error — we have cached data
+            setIsLoading(false);
+          }
+        } else {
+          // No cache either — show the error
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : "Erro ao carregar faturas.");
+            setIsCached(false);
+            setCacheAge(null);
+            setIsLoading(false);
+          }
         }
       }
     }
@@ -239,7 +341,7 @@ export function useBillings(): UseBillingsResult {
     };
   }, [customer]);
 
-  return { billings, isLoading, error };
+  return { billings, isLoading, error, isCached, cacheAge };
 }
 
 export function useBillingById(id: string | undefined): {
@@ -373,4 +475,14 @@ export function getSmartLabel(billing: BillingSummary): {
   return { text: formatVencimentoComMes(billing.vencimento), type: "normal" };
 }
 
-export { mapBilling, mapStatus, formatDate, extractPixCode, findPixCode };
+/**
+ * Format cache age in milliseconds to a human-readable string in Portuguese.
+ */
+export function formatCacheAge(ageMs: number | null): string | null {
+  if (ageMs === null) return null;
+  if (ageMs < 60000) return "menos de 1 min";
+  if (ageMs < 3600000) return `${Math.floor(ageMs / 60000)} min atr\u00e1s`;
+  return `${Math.floor(ageMs / 3600000)}h atr\u00e1s`;
+}
+
+export { mapBilling, mapStatus, formatDate, extractPixCode, findPixCode, clearCache };

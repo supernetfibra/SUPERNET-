@@ -4,7 +4,6 @@
  * Overdue invoices are grouped below, and paid invoices are a discreet list.
  */
 
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -12,28 +11,22 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   FileText,
-  Download,
-  Copy,
-  CopyCheck,
-  ChevronRight,
-  Loader2,
-  AlertTriangle,
-  Clock,
-  Zap,
-  CalendarDays,
   CheckCircle2,
+  ChevronRight,
+  WifiOff,
+  RefreshCw,
 } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useNavigate } from "react-router";
-import { useBillings, diasAteVencimento, getSmartLabel, extractMesInfo } from "@/hooks/use-billings";
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { statusConfig } from "@/lib/status-config";
+import InvoiceCard from "@/components/InvoiceCard";
+import { useBillings, diasAteVencimento, extractMesInfo, formatCacheAge } from "@/hooks/use-billings";
 import type { BillingSummary } from "@/hooks/use-billings";
 
 export default function Invoices() {
   const navigate = useNavigate();
-  const { billings, isLoading } = useBillings();
-  const [copiedId, handleCopy] = useCopyToClipboard();
+  const { billings, isLoading, isCached, cacheAge } = useBillings();
+
+  const handleRetry = () => window.location.reload();
 
   // Separate unpaid and paid invoices
   const { unpaid, paid, currentBilling } = useMemo(() => {
@@ -85,12 +78,26 @@ export default function Invoices() {
         </p>
       </div>
 
-      {/* Loading */}
-      {isLoading ? (
-        <div className="text-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Carregando faturas...</p>
+      {/* Offline/Cached indicator */}
+      {!isLoading && isCached && (
+        <div className="animate-[slideUp_0.3s_ease-out] flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/10 text-xs text-amber-700 dark:text-amber-300">
+          <WifiOff className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Dados offline{formatCacheAge(cacheAge) ? ` — última atualização ${formatCacheAge(cacheAge)}` : ""}
+          </span>
+          <button
+            onClick={handleRetry}
+            className="flex items-center gap-1 font-medium hover:underline shrink-0"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Tentar novamente
+          </button>
         </div>
+      )}
+
+      {/* Loading skeleton */}
+      {isLoading ? (
+        <InvoicesSkeleton />
       ) : billings.length === 0 ? (
         <div className="text-center py-16">
           <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
@@ -101,7 +108,8 @@ export default function Invoices() {
           {/* ── Current invoice (highlighted) ── */}
           {currentBilling && (
             <div className="animate-[slideUp_0.3s_ease-out]">
-              <InvoiceCardHighlight
+              <InvoiceCard
+                variant="highlight"
                 billing={currentBilling}
                 venceText={currentVenceText}
                 currentDias={currentDias}
@@ -129,6 +137,7 @@ export default function Invoices() {
                     style={{ animationDelay: `${0.03 * (index + 1)}s` }}
                   >
                     <InvoiceCard
+                      variant="default"
                       billing={billing}
                       onClick={() => navigate(`/faturas/${billing.id}`)}
                     />
@@ -189,318 +198,75 @@ export default function Invoices() {
   );
 }
 
-// ── Highlighted card for the current invoice ──
+// ── Loading skeleton for invoices page ──
 
-function InvoiceCardHighlight({
-  billing,
-  venceText,
-  currentDias,
-  onClick,
-}: {
-  billing: BillingSummary;
-  venceText: string | null;
-  currentDias: number | null;
-  onClick: () => void;
-}) {
-  const [copiedId, handleCopy] = useCopyToClipboard();
-  const smartLabel = getSmartLabel(billing);
-
-  // Determine card styling based on urgency
-  const isVencida = billing.status === "vencido" || (currentDias !== null && currentDias < 0);
-  const isVenceHoje = currentDias === 0;
-  const isPerto = currentDias !== null && currentDias > 0 && currentDias <= 7;
-
-  const cardAccent = isVencida
-    ? "border-red-400 dark:border-red-700 bg-red-50 dark:bg-red-950/20 ring-1 ring-red-200 dark:ring-red-900/50"
-    : isVenceHoje
-    ? "border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/20 ring-1 ring-orange-200 dark:ring-orange-900/50"
-    : isPerto
-    ? "border-amber-300 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/15 ring-1 ring-amber-200/50 dark:ring-amber-900/30"
-    : "border-border bg-card ring-1 ring-border/50";
-
-  const iconColor = isVencida
-    ? "text-red-600 dark:text-red-400"
-    : isVenceHoje
-    ? "text-orange-600 dark:text-orange-400"
-    : isPerto
-    ? "text-amber-600 dark:text-amber-400"
-    : "text-muted-foreground";
-
-  const iconBg = isVencida
-    ? "bg-red-100 dark:bg-red-900/30"
-    : isVenceHoje
-    ? "bg-orange-100 dark:bg-orange-900/30"
-    : isPerto
-    ? "bg-amber-100 dark:bg-amber-900/30"
-    : "bg-secondary";
-
-  const IconComponent = isVencida
-    ? AlertTriangle
-    : isVenceHoje
-    ? Zap
-    : isPerto
-    ? Clock
-    : CalendarDays;
-
-  const labelBg = isVencida
-    ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-    : isVenceHoje
-    ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
-    : isPerto
-    ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-    : "bg-secondary text-muted-foreground";
-
+function InvoicesSkeleton() {
   return (
-    <Card
-      className={`border shadow-sm transition-all cursor-pointer hover:shadow-md ${cardAccent}`}
-      onClick={onClick}
-    >
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-4 min-w-0">
-            <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
-              <IconComponent className={`h-5 w-5 ${iconColor}`} />
-            </div>
+    <div className="space-y-6">
+      {/* Skeleton header */}
+      <div className="space-y-2">
+        <div className="h-6 w-24 bg-secondary/60 rounded-sm animate-pulse" />
+        <div className="h-4 w-72 bg-secondary/40 rounded-sm animate-pulse" />
+      </div>
 
-            <div className="min-w-0 space-y-1.5">
-              {/* Vence em X dias badge */}
-              {venceText && (
-                <span className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${labelBg}`}>
-                  {venceText}
-                </span>
-              )}
-
-              {/* Competência */}
-              <p className="text-sm font-medium text-foreground">
-                {billing.competencia || "Fatura"}
-              </p>
-
-              <p className="text-xs text-muted-foreground">
-                Vencimento: {billing.vencimento}
-              </p>
-            </div>
-          </div>
-
-          {/* Value & status */}
-          <div className="text-right shrink-0">
-            <p className="text-lg font-semibold text-foreground">
-              {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-            </p>
-            <Badge
-              variant="outline"
-              className={`mt-1 text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig[billing.status]?.color || ""} shrink-0`}
-            >
-              {statusConfig[billing.status]?.label || billing.status}
-            </Badge>
-          </div>
-        </div>
-
-        {/* Quick actions */}
-        <div className="mt-4 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
-          {billing.linha_digitavel && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
-              }}
-            >
-              {copiedId === `line-${billing.id}` ? (
-                <CopyCheck className="h-3 w-3 mr-1" />
-              ) : (
-                <Copy className="h-3 w-3 mr-1" />
-              )}
-              Linha digitável
-            </Button>
-          )}
-          {billing.pix_copiaecola && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-foreground"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
-              }}
-            >
-              {copiedId === `pix-${billing.id}` ? (
-                <CopyCheck className="h-3 w-3 mr-1" />
-              ) : (
-                <Copy className="h-3 w-3 mr-1" />
-              )}
-              PIX
-            </Button>
-          )}              {billing.url_boleto && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.open(billing.url_boleto!, "_blank");
-                  }}
-                >
-                  <Download className="h-3 w-3 mr-1" />
-                  PDF
-                </Button>
-              )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Regular card for other unpaid invoices ──
-
-function InvoiceCard({
-  billing,
-  onClick,
-}: {
-  billing: BillingSummary;
-  onClick: () => void;
-}) {
-  const [copiedId, handleCopy] = useCopyToClipboard();
-  const smartLabel = getSmartLabel(billing);
-
-  const cardStyle =
-    smartLabel.type === "vencida"
-      ? "border-red-200 dark:border-red-800/60 bg-red-50/50 dark:bg-red-950/10 hover:bg-red-100/50 dark:hover:bg-red-950/30"
-      : smartLabel.type === "vence-hoje"
-      ? "border-orange-200 dark:border-orange-800/60 bg-orange-50/50 dark:bg-orange-950/10 hover:bg-orange-100/50 dark:hover:bg-orange-950/30"
-      : smartLabel.type === "a-vencer"
-      ? "border-amber-200 dark:border-amber-800/60 bg-amber-50/30 dark:bg-amber-950/5 hover:bg-amber-100/30 dark:hover:bg-amber-950/20"
-      : "border-border hover:bg-secondary/30";
-
-  const labelBadgeStyle =
-    smartLabel.type === "vencida"
-      ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-      : smartLabel.type === "vence-hoje"
-      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
-      : smartLabel.type === "a-vencer"
-      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-      : "bg-secondary text-muted-foreground";
-
-  const SmartIcon =
-    smartLabel.type === "vencida"
-      ? AlertTriangle
-      : smartLabel.type === "vence-hoje"
-      ? Zap
-      : smartLabel.type === "a-vencer"
-      ? Clock
-      : FileText;
-
-  const iconBg =
-    smartLabel.type === "vencida"
-      ? "bg-red-100 dark:bg-red-900/30"
-      : smartLabel.type === "vence-hoje"
-      ? "bg-orange-100 dark:bg-orange-900/30"
-      : smartLabel.type === "a-vencer"
-      ? "bg-amber-100 dark:bg-amber-900/30"
-      : "bg-secondary";
-
-  const iconColor =
-    smartLabel.type === "vencida"
-      ? "text-red-600 dark:text-red-400"
-      : smartLabel.type === "vence-hoje"
-      ? "text-orange-600 dark:text-orange-400"
-      : smartLabel.type === "a-vencer"
-      ? "text-amber-600 dark:text-amber-400"
-      : "text-muted-foreground";
-
-  return (
-    <Card
-      className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
-      onClick={onClick}
-    >
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
-              <SmartIcon className={`h-4 w-4 ${iconColor}`} />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`inline-block text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${labelBadgeStyle}`}>
-                  {smartLabel.text}
-                </span>
+      {/* Skeleton highlighted card */}
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4 min-w-0">
+              <div className="h-10 w-10 rounded-full bg-secondary/50 animate-pulse shrink-0" />
+              <div className="space-y-3 min-w-0">
+                <div className="h-4 w-32 bg-secondary/50 rounded-full animate-pulse" />
+                <div className="h-5 w-40 bg-secondary/60 rounded-sm animate-pulse" />
+                <div className="h-3 w-28 bg-secondary/40 rounded-sm animate-pulse" />
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {billing.vencimento}
-                {billing.competencia && <> · Ref. {billing.competencia}</>}
-              </p>
+            </div>
+            <div className="text-right space-y-2 shrink-0">
+              <div className="h-6 w-24 bg-secondary/60 rounded-sm animate-pulse ml-auto" />
+              <div className="h-4 w-16 bg-secondary/40 rounded-sm animate-pulse ml-auto" />
             </div>
           </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <p className="text-sm font-medium text-foreground whitespace-nowrap">
-              {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-            </p>
-            <Badge
-              variant="outline"
-              className={`text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig[billing.status]?.color || ""} shrink-0`}
-            >
-              {statusConfig[billing.status]?.label || billing.status}
-            </Badge>
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0 hidden sm:block" />
+          <div className="mt-4 pt-3 border-t border-border flex gap-2">
+            <div className="h-7 w-28 bg-secondary/40 rounded-sm animate-pulse" />
+            <div className="h-7 w-16 bg-secondary/40 rounded-sm animate-pulse" />
+            <div className="h-7 w-14 bg-secondary/40 rounded-sm animate-pulse" />
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        {/* Quick actions for unpaid */}
-        <div className="mt-2 pt-2 border-t border-border/50 flex items-center gap-1 flex-wrap">
-          {billing.linha_digitavel && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
-              }}
-            >
-              {copiedId === `line-${billing.id}` ? (
-                <CopyCheck className="h-2.5 w-2.5 mr-1" />
-              ) : (
-                <Copy className="h-2.5 w-2.5 mr-1" />
-              )}
-              Linha digitável
-            </Button>
-          )}
-          {billing.pix_copiaecola && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
-              }}
-            >
-              {copiedId === `pix-${billing.id}` ? (
-                <CopyCheck className="h-2.5 w-2.5 mr-1" />
-              ) : (
-                <Copy className="h-2.5 w-2.5 mr-1" />
-              )}
-              PIX
-            </Button>
-          )}
-          {billing.url_boleto && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                window.open(billing.url_boleto!, "_blank");
-              }}
-            >
-              <Download className="h-2.5 w-2.5 mr-1" />
-              PDF
-            </Button>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+      {/* Skeleton section divider */}
+      <div className="flex items-center gap-3">
+        <div className="h-px flex-1 bg-border/20" />
+        <div className="h-3 w-28 bg-secondary/40 rounded-sm animate-pulse" />
+        <div className="h-px flex-1 bg-border/20" />
+      </div>
+
+      {/* Skeleton regular cards */}
+      {[1, 2].map((i) => (
+        <Card key={i} className="border-border shadow-none">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-8 w-8 rounded-full bg-secondary/40 animate-pulse shrink-0" />
+                <div className="space-y-2">
+                  <div className="h-3 w-20 bg-secondary/40 rounded-full animate-pulse" />
+                  <div className="h-3 w-36 bg-secondary/30 rounded-sm animate-pulse" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="h-4 w-20 bg-secondary/50 rounded-sm animate-pulse" />
+                <div className="h-5 w-14 bg-secondary/40 rounded-sm animate-pulse" />
+              </div>
+            </div>
+            <div className="mt-2 pt-2 border-t border-border/50 flex gap-1">
+              <div className="h-6 w-24 bg-secondary/30 rounded-sm animate-pulse" />
+              <div className="h-6 w-12 bg-secondary/30 rounded-sm animate-pulse" />
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 }
+
+

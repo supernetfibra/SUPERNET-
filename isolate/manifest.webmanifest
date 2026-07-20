@@ -1,13 +1,17 @@
 {
-  "name": "Minha Supernet",
-  "short_name": "Supernet",
-  "description": "Portal do Cliente - Minha Supernet",
+  "name": "Portal do Cliente",
+  "short_name": "Portal",
+  "description": "Portal do Cliente",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#fafafa",
   "theme_color": "#fafafa",
   "scope": "/",
+  "serviceworker": {
+    "src": "/sw.js",
+    "scope": "/"
+  },
   "categories": ["utilities", "finance"],
   "lang": "pt-BR",
   "icons": [

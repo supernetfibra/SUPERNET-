@@ -105,6 +105,11 @@ export default function InvoiceDetail() {
   const status = statusConfig[billing.status] || statusConfig.pendente;
   const StatusIcon = status.icon;
 
+  // Updated value including late fees
+  const hasFees = (billing.multa ?? 0) > 0 || (billing.juros ?? 0) > 0;
+  const updatedValue = billing.valor + (billing.multa || 0) + (billing.juros || 0);
+  const showUpdatedValue = hasFees && billing.status !== "pago";
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Back button */}
@@ -134,9 +139,22 @@ export default function InvoiceDetail() {
             </div>
           </div>
 
-          <p className="text-xl sm:text-2xl font-light tracking-tight text-foreground">
-            {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-          </p>
+          <div className="text-right">
+            {showUpdatedValue ? (
+              <>
+                <p className="text-xl sm:text-2xl font-light tracking-tight text-foreground">
+                  {updatedValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Valor original: {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </p>
+              </>
+            ) : (
+              <p className="text-xl sm:text-2xl font-light tracking-tight text-foreground">
+                {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -159,11 +177,21 @@ export default function InvoiceDetail() {
               </div>
               <Separator />
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Valor</span>
+                <span className="text-muted-foreground">
+                  {showUpdatedValue ? "Valor atualizado" : "Valor"}
+                </span>
                 <span className="text-foreground font-medium">
-                  {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  {(showUpdatedValue ? updatedValue : billing.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </span>
               </div>
+              {showUpdatedValue && (
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-muted-foreground">Valor original</span>
+                  <span className="text-muted-foreground line-through">
+                    {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                  </span>
+                </div>
+              )}
 
               {billing.status === "pago" && (
                 <>
