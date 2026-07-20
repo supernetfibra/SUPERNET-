@@ -21,6 +21,33 @@ const BRANDING_STORAGE_KEY = "mikweb_branding";
 const DEFAULT_ACCENT = "#3b82f6"; // default blue
 
 /**
+ * Generate an inline SVG Wi‑Fi icon as the default favicon — used when no
+ * provider logo is configured. Three arcs + a dot, rendered in a neutral gray.
+ */
+function generateWifiFavicon(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#6b7280" stroke-width="2.5" stroke-linecap="round">
+  <path d="M4 10a10 10 0 0 1 16 0"/>
+  <path d="M8 15.5a5 5 0 0 1 8 0"/>
+  <circle cx="12" cy="20.5" r="1.5" fill="#6b7280" stroke="none"/>
+</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+/**
+ * Generate an inline SVG favicon placeholder — a colored circle using the
+ * accent color. This is set synchronously (no network, no canvas) so the
+ * browser tab never shows a generic or missing icon while the real logo loads.
+ */
+function generatePlaceholderFavicon(color: string): string {
+  // A 32×32 square with a filled circle, scaled for crisp rendering at 16px
+  // encodeURIComponent handles the # → %23 encoding; no need to pre-encode.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="14" fill="${color}"/>
+</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+/**
  * Apply the accent color as the --primary CSS variable on the document root.
  * Also sets --primary-foreground for text contrast (white on dark, near-black on light).
  */
@@ -104,30 +131,117 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     // Otherwise keep the default title from index.html
   }, [branding.providerName]);
 
+  // Helper: draw the logo onto a canvas at the given size and return a data URL.
+  // Square (no clip) by default; pass clipCircle=true to clip into a circle.
+  const logoToDataUrl = useCallback(
+    (size: number, clipCircle: boolean): Promise<string | null> =>
+      new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(null);
+              return;
+            }
+
+            const srcSize = Math.min(img.width, img.height);
+            const sx = (img.width - srcSize) / 2;
+            const sy = (img.height - srcSize) / 2;
+
+            if (clipCircle) {
+              ctx.beginPath();
+              ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+              ctx.closePath();
+              ctx.clip();
+            }
+
+            ctx.drawImage(img, sx, sy, srcSize, srcSize, 0, 0, size, size);
+            resolve(canvas.toDataURL("image/png"));
+          } catch {
+            resolve(null);
+          }
+        };
+        img.onerror = () => resolve(null);
+        img.src = branding.logoUrl;
+      }),
+    [branding.logoUrl],
+  );
+
+  // Shared helper: update both <link rel="icon"> and <link rel="shortcut icon">
+  // with the given href, optionally setting a MIME type.
+  const setFaviconHref = useCallback((href: string, mimeType?: string) => {
+    let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    if (mimeType) link.type = mimeType;
+    link.href = href;
+
+    let shortcutLink = document.querySelector<HTMLLinkElement>("link[rel='shortcut icon']");
+    if (!shortcutLink) {
+      shortcutLink = document.createElement("link");
+      shortcutLink.rel = "shortcut icon";
+      document.head.appendChild(shortcutLink);
+    }
+    shortcutLink.href = href;
+  }, []);
+
+  // When no provider logo is configured, show a Wi‑Fi icon as the default
+  // favicon (replaces the generic /logo.svg from index.html).
+  useEffect(() => {
+    if (branding.logoUrl) return;
+
+    const wifiUrl = generateWifiFavicon();
+    setFaviconHref(wifiUrl, "image/svg+xml");
+  }, [branding.logoUrl, setFaviconHref]);
+
+  // Set a placeholder favicon (colored circle from accent color) the moment
+  // logoUrl is known, before the actual logo image finishes loading.
+  // This runs synchronously in the effect, so the browser tab never flickers
+  // between the generic default and the real logo.
+  useEffect(() => {
+    if (!branding.logoUrl) return;
+
+    const placeholderColor = branding.accentColor || DEFAULT_ACCENT;
+    const placeholderUrl = generatePlaceholderFavicon(placeholderColor);
+
+    setFaviconHref(placeholderUrl, "image/svg+xml");
+  }, [branding.logoUrl, branding.accentColor, setFaviconHref]);
+
+  // Separate generation counters — prevents stale async resolutions from
+  // overwriting newer favicon/apple-icon when `logoUrl` changes mid-flight.
+  // Each async effect has its own counter so they never invalidate each other.
+  const faviconGenRef = useRef(0);
+  const appleIconGenRef = useRef(0);
+
+  // Replace the placeholder with the actual logo as a PNG (from canvas).
+  // Runs asynchronously — the real logo may take a moment to download/decode.
+  useEffect(() => {
+    if (!branding.logoUrl) return;
+
+    const gen = ++faviconGenRef.current;
+
+    logoToDataUrl(32, false).then((dataUrl) => {
+      if (!dataUrl || gen !== faviconGenRef.current) return; // stale
+      setFaviconHref(dataUrl, "image/png");
+    });
+  }, [branding.logoUrl, logoToDataUrl, setFaviconHref]);
+
   // Update apple-touch-icon when logoUrl changes (for iOS share sheet)
   useEffect(() => {
     if (!branding.logoUrl) return;
 
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 32;
-      canvas.height = 32;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+    const gen = ++appleIconGenRef.current;
 
-      const size = Math.min(img.width, img.height);
-      const sx = (img.width - size) / 2;
-      const sy = (img.height - size) / 2;
-
-      ctx.beginPath();
-      ctx.arc(16, 16, 14, 0, Math.PI * 2);
-      ctx.closePath();
-      ctx.clip();
-      ctx.drawImage(img, sx, sy, size, size, 0, 0, 32, 32);
-
-      const dataUrl = canvas.toDataURL("image/png");
+    logoToDataUrl(32, true).then((dataUrl) => {
+      if (!dataUrl || gen !== appleIconGenRef.current) return; // stale
 
       let appleLink = document.querySelector<HTMLLinkElement>("link[rel~='apple-touch-icon']");
       if (!appleLink) {
@@ -136,9 +250,8 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         document.head.appendChild(appleLink);
       }
       appleLink.href = dataUrl;
-    };
-    img.src = branding.logoUrl;
-  }, [branding.logoUrl]);
+    });
+  }, [branding.logoUrl, logoToDataUrl]);
 
   // Update theme-color meta tag for browser chrome
   useEffect(() => {
