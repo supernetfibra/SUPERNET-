@@ -24,9 +24,8 @@ dist-ssr
 *.sw?
 
 # Environment variables (API keys, secrets)
-.env
-.env.local
-.env.production
+.env*
+!.env.example
 
 # Freebuff desktop cache & config (not part of the project)
 .freebuff/
