@@ -169,3 +169,25 @@
 .dark ::-webkit-scrollbar-thumb {
   background: oklch(0.35 0 0);
 }
+
+/* --------------------------------------------------------------------------- */
+/* Sonner toast notifications — success type gets green styling */
+/* --------------------------------------------------------------------------- */
+
+[data-sonner-toaster] [data-type="success"] {
+  --normal-bg: oklch(0.97 0.03 145) !important;
+  --normal-border: oklch(0.75 0.15 145) !important;
+}
+
+.dark [data-sonner-toaster] [data-type="success"] {
+  --normal-bg: oklch(0.15 0.03 145) !important;
+  --normal-border: oklch(0.35 0.12 145) !important;
+}
+
+[data-sonner-toaster] [data-type="success"] [data-icon] {
+  color: oklch(0.55 0.18 145) !important;
+}
+
+.dark [data-sonner-toaster] [data-type="success"] [data-icon] {
+  color: oklch(0.65 0.15 145) !important;
+}

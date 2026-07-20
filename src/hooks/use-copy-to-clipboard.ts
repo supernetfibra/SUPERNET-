@@ -1,6 +1,7 @@
 /**
  * Hook for copying text to clipboard with a fallback for older browsers.
  * Shows a Sonner toast notification on successful copy.
+ * Triggers haptic feedback (vibration) on mobile devices via Vibration API.
  * Returns a [copiedId, handleCopy] tuple.
  */
 
@@ -22,6 +23,12 @@ export function useCopyToClipboard(duration = 2000) {
       document.body.removeChild(textarea);
     }
     setCopiedId(id);
+
+    // Haptic feedback on mobile devices (silently ignored on desktop)
+    if (typeof navigator.vibrate === "function") {
+      navigator.vibrate(10);
+    }
+
     toast.success("Código copiado!", {
       duration: 2000,
       position: "bottom-center",

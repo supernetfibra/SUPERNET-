@@ -61,17 +61,55 @@ function formatDate(dateStr: string): string {
 }
 
 /** Extract PIX copy-paste code from base64 if encoded */
-function extractPixCode(pixBase64?: string): string | undefined {
-  if (!pixBase64) return undefined;
+function extractPixCode(pixValue?: string): string | undefined {
+  if (!pixValue) return undefined;
   try {
-    // Check if it's base64-encoded
-    if (/^[A-Za-z0-9+/=]+$/.test(pixBase64) && pixBase64.length > 50) {
-      return atob(pixBase64);
+    // Check if it's base64-encoded (long strings of only base64 chars)
+    if (/^[A-Za-z0-9+/=]+$/.test(pixValue) && pixValue.length > 50) {
+      return atob(pixValue);
     }
   } catch {
     // Not base64, return as-is
   }
-  return pixBase64;
+  return pixValue;
+}
+
+/**
+ * Try multiple field names from the raw API response to find the PIX code.
+ * The MikWeb API may return it under different names depending on the version.
+ * Logs a debug warning when no PIX field is found, listing available fields.
+ */
+function findPixCode(raw: Record<string, unknown>): string | undefined {
+  const possibleFields = [
+    "pix_copy_paste_base64",
+    "pix_copy_paste",
+    "pix_copia_cola",
+    "pix_code",
+    "pix_copiaecola",
+  ];
+
+  for (const field of possibleFields) {
+    const value = raw[field];
+    if (typeof value === "string" && value.length > 0) {
+      const extracted = extractPixCode(value);
+      if (extracted) return extracted;
+    }
+  }
+
+  // Log available PIX-related fields for debugging when none was found
+  if (process.env.NODE_ENV !== "production") {
+    const pixKeys = Object.keys(raw).filter((k) =>
+      k.toLowerCase().includes("pix")
+    );
+    if (pixKeys.length > 0) {
+      console.warn(
+        "[PIX] Nenhum campo PIX reconhecido encontrado. Campos disponíveis:",
+        pixKeys.map((k) => `${k}: ${typeof raw[k]}${raw[k] ? ` ("${String(raw[k]).slice(0, 40)}...")` : ""}`)
+      );
+    }
+  }
+
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +131,11 @@ interface RawBilling {
   form_payment?: string;
   observation?: string | null;
   our_number?: string;
+  // Possible alternate PIX field names from the API
+  pix_copy_paste?: string;
+  pix_copia_cola?: string;
+  pix_code?: string;
+  pix_copiaecola?: string;
 }
 
 /** Map raw API billing to frontend-friendly format */
@@ -106,7 +149,7 @@ function mapBilling(raw: RawBilling): BillingSummary {
     data_pagamento: raw.date_payment ? formatDate(raw.date_payment) : undefined,
     valor_pago: raw.value_paid ?? undefined,
     linha_digitavel: raw.digitable_line,
-    pix_copiaecola: extractPixCode(raw.pix_copy_paste_base64),
+    pix_copiaecola: findPixCode(raw as unknown as Record<string, unknown>),
     url_boleto: raw.integration_link,
   };
 }
@@ -330,4 +373,4 @@ export function getSmartLabel(billing: BillingSummary): {
   return { text: formatVencimentoComMes(billing.vencimento), type: "normal" };
 }
 
-export { mapBilling, mapStatus, formatDate };
+export { mapBilling, mapStatus, formatDate, extractPixCode, findPixCode };
