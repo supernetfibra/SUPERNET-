@@ -1,9 +1,11 @@
 /**
  * Hook for copying text to clipboard with a fallback for older browsers.
+ * Shows a Sonner toast notification on successful copy.
  * Returns a [copiedId, handleCopy] tuple.
  */
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 export function useCopyToClipboard(duration = 2000) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -20,6 +22,10 @@ export function useCopyToClipboard(duration = 2000) {
       document.body.removeChild(textarea);
     }
     setCopiedId(id);
+    toast.success("Código copiado!", {
+      duration: 2000,
+      position: "bottom-center",
+    });
     setTimeout(() => setCopiedId(null), duration);
   };
 
