@@ -154,6 +154,62 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* --------------------------------------------------------------------------- */
+/* Button ripple effect — CSS-only center-originating wave on click */
+/* --------------------------------------------------------------------------- */
+
+@keyframes button-ripple {
+  0% {
+    transform: scale(0.3);
+    opacity: 0.35;
+  }
+  60% {
+    opacity: 0.15;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+[data-slot="button"] {
+  position: relative;
+}
+
+[data-slot="button"]::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, transparent 60%);
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+  /* Dark mode: lighter ripple on dark backgrounds */
+}
+
+.dark [data-slot="button"]::after {
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.2) 0%, transparent 60%);
+}
+
+[data-slot="button"]:not(:disabled):active::after {
+  animation: button-ripple 0.45s ease-out forwards;
+}
+
+/* Ghost buttons get a subtler ripple (dark overlay instead of white) */
+[data-slot="button"][data-variant="ghost"]::after {
+  background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.08) 0%, transparent 60%);
+}
+
+.dark [data-slot="button"][data-variant="ghost"]::after {
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.1) 0%, transparent 60%);
+}
+
+/* Link buttons: no ripple */
+[data-slot="button"][data-variant="link"]::after {
+  display: none;
+}
+
 /* Subtle scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
