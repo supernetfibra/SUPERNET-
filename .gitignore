@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables (API keys, secrets)
+.env
+.env.local
+.env.production
+
+# Freebuff desktop cache & config (not part of the project)
+.freebuff/
