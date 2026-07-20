@@ -1,12 +1,13 @@
 /**
  * Hook for copying text to clipboard with a fallback for older browsers.
  * Shows a Sonner toast notification on successful copy.
- * Triggers haptic feedback (vibration) on mobile devices via Vibration API.
+ * Triggers cross-platform haptic feedback (Android Vibration API + iOS Taptic Engine).
  * Returns a [copiedId, handleCopy] tuple.
  */
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { hapticFeedback } from "@/lib/haptic";
 
 export function useCopyToClipboard(duration = 2000) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -24,10 +25,8 @@ export function useCopyToClipboard(duration = 2000) {
     }
     setCopiedId(id);
 
-    // Haptic feedback on mobile devices (silently ignored on desktop)
-    if (typeof navigator.vibrate === "function") {
-      navigator.vibrate(10);
-    }
+    // Haptic feedback — works on Android (Vibration API) and iOS (Web Audio → Taptic Engine)
+    hapticFeedback();
 
     toast.success("Código copiado!", {
       duration: 2000,
