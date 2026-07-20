@@ -21,7 +21,9 @@ import {
   ArrowLeft,
   CheckCircle2,
   Loader2,
+  Smartphone,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useBillings } from "@/hooks/use-billings";
 import { useAuth } from "@/lib/auth-context";
@@ -35,7 +37,43 @@ export default function InvoiceDetail() {
   const { customer } = useAuth();
   const [copiedField, handleCopy] = useCopyToClipboard();
 
+  const [pixQrCode, setPixQrCode] = useState<string | null>(null);
+  const [qrLoading, setQrLoading] = useState(false);
+
   const rawBilling = billings.find((b) => b.id === id);
+
+  // Generate QR code from PIX copy-paste code
+  useEffect(() => {
+    if (!rawBilling?.pix_copiaecola) {
+      setPixQrCode(null);
+      return;
+    }
+
+    let cancelled = false;
+    setQrLoading(true);
+
+    import("qrcode").then((QRCode) => {
+      QRCode.toDataURL(rawBilling.pix_copiaecola!, {
+        width: 280,
+        margin: 2,
+        color: {
+          dark: "#0a0a0a",
+          light: "#ffffff",
+        },
+      }).then((url: string) => {
+        if (!cancelled) {
+          setPixQrCode(url);
+          setQrLoading(false);
+        }
+      }).catch(() => {
+        if (!cancelled) setQrLoading(false);
+      });
+    }).catch(() => {
+      if (!cancelled) setQrLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [rawBilling?.pix_copiaecola]);
 
   if (isLoading) {
     return (
@@ -154,7 +192,7 @@ export default function InvoiceDetail() {
               <CardTitle className="text-sm font-medium">Ações</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {billing.status === "pendente" && (
+              {(billing.status === "pendente" || billing.status === "vencido") && (
                 <>
                   {billing.linha_digitavel && (
                     <div className="space-y-1.5">
@@ -182,48 +220,85 @@ export default function InvoiceDetail() {
                   )}
 
                   {billing.pix_copiaecola && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                        PIX Copia e Cola
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-[10px] font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm truncate">
-                          {billing.pix_copiaecola.slice(0, 40)}...
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCopy(billing.pix_copiaecola!, "pix")}
-                        >
-                          {copiedField === "pix" ? (
-                            <CopyCheck className="h-3 w-3" />
+                    <div className="space-y-3">
+                      {/* QR Code */}
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium self-start">
+                          PIX QR Code
+                        </p>
+                        <div className="bg-white rounded-lg p-2 shadow-sm border border-border/50">
+                          {qrLoading ? (
+                            <div className="w-[140px] h-[140px] flex items-center justify-center">
+                              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                          ) : pixQrCode ? (
+                            <img
+                              src={pixQrCode}
+                              alt="QR Code PIX"
+                              className="w-[140px] h-[140px]"
+                              width={140}
+                              height={140}
+                            />
                           ) : (
-                            <Copy className="h-3 w-3" />
+                            <div className="w-[140px] h-[140px] flex items-center justify-center">
+                              <Smartphone className="h-6 w-6 text-muted-foreground/40" />
+                            </div>
                           )}
-                        </Button>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground text-center leading-relaxed max-w-[200px]">
+                          Abra o app do seu banco, escolha PIX e escaneie este código
+                        </p>
+                      </div>
+
+                      {/* Copy-paste code */}
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                          PIX Copia e Cola
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 text-[10px] font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm line-clamp-2 break-all">
+                            {billing.pix_copiaecola}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={() => handleCopy(billing.pix_copiaecola!, "pix")}
+                          >
+                            {copiedField === "pix" ? (
+                              <CopyCheck className="h-3 w-3" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  <Separator />
+                  {(billing.linha_digitavel || billing.pix_copiaecola) && <Separator />}
 
                   <div className="flex gap-2">
                     <Button
                       variant="outline"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => handleCopy(billing.linha_digitavel || "", "all")}
-                      disabled={!billing.linha_digitavel}
+                      onClick={() => handleCopy(billing.linha_digitavel || billing.pix_copiaecola || "", "all")}
+                      disabled={!billing.linha_digitavel && !billing.pix_copiaecola}
                     >
                       <Copy className="h-3.5 w-3.5 mr-1.5" />
-                      Copiar linha
+                      {billing.linha_digitavel ? "Copiar linha" : "Copiar PIX"}
                     </Button>
                     <Button
                       variant="default"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank")}
+                      onClick={() => {
+                        if (billing.url_boleto) {
+                          window.open(billing.url_boleto, "_blank");
+                        }
+                      }}
+                      disabled={!billing.url_boleto}
                     >
                       <Download className="h-3.5 w-3.5 mr-1.5" />
                       Download PDF

@@ -126,6 +126,20 @@
   }
 }
 
+/* Smooth transitions when switching between light/dark themes */
+/* Respect user preference for reduced motion */
+@media (prefers-reduced-motion: no-preference) {
+  :root,
+  .dark {
+    transition: background-color 0.3s ease, color 0.15s ease;
+  }
+
+  :root *,
+  .dark * {
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.15s ease, box-shadow 0.3s ease;
+  }
+}
+
 /* --------------------------------------------------------------------------- */
 /* Custom keyframe animations for route transitions (replaces framer-motion) */
 /* --------------------------------------------------------------------------- */

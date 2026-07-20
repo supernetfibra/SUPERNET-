@@ -22,11 +22,14 @@ import {
   Menu,
   X,
   ChevronRight,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useBranding } from "@/lib/branding-context";
+import { useTheme } from "@/lib/theme-provider";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -39,6 +42,7 @@ export default function AppLayout() {
   const location = useLocation();
   const { customer, logout } = useAuth();
   const { providerName, logoUrl } = useBranding();
+  const { theme, toggleTheme } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogout = async () => {
@@ -105,6 +109,24 @@ export default function AppLayout() {
               );
             })}
           </nav>
+
+          {/* Theme toggle */}
+          <div className="border-t border-border px-3 py-2">
+            <button
+              onClick={toggleTheme}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all"
+              title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+            >
+              {theme === "dark" ? (
+                <Sun className="h-4 w-4 shrink-0" />
+              ) : (
+                <Moon className="h-4 w-4 shrink-0" />
+              )}
+              <span className="text-xs">
+                {theme === "dark" ? "Modo claro" : "Modo escuro"}
+              </span>
+            </button>
+          </div>
 
           {/* User & Logout */}
           <div className="border-t border-border p-3">

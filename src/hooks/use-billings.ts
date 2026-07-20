@@ -20,6 +20,7 @@ export interface BillingSummary {
   valor_pago?: number;
   linha_digitavel?: string;
   pix_copiaecola?: string;
+  url_boleto?: string;
 }
 
 export interface BillingDetail extends BillingSummary {
@@ -106,6 +107,7 @@ function mapBilling(raw: RawBilling): BillingSummary {
     valor_pago: raw.value_paid ?? undefined,
     linha_digitavel: raw.digitable_line,
     pix_copiaecola: extractPixCode(raw.pix_copy_paste_base64),
+    url_boleto: raw.integration_link,
   };
 }
 

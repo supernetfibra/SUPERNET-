@@ -12,6 +12,9 @@ import "./types/global.d.ts";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { BrandingProvider } from "@/lib/branding-context";
 
+// Theme provider
+import { ThemeProvider } from "@/lib/theme-provider";
+
 // All pages are lazy-loaded for optimal code splitting.
 // Admin pages were previously eager but are on obscure routes (/admin,*)
 // and contain heavy components (Select, icons, complex forms).
@@ -85,6 +88,7 @@ createRoot(document.getElementById("root")!).render(
     <ConvexAuthProvider client={convex}>
       <AuthProvider>
         <BrandingProvider>
+          <ThemeProvider>
           <BrowserRouter>
             <RouteSyncer />
             <Routes>
@@ -115,6 +119,7 @@ createRoot(document.getElementById("root")!).render(
             </Routes>
           </BrowserRouter>
           <Toaster />
+          </ThemeProvider>
         </BrandingProvider>
       </AuthProvider>
     </ConvexAuthProvider>

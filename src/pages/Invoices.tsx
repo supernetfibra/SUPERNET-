@@ -1,7 +1,7 @@
 /**
- * Invoices Page — Full list of customer invoices with smart filtering,
- * intelligent status labels, and quick actions (download PDF, copy PIX/linha).
- * Overdue invoices are always highlighted first.
+ * Invoices Page — Full list of customer invoices with smart ordering.
+ * The current/next invoice is highlighted first with "Vence em X dias".
+ * Overdue invoices are grouped below, and paid invoices are a discreet list.
  */
 
 import { Button } from "@/components/ui/button";
@@ -11,139 +11,69 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-  PaginationEllipsis,
-} from "@/components/ui/pagination";
-import {
   FileText,
   Download,
   Copy,
   CopyCheck,
   ChevronRight,
-  ChevronLeft,
-  ChevronsLeft,
-  ChevronsRight,
   Loader2,
   AlertTriangle,
   Clock,
   Zap,
   CalendarDays,
+  CheckCircle2,
 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
-import { useBillings, formatVencimentoComMes, getSmartLabel, extractMesInfo } from "@/hooks/use-billings";
+import { useBillings, diasAteVencimento, getSmartLabel, extractMesInfo } from "@/hooks/use-billings";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import type { BillingSummary } from "@/hooks/use-billings";
-
-type FilterStatus = "abertas" | "vencidas" | "pagas";
-
-const ITEMS_PER_PAGE = 10;
 
 export default function Invoices() {
   const navigate = useNavigate();
   const { billings, isLoading } = useBillings();
   const [copiedId, handleCopy] = useCopyToClipboard();
-  const [filter, setFilter] = useState<FilterStatus>("abertas");
-  const [page, setPage] = useState(1);
 
-  const filteredBillings = useMemo(() => {
-    if (filter === "abertas") {
-      // Abertas = pendente + vencido (tudo que não está pago nem cancelado)
-      return billings.filter(
-        (b: BillingSummary) => b.status === "pendente" || b.status === "vencido"
-      );
-    }
-    if (filter === "vencidas") {
-      return billings.filter((b: BillingSummary) => b.status === "vencido");
-    }
-    // pagas
-    return billings.filter((b: BillingSummary) => b.status === "pago");
-  }, [billings, filter]);
-
-  const totalPages = Math.ceil(filteredBillings.length / ITEMS_PER_PAGE);
-  const paginatedBillings = filteredBillings.slice(
-    (page - 1) * ITEMS_PER_PAGE,
-    page * ITEMS_PER_PAGE
-  );
-
-  // Reset to page 1 when filter changes
-  useEffect(() => {
-    setPage(1);
-  }, [filter]);
-
-  // Clamp page if it exceeds total pages
-  useEffect(() => {
-    if (page > totalPages && totalPages > 0) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
-
-  // Generate visible page numbers for the paginator
-  const pageNumbers = useMemo(() => {
-    const pages: (number | "ellipsis")[] = [];
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (page > 3) pages.push("ellipsis");
-      const start = Math.max(2, page - 1);
-      const end = Math.min(totalPages - 1, page + 1);
-      for (let i = start; i <= end; i++) pages.push(i);
-      if (page < totalPages - 2) pages.push("ellipsis");
-      pages.push(totalPages);
-    }
-    return pages;
-  }, [page, totalPages]);
-
-  // Group paginated invoices by month for section headers
-  const monthGroups = useMemo(() => {
-    const groups: { mesNome: string; mesAno: string; invoices: BillingSummary[] }[] = [];
-    const map = new Map<string, BillingSummary[]>();
-
-    for (const b of paginatedBillings) {
-      const info = extractMesInfo(b.vencimento);
-      const key = info?.mesAno || "outros";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(b);
-    }
-
-    // Sort groups chronologically descending (most recent first)
-    const sortedKeys = [...map.keys()]
-      .filter((k) => k !== "outros")
-      .sort()
-      .reverse();
-    if (map.has("outros")) sortedKeys.push("outros");
-
-    for (const key of sortedKeys) {
-      const invoices = map.get(key)!;
-      const firstInfo = extractMesInfo(invoices[0]?.vencimento || "");
-      groups.push({
-        mesNome: firstInfo?.mesNome || key,
-        mesAno: key,
-        invoices,
+  // Separate unpaid and paid invoices
+  const { unpaid, paid, currentBilling } = useMemo(() => {
+    const allUnpaid = billings
+      .filter((b: BillingSummary) => b.status !== "pago" && b.status !== "cancelado")
+      .sort((a: BillingSummary, b: BillingSummary) => {
+        // Sort by absolute proximity to today (closest due date first)
+        const diasA = Math.abs(diasAteVencimento(a.vencimento) ?? 999);
+        const diasB = Math.abs(diasAteVencimento(b.vencimento) ?? 999);
+        if (diasA !== diasB) return diasA - diasB;
+        // Tie-break: overdue first, then by date
+        const aOverdue = a.status === "vencido" ? 0 : 1;
+        const bOverdue = b.status === "vencido" ? 0 : 1;
+        return aOverdue - bOverdue;
       });
-    }
 
-    return groups;
-  }, [paginatedBillings]);
+    const allPaid = billings
+      .filter((b: BillingSummary) => b.status === "pago")
+      .sort((a: BillingSummary, b: BillingSummary) => {
+        // Sort by due date descending (most recent paid first)
+        return b.vencimento.localeCompare(a.vencimento);
+      });
 
-  const startItem = filteredBillings.length > 0 ? (page - 1) * ITEMS_PER_PAGE + 1 : 0;
-  const endItem = Math.min(page * ITEMS_PER_PAGE, filteredBillings.length);
+    // The first unpaid is the "current" one
+    const current = allUnpaid.length > 0 ? allUnpaid[0] : null;
 
-  const filterCounts = useMemo(() => {
-    const abertas = billings.filter(
-      (b: BillingSummary) => b.status === "pendente" || b.status === "vencido"
-    ).length;
-    const vencidas = billings.filter((b: BillingSummary) => b.status === "vencido").length;
-    const pagas = billings.filter((b: BillingSummary) => b.status === "pago").length;
-    return { abertas, vencidas, pagas };
+    return { unpaid: allUnpaid, paid: allPaid, currentBilling: current };
   }, [billings]);
+
+  // Calculate days until due for the current billing
+  const currentDias = currentBilling ? diasAteVencimento(currentBilling.vencimento) : null;
+
+  // Build a "vence em" text for the current billing
+  const currentVenceText = useMemo(() => {
+    if (!currentBilling || currentDias === null) return null;
+    if (currentDias < 0) return `Vencida há ${Math.abs(currentDias)} dia${Math.abs(currentDias) !== 1 ? "s" : ""}`;
+    if (currentDias === 0) return "Vence hoje";
+    if (currentDias === 1) return "Vence amanhã";
+    return `Vence em ${currentDias} dias`;
+  }, [currentBilling, currentDias]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -155,318 +85,422 @@ export default function Invoices() {
         </p>
       </div>
 
-      {/* Smart Filters */}
-      <div className="flex items-center gap-2 flex-wrap overflow-x-auto pb-1 -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-none">
-        {([
-          { key: "abertas" as const, label: "Abertas" },
-          { key: "vencidas" as const, label: "Vencidas" },
-          { key: "pagas" as const, label: "Pagas" },
-        ]).map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={`relative px-4 py-1.5 text-xs rounded-full border transition-all ${
-              filter === f.key
-                ? f.key === "vencidas"
-                  ? "bg-red-50 dark:bg-red-950/20 border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 font-medium"
-                  : f.key === "abertas"
-                  ? "bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 font-medium"
-                  : "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 font-medium"
-                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
-            }`}
-          >
-            {f.label}
-            <span className="ml-1.5 opacity-60 text-[10px]">
-              {filterCounts[f.key]}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Billing List */}
+      {/* Loading */}
       {isLoading ? (
         <div className="text-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">Carregando faturas...</p>
         </div>
-      ) : filteredBillings.length === 0 ? (
+      ) : billings.length === 0 ? (
         <div className="text-center py-16">
           <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">
-            {filter === "abertas"
-              ? "Nenhuma fatura aberta. 🎉"
-              : filter === "vencidas"
-              ? "Nenhuma fatura vencida. 🎉"
-              : "Nenhuma fatura paga encontrada."}
-          </p>
+          <p className="text-sm text-muted-foreground">Nenhuma fatura encontrada.</p>
         </div>
       ) : (
-        <div className="space-y-6">
-          {monthGroups.map((group, gi) => (
-            <div key={group.mesAno}>
-              {/* Month header */}
+        <>
+          {/* ── Current invoice (highlighted) ── */}
+          {currentBilling && (
+            <div className="animate-[slideUp_0.3s_ease-out]">
+              <InvoiceCardHighlight
+                billing={currentBilling}
+                venceText={currentVenceText}
+                currentDias={currentDias}
+                onClick={() => navigate(`/faturas/${currentBilling.id}`)}
+              />
+            </div>
+          )}
+
+          {/* ── Other unpaid invoices ── */}
+          {unpaid.length > 1 && (
+            <div>
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-px flex-1 bg-border/30" />
-                <div className="flex items-center gap-2 shrink-0">
-                  <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-muted-foreground">
-                    {group.mesNome} {group.mesAno.split("-")[0]}
-                  </span>
-                </div>
+                <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
+                  {currentBilling ? "Demais faturas" : "Faturas abertas"}
+                </span>
                 <div className="h-px flex-1 bg-border/30" />
               </div>
 
-              {/* Invoices in this month */}
               <div className="space-y-2">
-                {group.invoices.map((billing, index) => {
-                  const status = statusConfig[billing.status] || statusConfig.pendente;
-                  const StatusIcon = status.icon;
-                  const smartLabel = getSmartLabel(billing);
+                {(unpaid.slice(1)).map((billing: BillingSummary, index: number) => (
+                  <div
+                    key={billing.id}
+                    className="animate-[slideUp_0.2s_ease-out]"
+                    style={{ animationDelay: `${0.03 * (index + 1)}s` }}
+                  >
+                    <InvoiceCard
+                      billing={billing}
+                      onClick={() => navigate(`/faturas/${billing.id}`)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-                  // Card styling based on smart label type
-                  const cardStyle =
-                    smartLabel.type === "vencida"
-                      ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 hover:bg-red-100 dark:hover:bg-red-950/40"
-                      : smartLabel.type === "vence-hoje"
-                      ? "border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40"
-                      : smartLabel.type === "a-vencer"
-                      ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 hover:bg-amber-100/50 dark:hover:bg-amber-950/30"
-                      : "border-border hover:bg-secondary/30";
+          {/* ── Paid invoices (discreet list) ── */}
+          {paid.length > 0 && (
+            <div className="animate-[slideUp_0.3s_ease-out]">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="h-px flex-1 bg-border/20" />
+                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/50 shrink-0">
+                  Pagas
+                </span>
+                <div className="h-px flex-1 bg-border/20" />
+              </div>
 
-                  // Smart label badge styling
-                  const labelBadgeStyle =
-                    smartLabel.type === "vencida"
-                      ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-                      : smartLabel.type === "vence-hoje"
-                      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
-                      : smartLabel.type === "a-vencer"
-                      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
-                      : "bg-secondary text-muted-foreground";
-
-                  const SmartIcon =
-                    smartLabel.type === "vencida"
-                      ? AlertTriangle
-                      : smartLabel.type === "vence-hoje"
-                      ? Zap
-                      : smartLabel.type === "a-vencer"
-                      ? Clock
-                      : FileText;
-
+              <div className="space-y-1">
+                {paid.map((billing: BillingSummary, index: number) => {
+                  const mesInfo = extractMesInfo(billing.vencimento);
+                  const mesLabel = billing.competencia || mesInfo?.mesNome || "";
                   return (
-                    <div
+                    <button
                       key={billing.id}
-                      className="animate-[slideUp_0.2s_ease-out]"
-                      style={{ animationDelay: `${0.03 * index}s` }}
+                      onClick={() => navigate(`/faturas/${billing.id}`)}
+                      className="w-full flex items-center justify-between px-3 py-2 rounded-sm text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-secondary/30 transition-all group"
                     >
-                      <Card
-                        className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
-                        onClick={() => navigate(`/faturas/${billing.id}`)}
-                      >
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4 min-w-0">
-                              <div
-                                className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
-                                  smartLabel.type === "vencida"
-                                    ? "bg-red-100 dark:bg-red-900/30"
-                                    : smartLabel.type === "vence-hoje"
-                                    ? "bg-orange-100 dark:bg-orange-900/30"
-                                    : smartLabel.type === "a-vencer"
-                                    ? "bg-amber-100 dark:bg-amber-900/30"
-                                    : "bg-secondary"
-                                }`}
-                              >
-                                <SmartIcon
-                                  className={`h-4 w-4 ${
-                                    smartLabel.type === "vencida"
-                                      ? "text-red-600 dark:text-red-400"
-                                      : smartLabel.type === "vence-hoje"
-                                      ? "text-orange-600 dark:text-orange-400"
-                                      : smartLabel.type === "a-vencer"
-                                      ? "text-amber-600 dark:text-amber-400"
-                                      : "text-muted-foreground"
-                                  }`}
-                                />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span
-                                    className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${labelBadgeStyle}`}
-                                  >
-                                    {smartLabel.text}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {billing.vencimento}
-                                  {billing.competencia && (
-                                    <> · Ref. {billing.competencia}</>
-                                  )}
-                                  {billing.status === "pago" && billing.data_pagamento && (
-                                    <> · Pago em: {billing.data_pagamento}</>
-                                  )}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                              <div className="text-right">
-                                <p className="text-sm font-medium text-foreground whitespace-nowrap">
-                                  {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                                </p>
-                                {billing.status === "pago" && billing.valor_pago && (
-                                  <p className="text-[10px] text-muted-foreground">
-                                    Pago
-                                  </p>
-                                )}
-                              </div>
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
-                              >
-                                <StatusIcon className="h-3 w-3 mr-1" />
-                                {status.label}
-                              </Badge>
-                              <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-                            </div>
-                          </div>
-
-                          {/* Quick actions for pending */}
-                          {(billing.status === "pendente" || billing.status === "vencido") && (
-                            <div className="mt-3 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
-                              {billing.linha_digitavel && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
-                                  }}
-                                >
-                                  {copiedId === `line-${billing.id}` ? (
-                                    <CopyCheck className="h-3 w-3 mr-1" />
-                                  ) : (
-                                    <Copy className="h-3 w-3 mr-1" />
-                                  )}
-                                  Linha digitável
-                                </Button>
-                              )}
-                              {billing.pix_copiaecola && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
-                                  }}
-                                >
-                                  {copiedId === `pix-${billing.id}` ? (
-                                    <CopyCheck className="h-3 w-3 mr-1" />
-                                  ) : (
-                                    <Copy className="h-3 w-3 mr-1" />
-                                  )}
-                                  PIX
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
-                                }}
-                              >
-                                <Download className="h-3 w-3 mr-1" />
-                                PDF
-                              </Button>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </div>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CheckCircle2 className="h-3 w-3 text-emerald-500/50 shrink-0" />
+                        <span className="truncate">
+                          {mesLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span>
+                          {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] font-medium px-1.5 py-0 border-none text-emerald-600/60 dark:text-emerald-400/60 bg-emerald-50/50 dark:bg-emerald-950/10"
+                        >
+                          Pago
+                        </Badge>
+                        <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    </button>
                   );
                 })}
               </div>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Pagination */}
-      {!isLoading && filteredBillings.length > 0 && totalPages > 1 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-          <p className="text-xs text-muted-foreground order-2 sm:order-1">
-            {startItem}–{endItem} de {filteredBillings.length}
-          </p>
-          <Pagination className="order-1 sm:order-2">
-            <PaginationContent>
-              <PaginationItem>
-                <button
-                  onClick={() => setPage(1)}
-                  disabled={page === 1}
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 w-8 disabled:opacity-30 hover:bg-secondary/50 transition-colors"
-                  aria-label="Primeira página"
-                >
-                  <ChevronsLeft className="h-4 w-4" />
-                </button>
-              </PaginationItem>
-              <PaginationItem>
-                <PaginationPrevious
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (page > 1) setPage(page - 1);
-                  }}
-                  className={page === 1 ? "pointer-events-none opacity-30" : ""}
-                />
-              </PaginationItem>
-              {pageNumbers.map((p, i) =>
-                p === "ellipsis" ? (
-                  <PaginationItem key={`ellipsis-${i}`}>
-                    <PaginationEllipsis />
-                  </PaginationItem>
-                ) : (
-                  <PaginationItem key={p}>
-                    <PaginationLink
-                      href="#"
-                      isActive={p === page}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setPage(p);
-                      }}
-                      className="h-8 w-8 text-xs"
-                    >
-                      {p}
-                    </PaginationLink>
-                  </PaginationItem>
-                )
-              )}
-              <PaginationItem>
-                <PaginationNext
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (page < totalPages) setPage(page + 1);
-                  }}
-                  className={page === totalPages ? "pointer-events-none opacity-30" : ""}
-                />
-              </PaginationItem>
-              <PaginationItem>
-                <button
-                  onClick={() => setPage(totalPages)}
-                  disabled={page === totalPages}
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium h-8 w-8 disabled:opacity-30 hover:bg-secondary/50 transition-colors"
-                  aria-label="Última página"
-                >
-                  <ChevronsRight className="h-4 w-4" />
-                </button>
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </div>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+// ── Highlighted card for the current invoice ──
+
+function InvoiceCardHighlight({
+  billing,
+  venceText,
+  currentDias,
+  onClick,
+}: {
+  billing: BillingSummary;
+  venceText: string | null;
+  currentDias: number | null;
+  onClick: () => void;
+}) {
+  const [copiedId, handleCopy] = useCopyToClipboard();
+  const smartLabel = getSmartLabel(billing);
+
+  // Determine card styling based on urgency
+  const isVencida = billing.status === "vencido" || (currentDias !== null && currentDias < 0);
+  const isVenceHoje = currentDias === 0;
+  const isPerto = currentDias !== null && currentDias > 0 && currentDias <= 7;
+
+  const cardAccent = isVencida
+    ? "border-red-400 dark:border-red-700 bg-red-50 dark:bg-red-950/20 ring-1 ring-red-200 dark:ring-red-900/50"
+    : isVenceHoje
+    ? "border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/20 ring-1 ring-orange-200 dark:ring-orange-900/50"
+    : isPerto
+    ? "border-amber-300 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/15 ring-1 ring-amber-200/50 dark:ring-amber-900/30"
+    : "border-border bg-card ring-1 ring-border/50";
+
+  const iconColor = isVencida
+    ? "text-red-600 dark:text-red-400"
+    : isVenceHoje
+    ? "text-orange-600 dark:text-orange-400"
+    : isPerto
+    ? "text-amber-600 dark:text-amber-400"
+    : "text-muted-foreground";
+
+  const iconBg = isVencida
+    ? "bg-red-100 dark:bg-red-900/30"
+    : isVenceHoje
+    ? "bg-orange-100 dark:bg-orange-900/30"
+    : isPerto
+    ? "bg-amber-100 dark:bg-amber-900/30"
+    : "bg-secondary";
+
+  const IconComponent = isVencida
+    ? AlertTriangle
+    : isVenceHoje
+    ? Zap
+    : isPerto
+    ? Clock
+    : CalendarDays;
+
+  const labelBg = isVencida
+    ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+    : isVenceHoje
+    ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
+    : isPerto
+    ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+    : "bg-secondary text-muted-foreground";
+
+  return (
+    <Card
+      className={`border shadow-sm transition-all cursor-pointer hover:shadow-md ${cardAccent}`}
+      onClick={onClick}
+    >
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4 min-w-0">
+            <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
+              <IconComponent className={`h-5 w-5 ${iconColor}`} />
+            </div>
+
+            <div className="min-w-0 space-y-1.5">
+              {/* Vence em X dias badge */}
+              {venceText && (
+                <span className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${labelBg}`}>
+                  {venceText}
+                </span>
+              )}
+
+              {/* Competência */}
+              <p className="text-sm font-medium text-foreground">
+                {billing.competencia || "Fatura"}
+              </p>
+
+              <p className="text-xs text-muted-foreground">
+                Vencimento: {billing.vencimento}
+              </p>
+            </div>
+          </div>
+
+          {/* Value & status */}
+          <div className="text-right shrink-0">
+            <p className="text-lg font-semibold text-foreground">
+              {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+            </p>
+            <Badge
+              variant="outline"
+              className={`mt-1 text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig[billing.status]?.color || ""} shrink-0`}
+            >
+              {statusConfig[billing.status]?.label || billing.status}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Quick actions */}
+        <div className="mt-4 pt-3 border-t border-border flex items-center gap-2 flex-wrap">
+          {billing.linha_digitavel && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+              }}
+            >
+              {copiedId === `line-${billing.id}` ? (
+                <CopyCheck className="h-3 w-3 mr-1" />
+              ) : (
+                <Copy className="h-3 w-3 mr-1" />
+              )}
+              Linha digitável
+            </Button>
+          )}
+          {billing.pix_copiaecola && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+              }}
+            >
+              {copiedId === `pix-${billing.id}` ? (
+                <CopyCheck className="h-3 w-3 mr-1" />
+              ) : (
+                <Copy className="h-3 w-3 mr-1" />
+              )}
+              PIX
+            </Button>
+          )}              {billing.url_boleto && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.open(billing.url_boleto!, "_blank");
+                  }}
+                >
+                  <Download className="h-3 w-3 mr-1" />
+                  PDF
+                </Button>
+              )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Regular card for other unpaid invoices ──
+
+function InvoiceCard({
+  billing,
+  onClick,
+}: {
+  billing: BillingSummary;
+  onClick: () => void;
+}) {
+  const [copiedId, handleCopy] = useCopyToClipboard();
+  const smartLabel = getSmartLabel(billing);
+
+  const cardStyle =
+    smartLabel.type === "vencida"
+      ? "border-red-200 dark:border-red-800/60 bg-red-50/50 dark:bg-red-950/10 hover:bg-red-100/50 dark:hover:bg-red-950/30"
+      : smartLabel.type === "vence-hoje"
+      ? "border-orange-200 dark:border-orange-800/60 bg-orange-50/50 dark:bg-orange-950/10 hover:bg-orange-100/50 dark:hover:bg-orange-950/30"
+      : smartLabel.type === "a-vencer"
+      ? "border-amber-200 dark:border-amber-800/60 bg-amber-50/30 dark:bg-amber-950/5 hover:bg-amber-100/30 dark:hover:bg-amber-950/20"
+      : "border-border hover:bg-secondary/30";
+
+  const labelBadgeStyle =
+    smartLabel.type === "vencida"
+      ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+      : smartLabel.type === "vence-hoje"
+      ? "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400"
+      : smartLabel.type === "a-vencer"
+      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+      : "bg-secondary text-muted-foreground";
+
+  const SmartIcon =
+    smartLabel.type === "vencida"
+      ? AlertTriangle
+      : smartLabel.type === "vence-hoje"
+      ? Zap
+      : smartLabel.type === "a-vencer"
+      ? Clock
+      : FileText;
+
+  const iconBg =
+    smartLabel.type === "vencida"
+      ? "bg-red-100 dark:bg-red-900/30"
+      : smartLabel.type === "vence-hoje"
+      ? "bg-orange-100 dark:bg-orange-900/30"
+      : smartLabel.type === "a-vencer"
+      ? "bg-amber-100 dark:bg-amber-900/30"
+      : "bg-secondary";
+
+  const iconColor =
+    smartLabel.type === "vencida"
+      ? "text-red-600 dark:text-red-400"
+      : smartLabel.type === "vence-hoje"
+      ? "text-orange-600 dark:text-orange-400"
+      : smartLabel.type === "a-vencer"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-muted-foreground";
+
+  return (
+    <Card
+      className={`border shadow-none transition-all cursor-pointer ${cardStyle}`}
+      onClick={onClick}
+    >
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${iconBg}`}>
+              <SmartIcon className={`h-4 w-4 ${iconColor}`} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`inline-block text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${labelBadgeStyle}`}>
+                  {smartLabel.text}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {billing.vencimento}
+                {billing.competencia && <> · Ref. {billing.competencia}</>}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <p className="text-sm font-medium text-foreground whitespace-nowrap">
+              {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+            </p>
+            <Badge
+              variant="outline"
+              className={`text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig[billing.status]?.color || ""} shrink-0`}
+            >
+              {statusConfig[billing.status]?.label || billing.status}
+            </Badge>
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0 hidden sm:block" />
+          </div>
+        </div>
+
+        {/* Quick actions for unpaid */}
+        <div className="mt-2 pt-2 border-t border-border/50 flex items-center gap-1 flex-wrap">
+          {billing.linha_digitavel && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+              }}
+            >
+              {copiedId === `line-${billing.id}` ? (
+                <CopyCheck className="h-2.5 w-2.5 mr-1" />
+              ) : (
+                <Copy className="h-2.5 w-2.5 mr-1" />
+              )}
+              Linha digitável
+            </Button>
+          )}
+          {billing.pix_copiaecola && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+              }}
+            >
+              {copiedId === `pix-${billing.id}` ? (
+                <CopyCheck className="h-2.5 w-2.5 mr-1" />
+              ) : (
+                <Copy className="h-2.5 w-2.5 mr-1" />
+              )}
+              PIX
+            </Button>
+          )}
+          {billing.url_boleto && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(billing.url_boleto!, "_blank");
+              }}
+            >
+              <Download className="h-2.5 w-2.5 mr-1" />
+              PDF
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -52,8 +52,7 @@ export default function Landing() {
                 )}
               </div>
               <h1 className="text-3xl sm:text-4xl font-light tracking-tight text-foreground leading-tight">
-                Bem-vindo à{" "}
-                <span className="font-medium">{providerName}</span>
+                Bem-vindo(a)
               </h1>
               <p className="text-base text-muted-foreground mt-4 max-w-md mx-auto leading-relaxed">
                 Acesse suas faturas, consulte seu histórico de pagamentos
