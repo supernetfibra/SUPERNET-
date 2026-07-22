@@ -4,10 +4,6 @@
  * Overdue invoices are grouped below, and paid invoices are a discreet list.
  */
 
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   FileText,
@@ -19,6 +15,7 @@ import {
 import { useMemo } from "react";
 import { useNavigate } from "react-router";
 import InvoiceCard from "@/components/InvoiceCard";
+import { InvoicesSkeleton } from "@/components/skeletons";
 import { useBillings, diasAteVencimento, extractMesInfo, formatCacheAge } from "@/hooks/use-billings";
 import type { BillingSummary } from "@/hooks/use-billings";
 
@@ -198,75 +195,5 @@ export default function Invoices() {
   );
 }
 
-// ── Loading skeleton for invoices page ──
-
-function InvoicesSkeleton() {
-  return (
-    <div className="space-y-6">
-      {/* Skeleton header */}
-      <div className="space-y-2">
-        <div className="h-6 w-24 bg-secondary/60 rounded-sm animate-pulse" />
-        <div className="h-4 w-72 bg-secondary/40 rounded-sm animate-pulse" />
-      </div>
-
-      {/* Skeleton highlighted card */}
-      <Card className="border-border shadow-sm">
-        <CardContent className="p-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div className="h-10 w-10 rounded-full bg-secondary/50 animate-pulse shrink-0" />
-              <div className="space-y-3 min-w-0">
-                <div className="h-4 w-32 bg-secondary/50 rounded-full animate-pulse" />
-                <div className="h-5 w-40 bg-secondary/60 rounded-sm animate-pulse" />
-                <div className="h-3 w-28 bg-secondary/40 rounded-sm animate-pulse" />
-              </div>
-            </div>
-            <div className="text-right space-y-2 shrink-0">
-              <div className="h-6 w-24 bg-secondary/60 rounded-sm animate-pulse ml-auto" />
-              <div className="h-4 w-16 bg-secondary/40 rounded-sm animate-pulse ml-auto" />
-            </div>
-          </div>
-          <div className="mt-4 pt-3 border-t border-border flex gap-2">
-            <div className="h-7 w-28 bg-secondary/40 rounded-sm animate-pulse" />
-            <div className="h-7 w-16 bg-secondary/40 rounded-sm animate-pulse" />
-            <div className="h-7 w-14 bg-secondary/40 rounded-sm animate-pulse" />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Skeleton section divider */}
-      <div className="flex items-center gap-3">
-        <div className="h-px flex-1 bg-border/20" />
-        <div className="h-3 w-28 bg-secondary/40 rounded-sm animate-pulse" />
-        <div className="h-px flex-1 bg-border/20" />
-      </div>
-
-      {/* Skeleton regular cards */}
-      {[1, 2].map((i) => (
-        <Card key={i} className="border-border shadow-none">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="h-8 w-8 rounded-full bg-secondary/40 animate-pulse shrink-0" />
-                <div className="space-y-2">
-                  <div className="h-3 w-20 bg-secondary/40 rounded-full animate-pulse" />
-                  <div className="h-3 w-36 bg-secondary/30 rounded-sm animate-pulse" />
-                </div>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="h-4 w-20 bg-secondary/50 rounded-sm animate-pulse" />
-                <div className="h-5 w-14 bg-secondary/40 rounded-sm animate-pulse" />
-              </div>
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/50 flex gap-1">
-              <div className="h-6 w-24 bg-secondary/30 rounded-sm animate-pulse" />
-              <div className="h-6 w-12 bg-secondary/30 rounded-sm animate-pulse" />
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-}
 
 

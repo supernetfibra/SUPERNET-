@@ -16,7 +16,8 @@ import { useToast } from "@/hooks/use-toast";
 const VAPID_PUBLIC_KEY =
   import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
-const SW_PATH = "/sw.js";
+// SW is registered by main.tsx on startup; usePushNotifications uses
+// navigator.serviceWorker.ready to get the existing registration.
 
 export type NotificationStatus = "unsupported" | "denied" | "granted" | "prompt" | "loading";
 
@@ -80,44 +81,25 @@ export function usePushNotifications() {
   }
 
   // -----------------------------------------------------------------------
-  // Register service worker
+  // Get the active ServiceWorkerRegistration (registered by main.tsx on boot)
   // -----------------------------------------------------------------------
-  const registerServiceWorker = useCallback(async (): Promise<ServiceWorkerRegistration | null> => {
+  const getServiceWorkerRegistration = useCallback(async (): Promise<ServiceWorkerRegistration | null> => {
     if (!isPushSupported()) {
       updateState({ isLoading: false, status: "unsupported" });
       return null;
     }
 
     try {
-      const registration = await navigator.serviceWorker.register(SW_PATH, {
-        scope: "/",
-      });
-
+      // navigator.serviceWorker.ready resolves once the SW is active (no redundant register call)
+      const registration = await navigator.serviceWorker.ready;
       swRegistrationRef.current = registration;
       updateState({ isSwRegistered: true });
-
-      // Wait for the SW to be active
-      if (registration.active) {
-        return registration;
-      }
-
-      return new Promise((resolve) => {
-        const sw = registration.installing || registration.waiting;
-        if (sw) {
-          sw.addEventListener("statechange", () => {
-            if (sw.state === "activated") {
-              resolve(registration);
-            }
-          });
-        } else {
-          resolve(registration);
-        }
-      });
+      return registration;
     } catch (err) {
-      console.error("[PUSH] SW registration failed:", err);
+      console.error("[PUSH] SW ready failed:", err);
       updateState({
         isLoading: false,
-        error: "Falha ao registrar service worker.",
+        error: "Falha ao obter service worker.",
       });
       return null;
     }
@@ -171,10 +153,10 @@ export function usePushNotifications() {
         return false;
       }
 
-      // Register SW if not already
+      // Get SW registration (registered by main.tsx on page load)
       let registration = swRegistrationRef.current;
       if (!registration) {
-        registration = await registerServiceWorker();
+        registration = await getServiceWorkerRegistration();
         if (!registration) {
           updateState({ isLoading: false });
           return false;
@@ -299,9 +281,9 @@ export function usePushNotifications() {
         return;
       }
 
-      // Try to get existing subscription
+      // Try to get existing subscription (SW already registered by main.tsx)
       try {
-        const registration = await registerServiceWorker();
+        const registration = await getServiceWorkerRegistration();
         if (!registration || cancelled) {
           if (!cancelled) updateState({ isLoading: false });
           return;

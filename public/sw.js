@@ -1,15 +1,57 @@
 /**
  * Portal do Cliente — Service Worker
  *
- * Handles push notifications and background sync for the customer portal.
- * Installed when the user grants notification permission.
+ * Handles:
+ * - Push notifications
+ * - Offline fallback for navigation requests
+ * - Cache-first for all GET requests (including cross-origin content
+ *   like provider logos that are explicitly cached by the app)
+ * - Precache of core pages at install time for basic offline functionality
  */
 
 const CACHE_NAME = "portal-cliente-v1";
 
-// On install — activate immediately
+// ── Precache these URLs at install time ────────────────────────────────
+// These are fetched and cached when the SW is first installed, ensuring
+// the app shell and login page work even without connectivity.
+// JS/CSS chunks are auto-cached by the fetch handler during online browsing.
+const PRECACHE_URLS = [
+  "/",
+  "/index.html",
+  "/login",
+  "/dashboard",
+  "/faturas",
+  "/perfil",
+  "/logo-192.png",
+  "/logo-512.png",
+  "/manifest.webmanifest",
+];
+
+async function precacheAssets(urls) {
+  const cache = await caches.open(CACHE_NAME);
+  // Remove inner try/catch so Promise.allSettled sees actual rejections.
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const response = await fetch(url);
+      if (response.ok) {
+        await cache.put(url, response);
+        return true;
+      }
+      console.warn("[SW] Precache failed (status", response.status, "):", url);
+      return false;
+    }),
+  );
+  const succeeded = results.filter(
+    (r) => r.status === "fulfilled" && r.value === true,
+  ).length;
+  console.log("[SW] Precache complete:", succeeded, "/", urls.length);
+}
+
+// On install — activate immediately + precache core assets
 self.addEventListener("install", (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    Promise.all([self.skipWaiting(), precacheAssets(PRECACHE_URLS)]),
+  );
 });
 
 // On activate — claim all clients so the SW controls pages immediately
@@ -31,8 +73,6 @@ self.addEventListener("activate", (event) => {
 
 // ---------------------------------------------------------------------------
 // Push event — receive a push message and show a notification
-// Expected payload format (JSON): { title, body, icon, badge, data, requireInteraction }
-// Fallback: if payload is empty, show a generic message.
 // ---------------------------------------------------------------------------
 self.addEventListener("push", (event) => {
   let data;
@@ -52,7 +92,6 @@ self.addEventListener("push", (event) => {
     renotify: data?.renotify ?? true,
     requireInteraction: data?.requireInteraction ?? true,
     data: data?.data || {},
-    // Actions for the notification
     actions: data?.actions || [
       { action: "open", title: "Abrir" },
       { action: "close", title: "Fechar" },
@@ -71,27 +110,22 @@ self.addEventListener("notificationclick", (event) => {
   const urlToOpen =
     event.notification.data?.url || event.notification.data?.path || "/dashboard";
 
-  // If there's an action, handle it
   if (event.action === "close") return;
 
-  // Try to focus an existing window/tab, or open a new one
   const promiseChain = self.clients
     .matchAll({ type: "window", includeUncontrolled: true })
     .then((windowClients) => {
-      // Check if there's already a window/tab open with the target URL
       const matchingClient = windowClients.find(
         (client) => client.url.includes(self.location.origin) && "focus" in client
       );
 
       if (matchingClient) {
-        // Navigate the existing client to the target URL
         return matchingClient.focus().then((client) => {
           client.navigate(urlToOpen);
           return client;
         });
       }
 
-      // Open a new window
       return self.clients.openWindow(urlToOpen);
     });
 
@@ -99,24 +133,76 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 // ---------------------------------------------------------------------------
-// Fetch — minimal fetch handler (we don't cache aggressively since this is
-// a dynamic portal, but we can serve a fallback page when offline)
+// Fetch — adaptive strategy based on request type.
+//
+// Strategies:
+//   API requests (/api/*)         → Network-first (fresh data when online,
+//                                    cached response when offline).
+//   Navigation requests           → Network-first with offline page fallback.
+//   All other (assets, images)    → Cache-first (instant from cache,
+//                                    fallback to network).
+//
+// All strategies auto-cache successful same-origin GET responses so the
+// next visit works even without connectivity.
 // ---------------------------------------------------------------------------
 self.addEventListener("fetch", (event) => {
-  // Only handle GET requests from same origin
-  if (event.request.method !== "GET" || !event.request.url.startsWith(self.location.origin)) {
-    return;
+  if (event.request.method !== "GET") return;
+  event.respondWith(handleFetch(event.request));
+});
+
+async function handleFetch(request) {
+  const url = new URL(request.url);
+  const isSameOrigin = request.url.startsWith(self.location.origin);
+  const isApiPath = url.pathname.startsWith("/api/");
+
+  // ── API requests: network-first ──────────────────────────────────────
+  // Always try the network first so the user sees fresh data.
+  // When offline, fall back to the cached response.
+  if (isApiPath) {
+    try {
+      const response = await fetch(request);
+      if (response.ok && isSameOrigin) {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+      }
+      return response;
+    } catch {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      return new Response(
+        JSON.stringify({ error: "Sem conexão", billings: [] }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
   }
 
-  // For navigation requests (HTML pages), try network first, fallback to cache
-  if (event.request.mode === "navigate") {
-    event.respondWith(
-      fetch(event.request).catch(() => {
-        return caches.match(event.request).then((cached) => {
-          if (cached) return cached;
-          // If no cache hit and offline, return a simple offline page
-          return new Response(
-            `<!DOCTYPE html>
+  // ── Non-API, non-navigation: cache-first ─────────────────────────────
+  // Static assets, images, etc. — serve from cache instantly.
+  const cached = await caches.match(request);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(request);
+    if (response.ok && isSameOrigin) {
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+    }
+    return response;
+  } catch {
+    // Offline and not in cache
+    if (request.mode === "navigate") {
+      return offlinePage();
+    }
+    return new Response("", { status: 503, statusText: "Service Unavailable" });
+  }
+}
+
+function offlinePage() {
+  return new Response(
+    `<!DOCTYPE html>
 <html lang="pt-BR">
 <head><meta charset="UTF-8"><title>Sem conexão</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -124,25 +210,7 @@ self.addEventListener("fetch", (event) => {
 </head>
 <body><div><h1>Sem conexão</h1><p>Verifique sua internet e tente novamente.</p></div></body>
 </html>`,
-            { headers: { "Content-Type": "text/html; charset=UTF-8" } }
-          );
-        });
-      })
-    );
-    return;
-  }
-
-  // For other static assets, use cache-first strategy
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).then((response) => {
-        // Cache successful static responses
-        if (response.ok && event.request.url.includes(self.location.origin)) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      });
-    })
+    { headers: { "Content-Type": "text/html; charset=UTF-8" } },
   );
-});
+}
+

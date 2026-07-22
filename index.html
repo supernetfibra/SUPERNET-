@@ -17,8 +17,22 @@
   <meta name="theme-color" content="#0f0f0f" media="(prefers-color-scheme: dark)" />
   <meta name="application-name" content="Portal do Cliente" />
 
-  <!-- iOS splash / icons -->
-  <link rel="apple-touch-icon" href="/logo.svg" />
+  <!-- Open Graph / Social preview (static fallback — dynamic update in branding-context) -->
+  <meta property="og:title" content="Portal do Cliente" />
+  <meta property="og:description" content="Área do Cliente — Faturas, Pagamentos e Suporte" />
+  <meta property="og:type" content="website" />
+  <!--
+    Static fallback OG image: a Wi‑Fi icon SVG inline.
+    Social crawlers don't run JS, so this is what they'll see.
+    The branding context upgrades it to the provider logo URL once React hydrates.
+  -->
+  <meta property="og:image" content="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630'%3E%3Crect width='1200' height='630' fill='%23fafafa'/%3E%3Cg transform='translate(560,180)'%3E%3Cpath d='M4 10a10 10 0 0 1 16 0' stroke='%236b7280' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Cpath d='M8 15.5a5 5 0 0 1 8 0' stroke='%236b7280' stroke-width='8' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='20.5' r='3' fill='%236b7280'/%3E%3C/g%3E%3Ctext x='600' y='420' text-anchor='middle' font-family='system-ui,sans-serif' font-size='24' fill='%236b7280'%3EPortal do Cliente%3C/text%3E%3C/svg%3E" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:site_name" content="Portal do Cliente" />
+
+  <!-- iOS / PWA icons (PNG — SVG does not work for apple-touch-icon) -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/logo-192.png" />
   <link rel="apple-touch-icon" sizes="192x192" href="/logo-192.png" />
   <link rel="apple-touch-icon" sizes="512x512" href="/logo-512.png" />
 

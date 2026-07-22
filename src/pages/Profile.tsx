@@ -84,6 +84,17 @@ export default function Profile() {
       try {
         setLoading(true);
 
+        // Build fallback from session info (stable closure, not deps)
+        const sessionAsFallback: CustomerData | null = sessionCustomer
+          ? {
+              id: 0,
+              full_name: sessionCustomer.name || "Cliente",
+              login: "",
+              cpf_cnpj: sessionCustomer.cpf,
+              status: "Ativo",
+            }
+          : null;
+
         // ---- TEST USER - return mock data ----
         if (sessionCustomer?.id?.startsWith("test-") && isTestCpf(sessionCustomer.cpf)) {
           if (!cancelled) {
@@ -113,7 +124,13 @@ export default function Profile() {
         if (!cancelled) {
           if (!data.customer) {
             console.warn("[PERFIL] Resposta sem customer:", JSON.stringify(data).slice(0, 300));
-            setError("Dados do cliente não encontrados na resposta.");
+            // Fallback: show session data instead of error
+            if (sessionAsFallback) {
+              setCustomer(sessionAsFallback);
+              setError(null);
+            } else {
+              setError("Dados do cliente não encontrados na resposta.");
+            }
           } else {
             setCustomer(data.customer);
             setError(null);
@@ -122,11 +139,26 @@ export default function Profile() {
       } catch (err) {
         if (!cancelled) {
           console.error("[PERFIL_ERRO]", err);
-          setError(
-            err instanceof Error
-              ? err.message
-              : "Erro ao conectar com o servidor."
-          );
+          // Fallback: show session data instead of error
+          const sessionAsFallback: CustomerData | null = sessionCustomer
+            ? {
+                id: 0,
+                full_name: sessionCustomer.name || "Cliente",
+                login: "",
+                cpf_cnpj: sessionCustomer.cpf,
+                status: "Ativo",
+              }
+            : null;
+          if (sessionAsFallback) {
+            setCustomer(sessionAsFallback);
+            setError(null);
+          } else {
+            setError(
+              err instanceof Error
+                ? err.message
+                : "Erro ao conectar com o servidor."
+            );
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -136,6 +168,7 @@ export default function Profile() {
     fetchCustomer();
     return () => { cancelled = true; };
   }, [sessionCustomer]);
+
 
   const handleLogout = async () => {
     await logout();

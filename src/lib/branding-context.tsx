@@ -220,6 +220,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   // Each async effect has its own counter so they never invalidate each other.
   const faviconGenRef = useRef(0);
   const appleIconGenRef = useRef(0);
+  const manifestGenRef = useRef(0);
 
   // Replace the placeholder with the actual logo as a PNG (from canvas).
   // Runs asynchronously — the real logo may take a moment to download/decode.
@@ -234,24 +235,129 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     });
   }, [branding.logoUrl, logoToDataUrl, setFaviconHref]);
 
-  // Update apple-touch-icon when logoUrl changes (for iOS share sheet)
+  // Update ALL apple-touch-icon links when logoUrl changes.
+  // iOS uses these for the home-screen icon (needs 180px minimum).
+  // We update every existing <link rel="apple-touch-icon"> so that
+  // all size variants point to the provider logo.
   useEffect(() => {
     if (!branding.logoUrl) return;
 
     const gen = ++appleIconGenRef.current;
 
-    logoToDataUrl(32, true).then((dataUrl) => {
+    logoToDataUrl(180, true).then((dataUrl) => {
       if (!dataUrl || gen !== appleIconGenRef.current) return; // stale
 
-      let appleLink = document.querySelector<HTMLLinkElement>("link[rel~='apple-touch-icon']");
-      if (!appleLink) {
-        appleLink = document.createElement("link");
-        appleLink.rel = "apple-touch-icon";
-        document.head.appendChild(appleLink);
+      const links = document.querySelectorAll<HTMLLinkElement>("link[rel~='apple-touch-icon']");
+      if (links.length === 0) {
+        const link = document.createElement("link");
+        link.rel = "apple-touch-icon";
+        link.href = dataUrl;
+        document.head.appendChild(link);
+      } else {
+        links.forEach((link) => {
+          link.href = dataUrl;
+        });
       }
-      appleLink.href = dataUrl;
     });
   }, [branding.logoUrl, logoToDataUrl]);
+
+  // ── Open Graph meta tags ──────────────────────────────────────────────
+  // Update og:title, og:description, og:image, and og:site_name so that
+  // in-browser share sheets (Web Share API) show the correct provider info.
+  //
+  // Note: social-media crawlers (WhatsApp, Facebook, Telegram) do NOT execute
+  // JavaScript, so they will only see the static fallback in index.html.
+  // For crawler-perfect previews, a Vercel serverless function or middleware
+  // that injects the provider branding into the HTML at request time is needed.
+  useEffect(() => {
+    const setMeta = (prop: string, content: string) => {
+      let tag = document.querySelector<HTMLMetaElement>(`meta[property="${prop}"]`);
+      if (!tag) {
+        tag = document.createElement("meta");
+        tag.setAttribute("property", prop);
+        document.head.appendChild(tag);
+      }
+      tag.setAttribute("content", content);
+    };
+
+    setMeta("og:title", branding.providerName);
+
+    if (branding.logoUrl) {
+      setMeta("og:image", branding.logoUrl);
+    }
+    // When no logoUrl, keep the static Wi‑Fi fallback from index.html
+  }, [branding.providerName, branding.logoUrl]);
+
+  // ── Cache the logo image for offline use ────────────────────────────
+  // Uses the Cache API directly (same cache the SW reads from) so the
+  // logo is available offline regardless of whether the SW is active yet.
+  useEffect(() => {
+    if (!branding.logoUrl) return;
+
+    async function cacheLogo() {
+      if (!("caches" in window)) return;
+      try {
+        const cache = await caches.open("portal-cliente-v1");
+        // Only cache if not already cached (avoid redundant fetch)
+        const existing = await cache.match(branding.logoUrl);
+        if (existing) return;
+
+        const response = await fetch(branding.logoUrl, { mode: "cors" });
+        if (response.ok) {
+          await cache.put(branding.logoUrl, response);
+        }
+      } catch {
+        // Offline or invalid URL — silently ignore
+      }
+    }
+
+    cacheLogo();
+  }, [branding.logoUrl]);
+
+  // ── Dynamic PWA Manifest ────────────────────────────────────────────
+  // When the provider logo is known, generate a manifest with data-URL
+  // icons so Android/Chrome PWA install uses the correct logo.
+  useEffect(() => {
+    if (!branding.logoUrl) return;
+
+    const gen = ++manifestGenRef.current;
+
+    // Generate both sizes, then compose and inject the manifest
+    Promise.all([
+      logoToDataUrl(192, false),
+      logoToDataUrl(512, false),
+    ]).then(([icon192, icon512]) => {
+      if (gen !== manifestGenRef.current) return; // stale
+      if (!icon192 || !icon512) return;
+
+      const manifest = {
+        name: branding.providerName,
+        short_name: branding.providerName.slice(0, 12),
+        description: `Portal do Cliente — ${branding.providerName}`,
+        start_url: "/",
+        display: "standalone",
+        orientation: "portrait-primary",
+        background_color: "#fafafa",
+        theme_color: branding.accentColor || "#fafafa",
+        scope: "/",
+        lang: "pt-BR",
+        icons: [
+          { src: icon192, sizes: "192x192", type: "image/png", purpose: "any maskable" },
+          { src: icon512, sizes: "512x512", type: "image/png", purpose: "any maskable" },
+        ],
+      };
+
+      const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.querySelector<HTMLLinkElement>("link[rel='manifest']");
+      if (link) {
+        const old = link.href;
+        link.href = url;
+        if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+      }
+    });
+  }, [branding.logoUrl, branding.providerName, branding.accentColor, logoToDataUrl]);
 
   // Update theme-color meta tag for browser chrome
   useEffect(() => {

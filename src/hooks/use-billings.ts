@@ -1,347 +1,44 @@
 /**
- * Hook to fetch real billing data from the MikWeb API via Convex HTTP endpoint.
+ * Hook to read billing data from BillingContext.
+ * The actual fetch is handled by <BillingProvider> at the app root.
+ *
+ * Also re-exports all billing helper functions (mapping, formatting, caching)
+ * from billing-utils.ts for backward compatibility with consumers.
  */
 
-import { useState, useEffect } from "react";
-import { useAuth } from "@/lib/auth-context";
-import { getTestBillings, isTestCpf } from "@/lib/test-user";
+import { useBillingContext } from "@/lib/billing-context";
 
+// ── Re-export shared types and helpers from billing-utils ──
+// These were previously defined inline here, but were moved to billing-utils.ts
+// to break the circular dependency (billing-context imports from use-billings).
+export type {
+  BillingSummary,
+  BillingDetail,
+  RawBilling,
+} from "@/lib/billing-utils";
+export {
+  mapBilling,
+  mapStatus,
+  formatDate,
+  extractPixCode,
+  findPixCode,
+  saveToCache,
+  loadFromCache,
+  clearCache,
+} from "@/lib/billing-utils";
 // ---------------------------------------------------------------------------
-// Types — mapped from MikWeb API response to frontend-friendly format
-// ---------------------------------------------------------------------------
-
-export interface BillingSummary {
-  id: string;
-  competencia: string;
-  vencimento: string;
-  valor: number;
-  status: "pendente" | "pago" | "vencido" | "cancelado";
-  data_pagamento?: string;
-  valor_pago?: number;
-  linha_digitavel?: string;
-  pix_copiaecola?: string;
-  url_boleto?: string;
-  multa?: number;
-  juros?: number;
-}
-
-export interface BillingDetail extends BillingSummary {
-  codigo_barras?: string;
-  nosso_numero?: string;
-  observacoes?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Mapping helpers
+// Hook — reads from centralized BillingContext (no local state/effects)
 // ---------------------------------------------------------------------------
 
-/** Map MikWeb API situation names to frontend status */
-function mapStatus(situationName: string): BillingSummary["status"] {
-  const map: Record<string, BillingSummary["status"]> = {
-    "Em Aberto": "pendente",
-    "Efetuado": "pago",
-    "Pago": "pago",
-    "Em Atraso": "vencido",
-    "Vencido": "vencido",
-    "Cancelado": "cancelado",
-    "Em Observação": "pendente",
-  };
-  return map[situationName] || "pendente";
-}
-
-/** Format date string from yyyy-MM-dd to dd/MM/yyyy */
-function formatDate(dateStr: string): string {
-  if (!dateStr) return "";
-  const parts = dateStr.split("-");
-  if (parts.length === 3) {
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  }
-  return dateStr;
-}
-
-/** Extract PIX copy-paste code from base64 if encoded */
-function extractPixCode(pixValue?: string): string | undefined {
-  if (!pixValue) return undefined;
-  try {
-    // Check if it's base64-encoded (long strings of only base64 chars)
-    if (/^[A-Za-z0-9+/=]+$/.test(pixValue) && pixValue.length > 50) {
-      return atob(pixValue);
-    }
-  } catch {
-    // Not base64, return as-is
-  }
-  return pixValue;
-}
-
-/**
- * Try multiple field names from the raw API response to find the PIX code.
- * The MikWeb API may return it under different names depending on the version.
- * Logs a debug warning when no PIX field is found, listing available fields.
- */
-function findPixCode(raw: Record<string, unknown>): string | undefined {
-  const possibleFields = [
-    "pix_copy_paste_base64",
-    "pix_copy_paste",
-    "pix_copia_cola",
-    "pix_code",
-    "pix_copiaecola",
-  ];
-
-  for (const field of possibleFields) {
-    const value = raw[field];
-    if (typeof value === "string" && value.length > 0) {
-      const extracted = extractPixCode(value);
-      if (extracted) return extracted;
-    }
-  }
-
-  // Log available PIX-related fields for debugging when none was found
-  if (process.env.NODE_ENV !== "production") {
-    const pixKeys = Object.keys(raw).filter((k) =>
-      k.toLowerCase().includes("pix")
-    );
-    if (pixKeys.length > 0) {
-      console.warn(
-        "[PIX] Nenhum campo PIX reconhecido encontrado. Campos disponíveis:",
-        pixKeys.map((k) => `${k}: ${typeof raw[k]}${raw[k] ? ` ("${String(raw[k]).slice(0, 40)}...")` : ""}`)
-      );
-    }
-  }
-
-  return undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Raw billing type from API
-// ---------------------------------------------------------------------------
-
-interface RawBilling {
-  id: number | string;
-  reference?: string;
-  due_day?: string;
-  value?: number;
-  situation_name?: string;
-  date_payment?: string | null;
-  value_paid?: number | null;
-  digitable_line?: string;
-  pix_copy_paste_base64?: string;
-  pix_qr_code_image_base64?: string;
-  integration_link?: string;
-  form_payment?: string;
-  observation?: string | null;
-  our_number?: string;
-  // Possible alternate PIX field names from the API
-  pix_copy_paste?: string;
-  pix_copia_cola?: string;
-  pix_code?: string;
-  pix_copiaecola?: string;
-  // Late payment fees
-  fine_amount?: number;
-  interest_amount?: number;
-}
-
-/** Map raw API billing to frontend-friendly format */
-function mapBilling(raw: RawBilling): BillingSummary {
+export function useBillings() {
+  const ctx = useBillingContext();
   return {
-    id: String(raw.id),
-    competencia: raw.reference || "",
-    vencimento: formatDate(raw.due_day || ""),
-    valor: raw.value || 0,
-    status: mapStatus(raw.situation_name || ""),
-    data_pagamento: raw.date_payment ? formatDate(raw.date_payment) : undefined,
-    valor_pago: raw.value_paid ?? undefined,
-    linha_digitavel: raw.digitable_line,
-    pix_copiaecola: findPixCode(raw as unknown as Record<string, unknown>),
-    url_boleto: raw.integration_link,
-    multa: raw.fine_amount ?? undefined,
-    juros: raw.interest_amount ?? undefined,
+    billings: ctx.billings,
+    isLoading: ctx.isLoading,
+    error: ctx.error,
+    isCached: ctx.isCached,
+    cacheAge: ctx.cacheAge,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Offline cache — stores last successful billing response in localStorage
-// Keys are customer-specific so different users don't mix data.
-// ---------------------------------------------------------------------------
-
-const CACHE_PREFIX = "mikweb_billing_cache_";
-const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
-
-interface BillingCache {
-  billings: BillingSummary[];
-  timestamp: number;
-  customerId: string;
-}
-
-function getCacheKey(customerId?: string): string | null {
-  if (!customerId) return null;
-  return CACHE_PREFIX + customerId;
-}
-
-function loadFromCache(customerId?: string): { billings: BillingSummary[]; age: number } | null {
-  const key = getCacheKey(customerId);
-  if (!key) return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const cached: BillingCache = JSON.parse(raw);
-    const age = Date.now() - cached.timestamp;
-    // Only use cache if it's from the same user and not too stale
-    if (cached.customerId !== customerId) return null;
-    if (age > CACHE_MAX_AGE) {
-      localStorage.removeItem(key);
-      return null;
-    }
-    return { billings: cached.billings, age };
-  } catch {
-    return null;
-  }
-}
-
-function saveToCache(customerId: string | undefined, billings: BillingSummary[]) {
-  if (!customerId) return;
-  const key = getCacheKey(customerId);
-  if (!key) return;
-  try {
-    const cache: BillingCache = {
-      billings,
-      timestamp: Date.now(),
-      customerId,
-    };
-    localStorage.setItem(key, JSON.stringify(cache));
-  } catch {
-    // localStorage full or unavailable — silently skip
-  }
-}
-
-function clearCache(customerId?: string) {
-  if (customerId) {
-    const key = getCacheKey(customerId);
-    if (key) {
-      try { localStorage.removeItem(key); } catch {}
-    }
-  } else {
-    // Clear all billing caches (used on logout)
-    try {
-      Object.keys(localStorage)
-        .filter((k) => k.startsWith(CACHE_PREFIX))
-        .forEach((k) => localStorage.removeItem(k));
-    } catch {}
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-interface UseBillingsResult {
-  billings: BillingSummary[];
-  isLoading: boolean;
-  error: string | null;
-  isCached: boolean;
-  cacheAge: number | null; // ms since last successful fetch, null if fresh
-}
-
-export function useBillings(): UseBillingsResult {
-  const [billings, setBillings] = useState<BillingSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [isCached, setIsCached] = useState(false);
-  const [cacheAge, setCacheAge] = useState<number | null>(null);
-  const { customer } = useAuth();
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchBillings() {
-      // ---- TEST USER - skip cache, return mock billings ----
-      if (customer?.id?.startsWith("test-") && isTestCpf(customer.cpf)) {
-        const mockRaw = getTestBillings() as RawBilling[];
-        const sorted = mockRaw.sort((a, b) => {
-          const aVencido = a.situation_name === "Vencido" || a.situation_name === "Em Atraso";
-          const bVencido = b.situation_name === "Vencido" || b.situation_name === "Em Atraso";
-          if (aVencido && !bVencido) return -1;
-          if (!aVencido && bVencido) return 1;
-          return (b.due_day || "").localeCompare(a.due_day || "");
-        });
-        if (!cancelled) {
-          setBillings(sorted.map(mapBilling));
-          setIsCached(false);
-          setCacheAge(null);
-          setIsLoading(false);
-        }
-        return;
-      }
-      // ---- END TEST USER ----
-
-      try {
-        const response = await fetch("/api/mikweb/billings", {
-          method: "GET",
-          credentials: "include",
-        });
-
-        if (!response.ok) {
-          throw new Error("Erro ao buscar faturas.");
-        }
-
-        const data = await response.json();
-
-        if (!cancelled) {
-          let mapped: BillingSummary[] = [];
-          if (Array.isArray(data.billings)) {
-            const isVencido = (s: string) =>
-              s === "Vencido" || s === "Em Atraso";
-
-            const sorted = (data.billings as RawBilling[]).sort((a, b) => {
-              const aVencido = isVencido(a.situation_name || "");
-              const bVencido = isVencido(b.situation_name || "");
-              if (aVencido && !bVencido) return -1;
-              if (!aVencido && bVencido) return 1;
-              const dateA = a.due_day || "";
-              const dateB = b.due_day || "";
-              return dateB.localeCompare(dateA);
-            });
-            mapped = sorted.map(mapBilling);
-          }
-
-          // Save to cache for offline fallback
-          saveToCache(customer?.id, mapped);
-
-          setBillings(mapped);
-          setIsCached(false);
-          setCacheAge(null);
-          setIsLoading(false);
-        }
-      } catch (err) {
-        // ---- OFFLINE FALLBACK — try cache ----
-        const cached = loadFromCache(customer?.id);
-        if (cached && cached.billings.length > 0) {
-          if (!cancelled) {
-            setBillings(cached.billings);
-            setIsCached(true);
-            setCacheAge(cached.age);
-            setError(null); // Don't show error — we have cached data
-            setIsLoading(false);
-          }
-        } else {
-          // No cache either — show the error
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : "Erro ao carregar faturas.");
-            setIsCached(false);
-            setCacheAge(null);
-            setIsLoading(false);
-          }
-        }
-      }
-    }
-
-    fetchBillings();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [customer]);
-
-  return { billings, isLoading, error, isCached, cacheAge };
 }
 
 export function useBillingById(id: string | undefined): {
@@ -481,8 +178,6 @@ export function getSmartLabel(billing: BillingSummary): {
 export function formatCacheAge(ageMs: number | null): string | null {
   if (ageMs === null) return null;
   if (ageMs < 60000) return "menos de 1 min";
-  if (ageMs < 3600000) return `${Math.floor(ageMs / 60000)} min atr\u00e1s`;
-  return `${Math.floor(ageMs / 3600000)}h atr\u00e1s`;
+  if (ageMs < 3600000) return `${Math.floor(ageMs / 60000)} min atrás`;
+  return `${Math.floor(ageMs / 3600000)}h atrás`;
 }
-
-export { mapBilling, mapStatus, formatDate, extractPixCode, findPixCode, clearCache };
