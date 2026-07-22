@@ -65,10 +65,11 @@ function registerServiceWorker() {
       })
       .catch((err) => console.warn("[SW] Registration failed:", err));
 
-    // When a new SW takes over, reload the page for consistency
+    // When a new SW takes over, the new version is already active
+    // (skipWaiting + clients.claim). A hard reload is disruptive and
+    // causes a black flash — the user can update on next visit.
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      console.log("[SW] Controller changed — reloading.");
-      window.location.reload();
+      console.log("[SW] Controller changed — new version active.");
     });
   });
 }
