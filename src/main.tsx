@@ -19,9 +19,6 @@ import {
   ProfileSkeleton,
 } from "@/components/skeletons";
 
-// Smooth transition wrapper — prevents flash when Suspense swaps fallback → content
-import { SmoothAppear } from "@/components/smooth-appear";
-
 // Auth context
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { BrandingProvider } from "@/lib/branding-context";
@@ -145,29 +142,29 @@ createRoot(document.getElementById("root")!).render(
             <RouteSyncer />
             <Routes>
               {/* Public routes — lazy loaded */}
-              <Route path="/" element={<Suspense fallback={<PageSpinner />}><SmoothAppear><Landing /></SmoothAppear></Suspense>} />
-              <Route path="/login" element={<Suspense fallback={<PageSpinner />}><SmoothAppear><Login /></SmoothAppear></Suspense>} />
+              <Route path="/" element={<Suspense fallback={<PageSpinner />}><Landing /></Suspense>} />
+              <Route path="/login" element={<Suspense fallback={<PageSpinner />}><Login /></Suspense>} />
 
               {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
-              <Route path="/admin" element={<Suspense fallback={<PageSpinner />}><SmoothAppear><AdminLogin /></SmoothAppear></Suspense>} />
-              <Route path="/admin/dashboard" element={<Suspense fallback={<PageSpinner />}><SmoothAppear><AdminDashboard /></SmoothAppear></Suspense>} />
+              <Route path="/admin" element={<Suspense fallback={<PageSpinner />}><AdminLogin /></Suspense>} />
+              <Route path="/admin/dashboard" element={<Suspense fallback={<PageSpinner />}><AdminDashboard /></Suspense>} />
 
               {/* Protected routes — lazy loaded */}
               <Route
                 element={
                   <ProtectedRoute>
-                    <Suspense fallback={<AppLayoutSkeleton />}><SmoothAppear><AppLayout /></SmoothAppear></Suspense>
+                    <Suspense fallback={<AppLayoutSkeleton />}><AppLayout /></Suspense>
                   </ProtectedRoute>
                 }
               >
-                <Route path="/dashboard" element={<Suspense fallback={<DashboardSkeleton />}><SmoothAppear><Dashboard /></SmoothAppear></Suspense>} />
-                <Route path="/faturas" element={<Suspense fallback={<InvoicesSkeleton />}><SmoothAppear><Invoices /></SmoothAppear></Suspense>} />
-                <Route path="/faturas/:id" element={<Suspense fallback={<InvoiceDetailSkeleton />}><SmoothAppear><InvoiceDetail /></SmoothAppear></Suspense>} />
-                <Route path="/perfil" element={<Suspense fallback={<ProfileSkeleton />}><SmoothAppear><Profile /></SmoothAppear></Suspense>} />
+                <Route path="/dashboard" element={<Suspense fallback={<DashboardSkeleton />}><Dashboard /></Suspense>} />
+                <Route path="/faturas" element={<Suspense fallback={<InvoicesSkeleton />}><Invoices /></Suspense>} />
+                <Route path="/faturas/:id" element={<Suspense fallback={<InvoiceDetailSkeleton />}><InvoiceDetail /></Suspense>} />
+                <Route path="/perfil" element={<Suspense fallback={<ProfileSkeleton />}><Profile /></Suspense>} />
               </Route>
 
               {/* 404 */}
-              <Route path="*" element={<Suspense fallback={<PageSpinner />}><SmoothAppear><NotFound /></SmoothAppear></Suspense>} />
+              <Route path="*" element={<Suspense fallback={<PageSpinner />}><NotFound /></Suspense>} />
             </Routes>
           </BrowserRouter>
           <Toaster />
