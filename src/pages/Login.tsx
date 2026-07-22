@@ -40,7 +40,7 @@ export default function Login() {
   const cpfDigits = normalizeCpf(cpf);
   const cpfValid = cpfDigits.length === 11 && isValidCpf(cpfDigits);
   const cpfComplete = cpfDigits.length === 11;
-  const showCpfError = cpfTouched && cpfDigits.length > 0 && !cpfComplete;
+  const showCpfError = cpfTouched && cpfDigits.length > 0 && (!cpfComplete || !cpfValid);
   const showCpfSuccess = cpfTouched && cpfValid;
 
   const handleCpfSubmit = (e: FormEvent) => {
@@ -192,7 +192,7 @@ export default function Login() {
                       {showCpfError && (
                         <p className="flex items-center gap-1.5 text-[11px] text-destructive/80 animate-[fadeIn_0.2s_ease-out]">
                           <AlertCircle className="h-3 w-3" />
-                          CPF deve ter 11 dígitos
+                          {cpfComplete ? "CPF inválido" : "CPF deve ter 11 dígitos"}
                         </p>
                       )}
                       {showCpfSuccess && (
@@ -213,7 +213,7 @@ export default function Login() {
                     <Button
                       type="submit"
                       className="w-full h-10 text-sm"
-                      disabled={!cpfComplete}
+                      disabled={!cpfComplete || !cpfValid}
                     >
                       Continuar
                       <ArrowRight className="ml-2 h-4 w-4" />
