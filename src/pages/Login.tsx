@@ -37,8 +37,9 @@ export default function Login() {
   const [cpfTouched, setCpfTouched] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
+  const ADMIN_CPF = "00000000000";
   const cpfDigits = normalizeCpf(cpf);
-  const cpfValid = cpfDigits.length === 11 && isValidCpf(cpfDigits);
+  const cpfValid = cpfDigits.length === 11 && (isValidCpf(cpfDigits) || cpfDigits === ADMIN_CPF);
   const cpfComplete = cpfDigits.length === 11;
   const showCpfError = cpfTouched && cpfDigits.length > 0 && (!cpfComplete || !cpfValid);
   const showCpfSuccess = cpfTouched && cpfValid;
@@ -63,7 +64,13 @@ export default function Login() {
 
     try {
       await login(normalizeCpf(cpf), password, keepConnected);
-      navigate("/dashboard");
+      // Redirect admin to admin dashboard, regular users to client dashboard
+      const normalizedCpf = normalizeCpf(cpf);
+      if (normalizedCpf === "00000000000") {
+        navigate("/admin/dashboard");
+      } else {
+        navigate("/dashboard");
+      }
     } catch {
       // Error is handled by the auth hook
     } finally {
