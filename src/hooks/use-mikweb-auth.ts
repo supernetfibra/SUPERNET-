@@ -83,6 +83,20 @@ export function useMikWebAuth() {
 
   // Check session on mount
   const checkSession = useCallback(async () => {
+    // ---- ADMIN - check localStorage ----
+    const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY);
+    const adminExpires = localStorage.getItem(ADMIN_TOKEN_KEY + "_expires");
+    if (adminToken && adminExpires && Date.now() < Number(adminExpires)) {
+      setState({
+        isLoading: false,
+        isAuthenticated: true,
+        customer: { id: "admin-00000000000", name: "Administrador", cpf: "00000000000" },
+        error: null,
+      });
+      return;
+    }
+    // ---- END ADMIN ----
+
     // ---- TEST USER - check localStorage ----
     const testSession = getStoredTestSession();
     if (testSession) {

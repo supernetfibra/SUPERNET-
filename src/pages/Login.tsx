@@ -49,10 +49,8 @@ export default function Login() {
     setCpfTouched(true);
     clearError();
 
-    const normalized = normalizeCpf(cpf);
-    if (normalized.length !== 11 || !isValidCpf(normalized)) {
-      return;
-    }
+    // cpfValid already accounts for admin CPF exception
+    if (!cpfValid) return;
 
     setStep("password");
   };
