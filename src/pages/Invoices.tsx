@@ -48,14 +48,21 @@ export default function Invoices() {
     const allUnpaid = billings
       .filter((b: BillingSummary) => b.status !== "pago" && b.status !== "cancelado")
       .sort((a: BillingSummary, b: BillingSummary) => {
-        // Sort by absolute proximity to today (closest due date first)
-        const diasA = Math.abs(diasAteVencimento(a.vencimento) ?? 999);
-        const diasB = Math.abs(diasAteVencimento(b.vencimento) ?? 999);
-        if (diasA !== diasB) return diasA - diasB;
-        // Tie-break: overdue first, then by date
+        // Priority 1: overdue invoices always come before pending
         const aOverdue = a.status === "vencido" ? 0 : 1;
         const bOverdue = b.status === "vencido" ? 0 : 1;
-        return aOverdue - bOverdue;
+        if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+
+        const diasA = diasAteVencimento(a.vencimento) ?? 0;
+        const diasB = diasAteVencimento(b.vencimento) ?? 0;
+
+        if (aOverdue === 0) {
+          // Both overdue: sort by most recently overdue first
+          // Larger dias (less negative) = more recent overdue = first
+          return diasB - diasA;
+        }
+        // Both pending: sort by closest to due date first
+        return diasA - diasB;
       });
 
     const allPaid = billings
@@ -106,11 +113,20 @@ export default function Invoices() {
       map.get(year)!.push(b);
     }
 
-    // Sort years descending, within each year sort by date descending
-    const sortedYears = Array.from(map.keys()).sort((a, b) => b.localeCompare(a));
+    // Sort years descending (use Number() for safe numeric comparison)
+    const sortedYears = Array.from(map.keys()).sort((a, b) => {
+      const na = Number(a);
+      const nb = Number(b);
+      // Non-numeric years (e.g. "—") sort to the end
+      if (isNaN(na) && isNaN(nb)) return 0;
+      if (isNaN(na)) return 1;
+      if (isNaN(nb)) return -1;
+      return nb - na;
+    });
+
     for (const year of sortedYears) {
-      const billings = map.get(year)!;
-      billings.sort((a, b) => {
+      const yearBillings = map.get(year)!;
+      yearBillings.sort((a, b) => {
         const da = parseDateBR(a.vencimento);
         const db = parseDateBR(b.vencimento);
         if (!da && !db) return 0;
@@ -118,7 +134,22 @@ export default function Invoices() {
         if (!db) return -1;
         return db.getTime() - da.getTime();
       });
-      groups.push({ year, billings });
+      groups.push({ year, billings: yearBillings });
+    }
+
+    // ── Log diagnostic: verify years are in descending order ──
+    if (process.env.NODE_ENV !== "production" && groups.length > 1) {
+      const yearList = groups.map(g => g.year);
+      const countList = groups.map(g => g.billings.length);
+      const [first] = yearList;
+      const [last] = yearList.slice(-1);
+      if (Number(first) < Number(last)) {
+        console.warn(
+          "[INVOICES] paidByYear pode estar em ordem crescente:",
+          `years=${yearList.join(", ")}`,
+          `counts=${countList.join(", ")}`,
+        );
+      }
     }
 
     return groups;
