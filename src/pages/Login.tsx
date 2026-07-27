@@ -342,15 +342,7 @@ export default function Login() {
             .
           </p>
 
-          {/* Discreet admin link */}
-          <div className="flex justify-center mt-6">
-            <button
-              onClick={() => navigate("/admin")}
-              className="text-[10px] text-muted-foreground/40 hover:text-muted-foreground transition-colors tracking-wider uppercase"
-            >
-              Administração
-            </button>
-          </div>
+
         </div>
       </div>
 

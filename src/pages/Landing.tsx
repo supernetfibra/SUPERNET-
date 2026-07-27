@@ -8,13 +8,23 @@ import { Button } from "@/components/ui/button";
 import { Wifi, ArrowRight, Shield, FileText, Smartphone } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 
 export default function Landing() {
   const navigate = useNavigate();
   const { providerName, logoUrl } = useBranding();
 
+  const {
+    pullContainerProps,
+    PullIndicator,
+  } = usePullToRefresh(false, () => window.location.reload());
+
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div
+      {...pullContainerProps}
+      className="min-h-screen flex flex-col bg-background relative"
+    >
+      <PullIndicator />
       {/* Header */}
       <header className="border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
