@@ -123,7 +123,13 @@ export function BillingProvider({ children }: { children: ReactNode }) {
       try {
         setIsLoading(true);
 
-        const response = await fetch("/api/mikweb/billings", {
+        // Fetch only the current year's invoices to avoid pagination issues
+        // with clients who have years of history. The MikWeb API paginates
+        // results, and without a year filter, clients with many invoices
+        // since 2023 would only receive the FIRST page (oldest invoices),
+        // never seeing the most recent ones.
+        const currentYear = new Date().getFullYear();
+        const response = await fetch(`/api/mikweb/billings?year=${currentYear}`, {
           method: "GET",
           credentials: "include",
         });

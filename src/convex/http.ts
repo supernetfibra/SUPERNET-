@@ -522,6 +522,10 @@ const billingsHandler = httpAction(async (ctx, request) => {
 
     await ctx.runMutation(api.sessions.touchSession, { sessionToken });
 
+    // Read optional year filter from query string (e.g. ?year=2026)
+    const requestUrl = new URL(request.url);
+    const yearFilter = requestUrl.searchParams.get("year") || undefined;
+
     // ---- TEST USER - return mock billings ----
     if (isTestCustomerId(session.customerId)) {
       return new Response(JSON.stringify({ billings: MOCK_TEST_BILLINGS, customerId: session.customerId }), {
@@ -533,6 +537,7 @@ const billingsHandler = httpAction(async (ctx, request) => {
 
     const billings = await ctx.runAction(api.mikweb.listBillingsByCustomerId, {
       customerId: session.customerId,
+      year: yearFilter,
     });
 
     return new Response(JSON.stringify({ billings, customerId: session.customerId }), {

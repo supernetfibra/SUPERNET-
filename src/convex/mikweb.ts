@@ -144,7 +144,13 @@ async function getApiConfig(ctx: ActionCtx) {
   );
 }
 
-async function apiGet<T>(ctx: ActionCtx, path: string): Promise<T> {
+/**
+ * Fetch a MikWeb API URL and return both the data and pagination meta.
+ */
+async function apiGetFull<T>(
+  ctx: ActionCtx,
+  path: string,
+): Promise<{ data: T; meta?: MikWebApiResponse<T>["meta"] }> {
   const { baseUrl, token } = await getApiConfig(ctx);
   const url = `${baseUrl.replace(/\/$/, "")}${path}`;
 
@@ -163,17 +169,23 @@ async function apiGet<T>(ctx: ActionCtx, path: string): Promise<T> {
     );
   }
 
-  const data: Record<string, unknown> = await response.json();
+  const json: Record<string, unknown> = await response.json();
+  const meta = json.meta as MikWebApiResponse<T>["meta"] | undefined;
 
-  // The API wraps results in { "customer": {...} } or { "customers": [...], "meta": {...} }
-  // or { "billing": {...} } or { "billings": [...], "meta": {...} }
-  // Extract the first key's value as the result (skip "meta")
-  const keys = Object.keys(data).filter((k) => k !== "meta");
-  if (keys.length === 1) {
-    return data[keys[0]] as T;
-  }
+  // Find the first non-meta key to get the actual data
+  const dataKey = Object.keys(json).find((k) => k !== "meta");
+  const data = (dataKey ? json[dataKey] : json) as T;
 
-  return data as T;
+  return { data, meta };
+}
+
+/**
+ * Simple fetch that discards meta and returns just the data.
+ * Reuses apiGetFull internally to avoid duplicating fetch logic.
+ */
+async function apiGet<T>(ctx: ActionCtx, path: string): Promise<T> {
+  const { data } = await apiGetFull<T>(ctx, path);
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,18 +260,68 @@ export const validateInitialPassword = action({
 // ---------------------------------------------------------------------------
 
 /**
- * List billings by customer ID.
- * API endpoint: GET /billings?customer_id=<ID>
- * Response: { "billings": [...], "meta": {...} }
+ * Helper: fetch a URL and return BOTH the data array and the pagination meta.
+ * Unlike apiGet() which discards meta, this returns the raw response so the
+ * caller can inspect meta.pages and fetch additional pages if needed.
+ */
+/**
+ * List billings by customer ID, with optional year filter and full pagination.
+ *
+ * API endpoint: GET /billings?customer_id=<ID>[&date_from=<YYYY-MM-DD>&date_to=<YYYY-MM-DD>]
+ * Response: { "billings": [...], "meta": { ... } }
+ *
+ * Key improvement over the previous implementation:
+ * - The MikWeb API paginates results. Without handling pagination, clients
+ *   with years of history (e.g. since 2023) would only receive the FIRST page,
+ *   missing the most recent invoices.
+ * - This function fetches ALL pages and accumulates results.
+ * - When `year` is provided, adds date_from/date_to params to reduce data.
+ * - Max 6 pages (~120 invoices) as safety limit.
  */
 export const listBillingsByCustomerId = action({
-  args: { customerId: v.string() },
+  args: {
+    customerId: v.string(),
+    year: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<MikWebBilling[]> => {
-    const billings = await apiGet<MikWebBilling[]>(
-      ctx,
-      `/billings?customer_id=${args.customerId}`
-    );
-    return billings || [];
+    const allBillings: MikWebBilling[] = [];
+    let page = 1;
+    let totalPages = 1;
+    const MAX_PAGES = 6; // Safety limit (~120 invoices at 20/page)
+
+    // Build the base query params
+    const params = new URLSearchParams();
+    params.set("customer_id", args.customerId);
+
+    if (args.year) {
+      const y = args.year;
+      params.set("date_from", `${y}-01-01`);
+      params.set("date_to", `${y}-12-31`);
+    }
+
+    const basePath = `/billings?${params.toString()}`;
+
+    while (page <= totalPages && page <= MAX_PAGES) {
+      const pagePath = page === 1
+        ? basePath
+        : `${basePath}&page=${page}`;
+
+      const { data, meta } = await apiGetFull<MikWebBilling[]>(ctx, pagePath);
+
+      if (data && Array.isArray(data)) {
+        allBillings.push(...data);
+      }
+
+      if (meta?.pages) {
+        totalPages = meta.pages.total_pages;
+      } else {
+        break; // No pagination — single page
+      }
+
+      page++;
+    }
+
+    return allBillings;
   },
 });
 
