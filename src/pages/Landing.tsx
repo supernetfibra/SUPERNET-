@@ -59,20 +59,13 @@ export default function Landing() {
                 e gerencie seus serviços de forma simples e rápida.
               </p>
 
-              <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <div className="mt-10">
                 <Button
                   className="h-10 px-6 text-sm"
                   onClick={() => navigate("/login")}
                 >
                   Entrar
                   <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-10 px-6 text-sm"
-                  onClick={() => navigate("/login")}
-                >
-                  Primeiro acesso
                 </Button>
               </div>
             </div>
