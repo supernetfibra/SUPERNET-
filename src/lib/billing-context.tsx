@@ -25,6 +25,9 @@ import { getTestBillings, isTestCpf } from "./test-user";
 // Import billing types and helpers from billing-utils (shared, no circular dep)
 // ---------------------------------------------------------------------------
 
+import { CACHE_NAME } from "./cache-config";
+import diagStore from "./diagnostics";
+
 import {
   type BillingSummary,
   type RawBilling,
@@ -159,9 +162,76 @@ export function BillingProvider({ children }: { children: ReactNode }) {
           // can serve it even on the first visit (when SW may not be active).
           if ("caches" in window) {
             caches
-              .open("portal-cliente-v1")
+              .open(CACHE_NAME)
               .then((cache) => cache.put("/api/mikweb/billings", swCacheClone))
               .catch(() => {});
+          }
+
+          // ── Diagnostic: push to store + console ──
+          const customerTag = customer.id.slice(0, 12) + "...";
+
+          if (mapped.length < 2) {
+            console.warn(
+              "[BILLING] Poucas faturas retornadas:",
+              "count=" + mapped.length,
+              "customer=" + customerTag,
+            );
+            diagStore.push({
+              type: "api_few_billings",
+              timestamp: Date.now(),
+              customer: customerTag,
+              count: mapped.length,
+            });
+          } else {
+            const paidCount = mapped.filter((b) => b.status === "pago").length;
+            if (paidCount === mapped.length) {
+              const dates = mapped
+                .map((b) => {
+                  const [d, m, y] = b.vencimento.split("/").map(Number);
+                  return d && m && y ? new Date(y, m - 1, d) : null;
+                })
+                .filter((d): d is Date => d !== null);
+              if (dates.length > 0) {
+                const newest = dates.reduce((a, b) =>
+                  a.getTime() > b.getTime() ? a : b,
+                );
+                const daysSince =
+                  (Date.now() - newest.getTime()) / (1000 * 60 * 60 * 24);
+                console.warn(
+                  "[BILLING] Todas as faturas estão pagas:",
+                  "count=" + mapped.length,
+                  "maisRecente=" + Math.round(daysSince) + "d atr\u00e1s",
+                  "customer=" + customerTag,
+                );
+                diagStore.push({
+                  type: "api_all_paid",
+                  timestamp: Date.now(),
+                  customer: customerTag,
+                  count: mapped.length,
+                  mostRecentDays: Math.round(daysSince),
+                });
+              } else {
+                console.warn(
+                  "[BILLING] Todas as faturas estão pagas (sem data de vencimento):",
+                  "count=" + mapped.length,
+                  "customer=" + customerTag,
+                );
+                diagStore.push({
+                  type: "api_all_paid_no_dates",
+                  timestamp: Date.now(),
+                  customer: customerTag,
+                  count: mapped.length,
+                });
+              }
+            } else {
+              // Normal fetch — log for tracking
+              diagStore.push({
+                type: "fetch_ok",
+                timestamp: Date.now(),
+                customer: customerTag,
+                count: mapped.length,
+              });
+            }
           }
 
           setBillings(mapped);
@@ -175,14 +245,42 @@ export function BillingProvider({ children }: { children: ReactNode }) {
 
         // ---- OFFLINE FALLBACK — try localStorage cache ----
         const cached = loadFromCache(customer.id);
+        const customerTag = customer.id.slice(0, 12) + "...";
+
         if (cached && cached.billings.length > 0) {
+          const ageMinutes = Math.round(cached.age / 60000);
+          console.warn(
+            "[BILLING] Usando cache offline:",
+            "count=" + cached.billings.length,
+            "idade=" + ageMinutes + "min",
+            "customer=" + customerTag,
+          );
+          diagStore.push({
+            type: "cache_hit",
+            timestamp: Date.now(),
+            customer: customerTag,
+            count: cached.billings.length,
+            ageMinutes,
+          });
           setBillings(cached.billings);
           setIsCached(true);
           setCacheAge(cached.age);
-          setError(null); // don't show error — we have cached data
+          setError(null);
           setIsLoading(false);
         } else {
-          // No cache either — show the error
+          const errMsg =
+            err instanceof Error ? err.message.slice(0, 80) : "Erro desconhecido";
+          console.warn(
+            "[BILLING] Sem cache offline dispon\u00edvel:",
+            "customer=" + customerTag,
+            "erro=" + errMsg,
+          );
+          diagStore.push({
+            type: "cache_miss",
+            timestamp: Date.now(),
+            customer: customerTag,
+            error: errMsg,
+          });
           setError(
             err instanceof Error ? err.message : "Erro ao carregar faturas.",
           );
@@ -204,7 +302,6 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   // Periodic refetch every 5 minutes while authenticated
   // -----------------------------------------------------------------------
   useEffect(() => {
-    // Don't poll for test users or unauthenticated sessions
     if (!customer || customer.id.startsWith("test-")) return;
 
     intervalRef.current = setInterval(() => {
@@ -219,6 +316,30 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     };
   }, [customer]);
 
+  // -----------------------------------------------------------------------
+  // Refresh when the user returns to the tab (visibility change).
+  // Only refetches if the last fetch was more than 60 seconds ago, so
+  // quick tab switches don't cause unnecessary requests.
+  // -----------------------------------------------------------------------
+  const lastFetchRef = useRef(0);
+
+  useEffect(() => {
+    lastFetchRef.current = Date.now();
+  }, [billings]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const elapsed = Date.now() - lastFetchRef.current;
+      if (elapsed < 60_000) return;
+      setFetchTick((t) => t + 1);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
   return (
     <BillingContext.Provider
       value={{ billings, isLoading, error, isCached, cacheAge, refetch }}
@@ -227,10 +348,6 @@ export function BillingProvider({ children }: { children: ReactNode }) {
     </BillingContext.Provider>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Consumer hook
-// ---------------------------------------------------------------------------
 
 export function useBillingContext(): BillingContextValue {
   const ctx = useContext(BillingContext);

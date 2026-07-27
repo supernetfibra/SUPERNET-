@@ -19,8 +19,15 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { useBillings, diasAteVencimento, formatCacheAge } from "@/hooks/use-billings";
+import {
+  useBillings,
+  diasAteVencimento,
+  formatCacheAge,
+  checkStaleData,
+} from "@/hooks/use-billings";
 import type { BillingSummary } from "@/hooks/use-billings";
+import { useBillingContext } from "@/lib/billing-context";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 
 // ---------------------------------------------------------------------------
 // Dashboard Page
@@ -29,6 +36,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { customer } = useAuth();
   const { billings, isLoading, isCached, cacheAge } = useBillings();
+  const { refetch } = useBillingContext();
 
   const pendingBillings = billings.filter((b: BillingSummary) => b.status === "pendente");
   const overdueBillings = billings.filter((b: BillingSummary) => b.status === "vencido");
@@ -139,8 +147,24 @@ export default function Dashboard() {
     try { sessionStorage.setItem("mikweb_dismissed_banner", "true"); } catch {}
   };
 
+  // Stale data detection — checks all billings, not just unpaid
+  const staleDataWarning = useMemo(() => {
+    if (isLoading) return null;
+    return checkStaleData(billings, 60);
+  }, [billings, isLoading]);
+
+  // ── Pull-to-refresh (shared hook, same pattern as Invoices) ──
+  const {
+    pullContainerProps,
+    PullIndicator,
+  } = usePullToRefresh(isLoading, refetch);
+
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div
+      {...pullContainerProps}
+      className="max-w-4xl mx-auto space-y-8 relative"
+    >
+      <PullIndicator />
       {/* Welcome */}
       <div>
         <h1 className="text-xl font-medium tracking-tight text-foreground">
@@ -165,6 +189,28 @@ export default function Dashboard() {
             <RefreshCw className="h-3 w-3" />
             Tentar novamente
           </button>
+        </div>
+      )}
+
+      {/* Stale data warning — data looks suspiciously old */}
+      {!isLoading && staleDataWarning && (
+        <div className="animate-[slideUp_0.3s_ease-out] flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/10">
+          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+              {staleDataWarning.title}
+            </p>
+            <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+              {staleDataWarning.message}
+            </p>
+            <button
+              onClick={refetch}
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Recarregar dados
+            </button>
+          </div>
         </div>
       )}
 

@@ -10,6 +10,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { extractDominantColor } from "./extract-dominant-color";
+import { CACHE_NAME } from "./cache-config";
 
 interface BrandingConfig {
   providerName: string;
@@ -297,7 +298,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     async function cacheLogo() {
       if (!("caches" in window)) return;
       try {
-        const cache = await caches.open("portal-cliente-v1");
+        const cache = await caches.open(CACHE_NAME);
         // Only cache if not already cached (avoid redundant fetch)
         const existing = await cache.match(branding.logoUrl);
         if (existing) return;

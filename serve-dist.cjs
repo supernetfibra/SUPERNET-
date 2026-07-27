@@ -1,10 +1,10 @@
-// Simple static server for the pre-built isolate/
+// Simple static server for the production build (dist/)
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
 const PORT = 4173;
-const ROOT = path.join(__dirname, 'isolate');
+const ROOT = path.join(__dirname, 'dist');
 
 const MIME = {
   '.html': 'text/html',
@@ -26,8 +26,13 @@ const server = http.createServer((req, res) => {
     if (err) {
       // SPA fallback → serve index.html
       fs.readFile(path.join(ROOT, 'index.html'), (e2, d2) => {
-        res.writeHead(e2 ? 500 : 200, { 'Content-Type': 'text/html' });
-        res.end(e2 ? '500' : d2);
+        if (e2) {
+          res.writeHead(500);
+          res.end('500');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(d2);
       });
       return;
     }
@@ -37,6 +42,6 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Preview server listening on http://localhost:${PORT}`);
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`Preview server listening on http://127.0.0.1:${PORT}`);
 });

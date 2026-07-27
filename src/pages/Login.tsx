@@ -253,14 +253,14 @@ export default function Login() {
 
                     <div className="space-y-2">
                       <Label htmlFor="password" className="text-xs font-medium text-muted-foreground">
-                        Senha inicial
+                        {normalizeCpf(cpf) === "00000000000" ? "Senha de administrador" : "Senha inicial"}
                       </Label>
                       <div className="relative">
                         <Input
                           ref={passwordRef}
                           id="password"
                           type={showPassword ? "text" : "password"}
-                          placeholder="Últimos 4 dígitos do CPF"
+                          placeholder={normalizeCpf(cpf) === "00000000000" ? "Digite a senha de admin" : "Últimos 4 dígitos do CPF"}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="h-10 text-sm pr-10"
@@ -281,7 +281,9 @@ export default function Login() {
                         </button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Sua senha inicial são os 4 últimos dígitos do seu CPF.
+                        {normalizeCpf(cpf) === "00000000000"
+                          ? "Use a senha de administrador fornecida pela provedora."
+                          : "Sua senha inicial são os 4 últimos dígitos do seu CPF."}
                       </p>
                     </div>
 

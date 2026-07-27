@@ -9,7 +9,11 @@
  * - Precache of core pages at install time for basic offline functionality
  */
 
-const CACHE_NAME = "portal-cliente-v1";
+// ── !! KEEP IN SYNC with src/lib/cache-config.ts !! ───────────────────
+// The TS app code imports CACHE_NAME from the shared module above.
+// This file is plain JS (not processed by Vite), so the value is duplicated
+// here. When bumping the version, update BOTH places.
+const CACHE_NAME = "portal-cliente-v2";
 
 // ── Precache these URLs at install time ────────────────────────────────
 // These are fetched and cached when the SW is first installed, ensuring

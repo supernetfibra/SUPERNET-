@@ -33,7 +33,7 @@ async function reportToVly(message: string, stack?: string) {
 // DOM removeChild diagnostic — identifies exactly which node is being removed
 // ---------------------------------------------------------------------------
 
-function installRemoveChildDiagnostic() {
+export function installRemoveChildDiagnostic() {
   // Only patch once
   if ((Node.prototype as any).__vlyPatched) return;
   (Node.prototype as any).__vlyPatched = true;
@@ -67,9 +67,6 @@ function installRemoveChildDiagnostic() {
 
 export function InstrumentationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    // Install the diagnostic patch immediately
-    installRemoveChildDiagnostic();
-
     const handleError = (event: ErrorEvent) => {
       console.error("[Instrumentation]", event.message);
       reportToVly(event.message, event.error?.stack);

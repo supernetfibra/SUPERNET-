@@ -167,7 +167,7 @@ export function mapBilling(raw: RawBilling): BillingSummary {
 // ---------------------------------------------------------------------------
 
 const CACHE_PREFIX = "mikweb_billing_cache_";
-const CACHE_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_MAX_AGE = 60 * 60 * 1000; // 1 hour
 
 interface BillingCache {
   billings: BillingSummary[];

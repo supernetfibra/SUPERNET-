@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
-import { InstrumentationProvider } from "@/instrumentation.tsx";
+import { InstrumentationProvider, installRemoveChildDiagnostic } from "@/instrumentation.tsx";
+import { registerDiagnostics } from "@/lib/diagnostics";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import { useEffect, lazy, Suspense } from "react";
@@ -34,6 +35,18 @@ const SW_PATH = "/sw.js";
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+
+  // Don't register in development — the SW caches old JS bundles from a
+  // previous build and serves them stale on full page reloads (HMR is
+  // already disabled in vite.config.ts, so Vite does full reloads).
+  // Covers all common loopback addresses: localhost, 127.0.0.1, ::1, 0.0.0.0.
+  if (window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.hostname === "::1" ||
+      window.location.hostname === "0.0.0.0") {
+    console.log("[SW] Skipping registration in development mode.");
+    return;
+  }
 
   // Register on page load with a small delay to not block rendering
   window.addEventListener("load", () => {
@@ -130,6 +143,13 @@ function RouteSyncer() {
 // ---------------------------------------------------------------------------
 // Mount the app
 // ---------------------------------------------------------------------------
+
+// Install the removeChild diagnostic BEFORE createRoot so React 19's patching
+// sees the patched version from the very first render.
+installRemoveChildDiagnostic();
+
+// Register the console diagnostics command (type __diagnostics() in DevTools).
+registerDiagnostics();
 
 createRoot(document.getElementById("root")!).render(
   <InstrumentationProvider>

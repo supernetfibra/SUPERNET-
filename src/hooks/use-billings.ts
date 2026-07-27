@@ -116,7 +116,7 @@ export function formatVencimentoComMes(vencimento: string): string {
 /**
  * Convert dd/MM/yyyy string to a Date object at midnight local time.
  */
-function parseDateBR(dateStr: string): Date | null {
+export function parseDateBR(dateStr: string): Date | null {
   if (!dateStr) return null;
   const parts = dateStr.split("/");
   if (parts.length !== 3) return null;
@@ -189,4 +189,47 @@ export function formatCacheAge(ageMs: number | null): string | null {
   if (ageMs < 60000) return "menos de 1 min";
   if (ageMs < 3600000) return `${Math.floor(ageMs / 60000)} min atrás`;
   return `${Math.floor(ageMs / 3600000)}h atrás`;
+}
+
+// ---------------------------------------------------------------------------
+// Stale data detection — shared between Invoices and Dashboard
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the billing data looks suspiciously stale.
+ * Returns null if data seems fresh, or an object with title/message if the
+ * most recent invoice (paid or not) is older than `thresholdDays`.
+ */
+export function checkStaleData(
+  billings: BillingSummary[],
+  thresholdDays = 60,
+): { title: string; message: string } | null {
+  if (billings.length === 0) return null;
+
+  // Find the most recent vencimento by parsing dd/MM/yyyy
+  const dates = billings
+    .map((b) => parseDateBR(b.vencimento))
+    .filter((d): d is Date => d !== null);
+
+  if (dates.length === 0) return null;
+
+  const latestDate = dates.reduce((latest, d) =>
+    d.getTime() > latest.getTime() ? d : latest,
+  );
+
+  const now = new Date();
+  const diffDays =
+    (now.getTime() - latestDate.getTime()) / (1000 * 60 * 60 * 24);
+
+  if (diffDays > thresholdDays) {
+    const mes = latestDate.getMonth() + 1;
+    const ano = latestDate.getFullYear();
+    const diasAtras = Math.round(diffDays);
+    return {
+      title: "Dados podem estar desatualizados",
+      message: `A fatura mais recente é de ${mes}/${ano} (há ${diasAtras} dias). Pode haver cobranças mais recentes não carregadas.`,
+    };
+  }
+
+  return null;
 }

@@ -87,6 +87,7 @@ export function useMikWebAuth() {
     const adminToken = localStorage.getItem(ADMIN_TOKEN_KEY);
     const adminExpires = localStorage.getItem(ADMIN_TOKEN_KEY + "_expires");
     if (adminToken && adminExpires && Date.now() < Number(adminExpires)) {
+      console.log("[AUTH] Sessão admin válida encontrada no localStorage");
       setState({
         isLoading: false,
         isAuthenticated: true,
@@ -158,12 +159,15 @@ export function useMikWebAuth() {
 
       // ---- ADMIN - handle locally (CPF 000.000.000-00 + senha dedicada) ----
       if (isAdminCpf(normalizedCpf)) {
+        console.log("[AUTH] Admin CPF detectado, validando senha...");
         if (password !== ADMIN_PASSWORD) {
           const errMsg = "Senha de administrador incorreta.";
+          console.warn("[AUTH] Admin senha incorreta");
           setState((prev) => ({ ...prev, isLoading: false, error: errMsg }));
           throw new Error(errMsg);
         }
 
+        console.log("[AUTH] Admin senha OK, salvando sessão...");
         storeAdminSession();
         const adminData: LoginResponse = {
           success: true,
@@ -179,6 +183,7 @@ export function useMikWebAuth() {
           customer: { id: "admin-00000000000", name: "Administrador", cpf: normalizedCpf },
           error: null,
         });
+        console.log("[AUTH] Admin login concluído, redirecionando...");
         return adminData;
       }
       // ---- END ADMIN ----

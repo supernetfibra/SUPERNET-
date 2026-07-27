@@ -44,8 +44,9 @@ import {
   Type,
   Upload,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // Token helper — reads from localStorage and appends as query param
@@ -178,6 +179,9 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
+  // Track if welcome toast has been shown for this session
+  const welcomeShown = useRef(false);
+
   // Verify admin session on mount — check localStorage first, then try server.
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +212,17 @@ export default function AdminDashboard() {
 
     return () => { cancelled = true; };
   }, []);
+
+  // Show welcome toast once when session is verified
+  useEffect(() => {
+    if (isVerified && !welcomeShown.current) {
+      welcomeShown.current = true;
+      toast.success("Login realizado", {
+        description: "Bem-vindo ao painel administrativo.",
+        duration: 4000,
+      });
+    }
+  }, [isVerified]);
 
   // Load config and audit data
   const loadData = useCallback(async () => {
