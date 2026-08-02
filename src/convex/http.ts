@@ -7,7 +7,7 @@
 
 import { httpRouter } from "convex/server";
 import { auth } from "./auth";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
 
 const http = httpRouter();
@@ -648,6 +648,33 @@ function getAdminSessionToken(request: Request): string | null {
   }
 }
 
+const ADMIN_JSON_HEADERS = { "Content-Type": "application/json" };
+
+/** Verify that the request carries a valid admin session (cookie or ?token=). */
+async function requireAdmin(ctx: any, request: Request): Promise<boolean> {
+  const sessionToken = getAdminSessionToken(request);
+  if (!sessionToken) return false;
+  try {
+    return await ctx.runQuery(api.admin.verifyAdminSession, { sessionToken });
+  } catch {
+    return false;
+  }
+}
+
+function adminUnauthorized(): Response {
+  return new Response(
+    JSON.stringify({ error: "Não autorizado. Faça login como administrador." }),
+    { status: 401, headers: ADMIN_JSON_HEADERS }
+  );
+}
+
+function adminError(message: string, status = 400): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: ADMIN_JSON_HEADERS,
+  });
+}
+
 // POST /api/admin/logout
 const adminLogoutHandler = httpAction(async (ctx, request) => {
   try {
@@ -683,7 +710,8 @@ const adminVerifyHandler = httpAction(async (ctx, request) => {
 });
 
 // GET /api/admin/config
-const adminGetConfigHandler = httpAction(async (ctx) => {
+const adminGetConfigHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
   try {
     const config = await ctx.runQuery(api.admin.getApiConfig);
     return new Response(JSON.stringify(config || { apiUrl: "", hasToken: false, updatedAt: 0 }), {
@@ -700,6 +728,7 @@ const adminGetConfigHandler = httpAction(async (ctx) => {
 
 // POST /api/admin/config
 const adminSaveConfigHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
   try {
     const body = (await request.json()) as { apiUrl: string; apiToken: string };
     if (!body.apiToken) {
@@ -742,6 +771,7 @@ const adminGetBrandingHandler = httpAction(async (ctx) => {
 
 // POST /api/admin/branding
 const adminSaveBrandingHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
   try {
     const body = (await request.json()) as { providerName: string; logoUrl: string };
     if (!body.providerName || !body.providerName.trim()) {
@@ -768,6 +798,7 @@ const adminSaveBrandingHandler = httpAction(async (ctx, request) => {
 
 // POST /api/admin/test-connection
 const adminTestConnectionHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
   try {
     const body = (await request.json()) as { apiUrl: string; apiToken: string };
     const result = await ctx.runAction(api.adminNode.testApiConnection, { apiUrl: body.apiUrl, apiToken: body.apiToken });
@@ -785,6 +816,7 @@ const adminTestConnectionHandler = httpAction(async (ctx, request) => {
 
 // GET /api/admin/audit-logs
 const adminAuditLogsHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
   try {
     const url = new URL(request.url);
     const type = url.searchParams.get("type") || undefined;
@@ -815,6 +847,148 @@ const adminAuditLogsHandler = httpAction(async (ctx, request) => {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Admin Customer Lookup & Operations
+// ---------------------------------------------------------------------------
+
+// GET /api/admin/customer?cpf=... — lookup a customer and their billings
+const adminCustomerHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const url = new URL(request.url);
+    const cpf = (url.searchParams.get("cpf") || "").replace(/\D/g, "");
+    if (cpf.length !== 11) {
+      return adminError("CPF inválido. Informe os 11 dígitos.");
+    }
+
+    let customers;
+    try {
+      customers = await ctx.runAction(api.mikweb.findCustomerByCPF, { cpf });
+    } catch (err) {
+      return adminError(
+        err instanceof Error ? err.message : "Cliente não encontrado.",
+        404
+      );
+    }
+
+    const customer = customers[0];
+    const billings = await ctx.runAction(api.mikweb.listBillingsByCustomerId, {
+      customerId: String(customer.id),
+    });
+
+    // Never expose the raw password field (if the API returns one)
+    const { password, ...safeCustomer } = customer;
+
+    // Sort: overdue first, then most recent
+    const isVencido = (s: string) => s === "Vencido" || s === "Em Atraso";
+    billings.sort((a, b) => {
+      const aVencido = isVencido(a.situation_name || "");
+      const bVencido = isVencido(b.situation_name || "");
+      if (aVencido && !bVencido) return -1;
+      if (!aVencido && bVencido) return 1;
+      return (b.due_day || "").localeCompare(a.due_day || "");
+    });
+
+    return new Response(JSON.stringify({ customer: safeCustomer, billings }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_CUSTOMER_ERROR]", err);
+    return adminError("Erro ao consultar cliente.", 500);
+  }
+});
+
+// GET /api/admin/sessions — list recent customer sessions
+const adminSessionsHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const sessions = await ctx.runQuery(api.sessions.listSessions, {});
+    return new Response(JSON.stringify({ sessions }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_SESSIONS_ERROR]", err);
+    return adminError("Erro ao listar sessões.", 500);
+  }
+});
+
+// POST /api/admin/sessions/revoke — revoke a customer session by ID
+const adminRevokeSessionHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const body = (await request.json()) as { sessionId?: string };
+    if (!body.sessionId) {
+      return adminError("sessionId é obrigatório.");
+    }
+    await ctx.runMutation(api.sessions.revokeSessionById, {
+      sessionId: body.sessionId as any,
+    });
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_REVOKE_ERROR]", err);
+    return adminError("Erro ao revogar sessão.", 500);
+  }
+});
+
+// POST /api/admin/push — send push to all subscribers or a specific CPF
+const adminPushHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const body = (await request.json()) as {
+      title?: string;
+      body?: string;
+      cpf?: string;
+    };
+    if (!body.title || !body.body) {
+      return adminError("Título e mensagem são obrigatórios.");
+    }
+
+    const payload = { title: body.title, body: body.body };
+
+    let result;
+    if (body.cpf) {
+      const cpf = body.cpf.replace(/\D/g, "");
+      result = await ctx.runAction(
+        internal.pushNotifications.sendNotificationToCustomer,
+        { cpf, ...payload }
+      );
+    } else {
+      result = await ctx.runAction(
+        internal.pushNotifications.broadcastNotification,
+        payload
+      );
+    }
+
+    // If nothing was actually delivered, surface a clear warning so the admin
+    // knows the push infra may not be configured (e.g. missing VAPID keys).
+    const sent = (result as any)?.sent ?? 0;
+    if (sent === 0) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error:
+            "Nenhuma notificação foi enviada. Verifique se as chaves VAPID estão configuradas (VAPID_PRIVATE_KEY / VITE_VAPID_PUBLIC_KEY) e se há dispositivos inscritos.",
+          ...result,
+        }),
+        { status: 200, headers: ADMIN_JSON_HEADERS }
+      );
+    }
+
+    return new Response(JSON.stringify({ success: true, ...result }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_PUSH_ERROR]", err);
+    return adminError("Erro ao enviar notificação.", 500);
   }
 });
 
@@ -978,5 +1152,9 @@ http.route({ path: "/api/admin/test-connection", method: "POST", handler: adminT
 http.route({ path: "/api/admin/audit-logs", method: "GET", handler: adminAuditLogsHandler });
 http.route({ path: "/api/admin/branding", method: "GET", handler: adminGetBrandingHandler });
 http.route({ path: "/api/admin/branding", method: "POST", handler: adminSaveBrandingHandler });
+http.route({ path: "/api/admin/customer", method: "GET", handler: adminCustomerHandler });
+http.route({ path: "/api/admin/sessions", method: "GET", handler: adminSessionsHandler });
+http.route({ path: "/api/admin/sessions/revoke", method: "POST", handler: adminRevokeSessionHandler });
+http.route({ path: "/api/admin/push", method: "POST", handler: adminPushHandler });
 
 export default http;

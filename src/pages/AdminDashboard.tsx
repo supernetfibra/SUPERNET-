@@ -43,6 +43,9 @@ import {
   Image,
   Type,
   Upload,
+  Search,
+  Send,
+  Bell,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
@@ -136,6 +139,48 @@ interface AuditSummary {
   uniqueCpfs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+/** Format a date string (YYYY-MM-DD) as dd/mm/aaaa */
+function formatDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-");
+  if (!y || !m || !d) return dateStr;
+  return `${d}/${m}/${y}`;
+}
+
+/** Format a numeric value as BRL */
+function formatValue(value: number | string): string {
+  const n = typeof value === "string" ? parseFloat(value) : value;
+  if (Number.isNaN(n)) return "—";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+/** Badge classes for a MikWeb billing situation_name */
+function statusBadgeClass(situation: string | null | undefined): string {
+  const s = (situation || "").toLowerCase();
+  if (s.includes("pago")) {
+    return "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-emerald-200 dark:border-emerald-900 shrink-0";
+  }
+  if (s.includes("vencid") || s.includes("atras")) {
+    return "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-red-200 dark:border-red-900 shrink-0";
+  }
+  return "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-amber-200 dark:border-amber-900 shrink-0";
+}
+
+/** Human-readable relative time */
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "agora mesmo";
+  if (min < 60) return `há ${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return `há ${d}d`;
+}
+
 const typeLabels: Record<string, { label: string; color: string }> = {
   login_success: { label: "Login OK", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
   login_failure: { label: "Falha Login", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
@@ -179,35 +224,72 @@ export default function AdminDashboard() {
   const [logFilter, setLogFilter] = useState<string>("all");
   const [refreshing, setRefreshing] = useState(false);
 
+  // Customer lookup (support tool)
+  const [lookupCpf, setLookupCpf] = useState("");
+  const [lookupResult, setLookupResult] = useState<{
+    customer: any;
+    billings: any[];
+  } | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+
+  // Active sessions
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [revokingSession, setRevokingSession] = useState<string | null>(null);
+
+  // Push notifications
+  const [pushTitle, setPushTitle] = useState("");
+  const [pushBody, setPushBody] = useState("");
+  const [pushCpf, setPushCpf] = useState("");
+  const [pushSending, setPushSending] = useState(false);
+
+  // Audit log CPF filter
+  const [auditCpf, setAuditCpf] = useState("");
+
   // Track if welcome toast has been shown for this session
   const welcomeShown = useRef(false);
 
-  // Verify admin session on mount — check localStorage first, then try server.
+  // Verify admin session on mount.
+  // Always confirm against the server (the session must exist in the DB —
+  // legacy client-only tokens are no longer accepted by the admin endpoints).
+  // Falls back to trusting localStorage only when the server is unreachable.
   useEffect(() => {
     let cancelled = false;
 
-    // 1. Check localStorage for a valid session (works without server)
     const localToken = localStorage.getItem(ADMIN_TOKEN_KEY);
     const expires = localStorage.getItem(ADMIN_TOKEN_KEY + "_expires");
     const localValid = localToken && expires && Date.now() < Number(expires);
 
-    if (localValid) {
-      setIsVerified(true);
-      return;
+    if (!localValid) {
+      // No valid local session — try server cookie as fallback
+      adminFetch("/api/admin/verify")
+        .then(async (res) => {
+          if (cancelled) return;
+          setIsVerified(res.ok);
+        })
+        .catch(() => {
+          if (!cancelled) setIsVerified(false);
+        });
+      return () => { cancelled = true; };
     }
 
-    // 2. Try server verify as fallback
+    // Local session exists — confirm it server-side (expired/revoked/legacy
+    // tokens are cleared so the admin is prompted to log in again).
     adminFetch("/api/admin/verify")
       .then(async (res) => {
         if (cancelled) return;
         if (res.ok) {
           setIsVerified(true);
         } else {
+          localStorage.removeItem(ADMIN_TOKEN_KEY);
+          localStorage.removeItem(ADMIN_TOKEN_KEY + "_expires");
           setIsVerified(false);
         }
       })
       .catch(() => {
-        if (!cancelled) setIsVerified(false);
+        // Server unreachable — keep local session (offline fallback)
+        if (!cancelled) setIsVerified(true);
       });
 
     return () => { cancelled = true; };
@@ -309,11 +391,12 @@ export default function AdminDashboard() {
     loadData();
   }, [loadData]);
 
-  const loadAuditLogs = async (type?: string) => {
+  const loadAuditLogs = async (type?: string, cpf?: string) => {
     setLogsLoading(true);
     try {
       const params = new URLSearchParams();
       if (type && type !== "all") params.set("type", type);
+      if (cpf && cpf.trim()) params.set("cpf", cpf.replace(/\D/g, ""));
 
       const res = await adminFetch(
         `/api/admin/audit-logs?${params.toString()}`
@@ -331,8 +414,11 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    loadAuditLogs(logFilter);
-  }, [logFilter, isVerified]);
+    const t = setTimeout(() => {
+      loadAuditLogs(logFilter, auditCpf);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [logFilter, isVerified, auditCpf]);
 
   const handleSaveConfig = async () => {
     setConfigSaving(true);
@@ -469,7 +555,121 @@ export default function AdminDashboard() {
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadAuditLogs(logFilter).finally(() => setRefreshing(false));
+    loadAuditLogs(logFilter, auditCpf).finally(() => setRefreshing(false));
+  };
+
+  // ---------------------------------------------------------------------------
+  // Support tools handlers
+  // ---------------------------------------------------------------------------
+
+  const handleLookupCustomer = async () => {
+    const cpf = lookupCpf.replace(/\D/g, "");
+    if (cpf.length !== 11) {
+      setLookupError("Informe um CPF com 11 dígitos.");
+      setLookupResult(null);
+      return;
+    }
+    setLookupLoading(true);
+    setLookupError(null);
+    setLookupResult(null);
+    try {
+      const res = await adminFetch(
+        `/api/admin/customer?cpf=${encodeURIComponent(cpf)}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLookupError(data.error || "Cliente não encontrado.");
+        return;
+      }
+      setLookupResult(data);
+    } catch {
+      setLookupError("Erro ao consultar o cliente.");
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    try {
+      const res = await adminFetch("/api/admin/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+      }
+    } catch {
+      // ignore — panel is non-critical
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isVerified) loadSessions();
+  }, [isVerified, loadSessions]);
+
+  const handleRevokeSession = async (sessionId: string) => {
+    setRevokingSession(sessionId);
+    try {
+      const res = await adminFetch("/api/admin/sessions/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (res.ok) {
+        toast.success("Sessão revogada", {
+          description: "O cliente foi desconectado.",
+        });
+        loadSessions();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || "Erro ao revogar sessão.");
+      }
+    } catch {
+      toast.error("Erro ao revogar sessão.");
+    } finally {
+      setRevokingSession(null);
+    }
+  };
+
+  const handleSendPush = async () => {
+    if (!pushTitle.trim() || !pushBody.trim()) {
+      toast.error("Preencha título e mensagem.");
+      return;
+    }
+    setPushSending(true);
+    try {
+      const res = await adminFetch("/api/admin/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: pushTitle,
+          body: pushBody,
+          cpf: pushCpf.trim() ? pushCpf : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        toast.error(data.error || "Erro ao enviar notificação.");
+        return;
+      }
+      if (data.total != null) {
+        toast.success("Notificação enviada", {
+          description: `${data.sent}/${data.total} dispositivos notificados.`,
+        });
+      } else {
+        toast.success("Notificação enviada", {
+          description: `${data.sent} dispositivo(s) notificado(s).`,
+        });
+      }
+      setPushTitle("");
+      setPushBody("");
+      setPushCpf("");
+    } catch {
+      toast.error("Erro ao enviar notificação.");
+    } finally {
+      setPushSending(false);
+    }
   };
 
   const handleSaveBranding = async () => {
@@ -887,6 +1087,12 @@ export default function AdminDashboard() {
                   </CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="CPF..."
+                    value={auditCpf}
+                    onChange={(e) => setAuditCpf(e.target.value)}
+                    className="h-7 text-[10px] w-[110px]"
+                  />
                   <Select
                     value={logFilter}
                     onValueChange={(v) => setLogFilter(v)}
@@ -1003,6 +1209,237 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* Support Tools */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        {/* Consultar Cliente */}
+        <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.2s_both]">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">
+                Consultar Cliente
+              </CardTitle>
+            </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Veja as faturas de qualquer CPF direto da API MikWeb.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                placeholder="CPF do cliente (11 dígitos)"
+                value={lookupCpf}
+                onChange={(e) => setLookupCpf(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLookupCustomer()}
+                className="h-9 text-xs font-mono"
+              />
+              <Button
+                size="sm"
+                className="h-9 text-xs shrink-0"
+                onClick={handleLookupCustomer}
+                disabled={lookupLoading}
+              >
+                {lookupLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Search className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </div>
+
+            {lookupError && (
+              <p className="flex items-start gap-2 text-xs text-destructive">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{lookupError}</span>
+              </p>
+            )}
+
+            {lookupResult && (
+              <div className="space-y-3">
+                <div className="p-3 rounded-sm border border-border bg-secondary/30 text-xs">
+                  <p className="text-foreground font-medium">
+                    {lookupResult.customer.full_name}
+                  </p>
+                  <p className="text-muted-foreground mt-0.5">
+                    {lookupResult.customer.plan?.name || "Plano não informado"}
+                    {lookupResult.customer.due_day
+                      ? ` · Vencimento dia ${lookupResult.customer.due_day}`
+                      : ""}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {lookupResult.customer.city || "—"}
+                    {lookupResult.customer.state
+                      ? `, ${lookupResult.customer.state}`
+                      : ""}
+                  </p>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-1.5">
+                  {lookupResult.billings.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-6">
+                      Nenhuma fatura encontrada.
+                    </p>
+                  ) : (
+                    lookupResult.billings.map((b: any) => (
+                      <div
+                        key={b.id}
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm border border-border/60 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-foreground font-medium truncate">
+                            {b.reference}
+                          </p>
+                          <p className="text-muted-foreground">
+                            {b.due_day ? formatDate(b.due_day) : "Sem vencimento"}{" "}
+                            · {formatValue(b.value)}
+                          </p>
+                        </div>
+                        <span className={statusBadgeClass(b.situation_name)}>
+                          {b.situation_name || "—"}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Sessões Ativas */}
+        <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.25s_both]">
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">
+                  Sessões Ativas
+                </CardTitle>
+              </div>
+              <button
+                onClick={loadSessions}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                disabled={sessionsLoading}
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${sessionsLoading ? "animate-spin" : ""}`}
+                />
+              </button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {sessionsLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="text-center py-10">
+                <Users className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  Nenhuma sessão ativa.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                {sessions.map((s) => (
+                  <div
+                    key={s.sessionId}
+                    className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm border border-border/60 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-foreground font-medium truncate">
+                        {s.customerName}
+                      </p>
+                      <p className="text-muted-foreground">
+                        CPF ***{s.cpf.slice(-3)} · {formatRelativeTime(s.lastActivityAt)}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-[10px] shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleRevokeSession(s.sessionId)}
+                      disabled={revokingSession === s.sessionId}
+                    >
+                      {revokingSession === s.sessionId ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <UserX className="h-3 w-3 mr-1" />
+                      )}
+                      Revogar
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Notificações Push */}
+        <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.3s_both]">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <Bell className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">
+                Notificações Push
+              </CardTitle>
+            </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Envie para todos os inscritos ou para um CPF específico.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-muted-foreground">
+                Título
+              </Label>
+              <Input
+                placeholder="Ex: Nova fatura disponível"
+                value={pushTitle}
+                onChange={(e) => setPushTitle(e.target.value)}
+                className="h-9 text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-muted-foreground">
+                Mensagem
+              </Label>
+              <Input
+                placeholder="Ex: Sua fatura de julho já está disponível."
+                value={pushBody}
+                onChange={(e) => setPushBody(e.target.value)}
+                className="h-9 text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium text-muted-foreground">
+                CPF <span className="text-muted-foreground/50">(opcional)</span>
+              </Label>
+              <Input
+                placeholder="Vazio = todos os clientes inscritos"
+                value={pushCpf}
+                onChange={(e) => setPushCpf(e.target.value)}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+            <Button
+              variant="default"
+              size="sm"
+              className="w-full text-xs h-9"
+              onClick={handleSendPush}
+              disabled={pushSending || !pushTitle.trim() || !pushBody.trim()}
+            >
+              {pushSending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Send className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              {pushSending ? "Enviando..." : "Enviar notificação"}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Total Stats */}

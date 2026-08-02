@@ -19,20 +19,21 @@ import { generateSessionToken } from "@/lib/session-token";
 // ---------------------------------------------------------------------------
 // Admin credentials — CPF específico + senha dedicada para acesso admin
 // O CPF 000.000.000-00 nunca pertence a um cliente real (invalido para PF)
+// A senha é validada no servidor (MIKWEB_ADMIN_PASSWORD), nunca no cliente.
 // ---------------------------------------------------------------------------
 const ADMIN_CPF = "00000000000";
-const ADMIN_PASSWORD = "slackware@";
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 
 function isAdminCpf(cpf: string): boolean {
   return cpf.replace(/\D/g, "") === ADMIN_CPF;
 }
 
-function storeAdminSession() {
-  const token = generateSessionToken();
+function storeAdminSession(token?: string, expiresAt?: number) {
+  const sessionToken = token || generateSessionToken();
+  const exp = expiresAt || Date.now() + 8 * 60 * 60 * 1000;
   try {
-    localStorage.setItem(ADMIN_TOKEN_KEY, token);
-    localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(Date.now() + 8 * 60 * 60 * 1000));
+    localStorage.setItem(ADMIN_TOKEN_KEY, sessionToken);
+    localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(exp));
   } catch {}
 }
 
@@ -157,34 +158,53 @@ export function useMikWebAuth() {
 
       const normalizedCpf = cpf.replace(/\D/g, "");
 
-      // ---- ADMIN - handle locally (CPF 000.000.000-00 + senha dedicada) ----
+      // ---- ADMIN - cria sessão real no servidor (CPF 000.000.000-00 + senha dedicada) ----
       if (isAdminCpf(normalizedCpf)) {
-        console.log("[AUTH] Admin CPF detectado, validando senha...");
-        if (password !== ADMIN_PASSWORD) {
-          const errMsg = "Senha de administrador incorreta.";
-          console.warn("[AUTH] Admin senha incorreta");
-          setState((prev) => ({ ...prev, isLoading: false, error: errMsg }));
-          throw new Error(errMsg);
-        }
+        console.log("[AUTH] Admin CPF detectado, validando senha no servidor...");
+        try {
+          const response = await fetch("/api/admin/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ password }),
+          });
 
-        console.log("[AUTH] Admin senha OK, salvando sessão...");
-        storeAdminSession();
-        const adminData: LoginResponse = {
-          success: true,
-          customer: { id: "admin-00000000000", name: "Administrador", email: "admin@provedor.com" },
-          hasMultipleContacts: false,
-          contacts: [],
-          sessionToken: "",
-          expiresAt: Date.now() + 8 * 60 * 60 * 1000,
-        };
-        setState({
-          isLoading: false,
-          isAuthenticated: true,
-          customer: { id: "admin-00000000000", name: "Administrador", cpf: normalizedCpf },
-          error: null,
-        });
-        console.log("[AUTH] Admin login concluído, redirecionando...");
-        return adminData;
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            const errMsg = data.error || "Senha de administrador incorreta.";
+            console.warn("[AUTH] Admin senha incorreta");
+            setState((prev) => ({ ...prev, isLoading: false, error: errMsg }));
+            throw new Error(errMsg);
+          }
+
+          console.log("[AUTH] Admin sessão criada no servidor");
+          const serverToken = data.sessionToken || "";
+          const serverExpires = data.expiresAt || Date.now() + 8 * 60 * 60 * 1000;
+          storeAdminSession(serverToken, serverExpires);
+
+          const adminData: LoginResponse = {
+            success: true,
+            customer: { id: "admin-00000000000", name: "Administrador", email: "admin@provedor.com" },
+            hasMultipleContacts: false,
+            contacts: [],
+            sessionToken: serverToken,
+            expiresAt: serverExpires,
+          };
+          setState({
+            isLoading: false,
+            isAuthenticated: true,
+            customer: { id: "admin-00000000000", name: "Administrador", cpf: normalizedCpf },
+            error: null,
+          });
+          console.log("[AUTH] Admin login concluído, redirecionando...");
+          return adminData;
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Erro ao conectar com o servidor.";
+          setState((prev) => ({ ...prev, isLoading: false, error: message }));
+          throw err;
+        }
       }
       // ---- END ADMIN ----
 

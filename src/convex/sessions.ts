@@ -139,6 +139,56 @@ export const touchSession = mutation({
 // ---------------------------------------------------------------------------
 
 /**
+ * List recent customer sessions (admin tooling).
+ * Returns sessions ordered by most recent activity.
+ * NOTE: sessionToken is intentionally NOT exposed — use sessionId for revoke.
+ */
+export const listSessions = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const sessions = await ctx.db
+      .query("mikwebSessions")
+      .order("desc")
+      .take(args.limit ?? 50);
+
+    const now = Date.now();
+    return sessions
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+      .map((s) => ({
+        sessionId: s._id,
+        cpf: s.cpf,
+        customerId: s.customerId,
+        customerName: s.customerName,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        lastActivityAt: s.lastActivityAt,
+        isActive: s.expiresAt > now,
+      }));
+  },
+});
+
+/**
+ * Revoke a session by its document ID (admin tooling).
+ * Also removes any push subscriptions bound to that session.
+ */
+export const revokeSessionById = mutation({
+  args: { sessionId: v.id("mikwebSessions") },
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session) return;
+
+    // Delete push subscriptions tied to this session
+    const subs = await ctx.db
+      .query("pushSubscriptions")
+      .withIndex("by_sessionToken", (q) => q.eq("sessionToken", session.sessionToken))
+      .collect();
+    await Promise.all(subs.map((sub) => ctx.db.delete(sub._id)));
+
+    await ctx.db.delete(session._id);
+  },
+});
+
+/**
  * Get a session by its token.
  * Returns null if not found or expired.
  */
