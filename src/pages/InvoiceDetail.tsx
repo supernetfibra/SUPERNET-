@@ -29,6 +29,7 @@ import { useBillings } from "@/hooks/use-billings";
 import { useAuth } from "@/lib/auth-context";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
+import { logCustomerAction } from "@/lib/audit-actions";
 
 export default function InvoiceDetail() {
   const navigate = useNavigate();
@@ -109,6 +110,34 @@ export default function InvoiceDetail() {
   const hasFees = (billing.multa ?? 0) > 0 || (billing.juros ?? 0) > 0;
   const updatedValue = billing.valor + (billing.multa || 0) + (billing.juros || 0);
   const showUpdatedValue = hasFees && billing.status !== "pago";
+
+  // ── Customer action helpers — copy/open + audit log (fire-and-forget) ──
+  const logCtx = {
+    billingId: billing.id,
+    reference: billing.competencia,
+    value: billing.valor,
+  };
+  const copyBarcode = () => {
+    handleCopy(billing.linha_digitavel!, "linha");
+    logCustomerAction("barcode_copied", logCtx);
+  };
+  const copyPix = () => {
+    handleCopy(billing.pix_copiaecola!, "pix");
+    logCustomerAction("pix_copied", logCtx);
+  };
+  const copyAll = () => {
+    handleCopy(billing.linha_digitavel || billing.pix_copiaecola || "", "all");
+    logCustomerAction(
+      billing.linha_digitavel ? "barcode_copied" : "pix_copied",
+      logCtx
+    );
+  };
+  const openPdf = () => {
+    if (billing.url_boleto) {
+      window.open(billing.url_boleto, "_blank");
+    }
+    logCustomerAction("pdf_viewed", logCtx);
+  };
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -235,7 +264,7 @@ export default function InvoiceDetail() {
                           variant="ghost"
                           size="sm"
                           className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCopy(billing.linha_digitavel!, "linha")}
+                          onClick={copyBarcode}
                         >
                           {copiedField === "linha" ? (
                             <CopyCheck className="h-3 w-3" />
@@ -291,7 +320,7 @@ export default function InvoiceDetail() {
                             variant="ghost"
                             size="sm"
                             className="h-7 text-xs shrink-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => handleCopy(billing.pix_copiaecola!, "pix")}
+                            onClick={copyPix}
                           >
                             {copiedField === "pix" ? (
                               <CopyCheck className="h-3 w-3" />
@@ -311,7 +340,7 @@ export default function InvoiceDetail() {
                       variant="outline"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => handleCopy(billing.linha_digitavel || billing.pix_copiaecola || "", "all")}
+                      onClick={copyAll}
                       disabled={!billing.linha_digitavel && !billing.pix_copiaecola}
                     >
                       <Copy className="h-3.5 w-3.5 mr-1.5" />
@@ -321,11 +350,7 @@ export default function InvoiceDetail() {
                       variant="default"
                       size="sm"
                       className="flex-1 text-xs h-9"
-                      onClick={() => {
-                        if (billing.url_boleto) {
-                          window.open(billing.url_boleto, "_blank");
-                        }
-                      }}
+                      onClick={openPdf}
                       disabled={!billing.url_boleto}
                     >
                       <Download className="h-3.5 w-3.5 mr-1.5" />

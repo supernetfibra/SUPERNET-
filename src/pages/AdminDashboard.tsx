@@ -125,6 +125,11 @@ interface AuditEntry {
   errorMessage?: string;
   ipAddress?: string;
   timestamp: number;
+  metadata?: {
+    billingId?: string;
+    reference?: string;
+    value?: number;
+  };
 }
 
 interface AuditSummary {
@@ -188,6 +193,9 @@ const typeLabels: Record<string, { label: string; color: string }> = {
   billing_error: { label: "Erro Fatura", color: "text-orange-600 bg-orange-50 dark:bg-orange-950/20 dark:text-orange-400" },
   billing_access: { label: "Acesso Fatura", color: "text-blue-600 bg-blue-50 dark:bg-blue-950/20 dark:text-blue-400" },
   logout: { label: "Logout", color: "text-gray-500 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400" },
+  barcode_copied: { label: "Copiou Código", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 dark:text-sky-400" },
+  pix_copied: { label: "Copiou PIX", color: "text-teal-600 bg-teal-50 dark:bg-teal-950/20 dark:text-teal-400" },
+  pdf_viewed: { label: "Acessou PDF", color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 dark:text-violet-400" },
 };
 
 export default function AdminDashboard() {
@@ -1116,6 +1124,15 @@ export default function AdminDashboard() {
                       <SelectItem value="billing_error" className="text-xs">
                         Erros Fatura
                       </SelectItem>
+                      <SelectItem value="barcode_copied" className="text-xs">
+                        Copiou Código
+                      </SelectItem>
+                      <SelectItem value="pix_copied" className="text-xs">
+                        Copiou PIX
+                      </SelectItem>
+                      <SelectItem value="pdf_viewed" className="text-xs">
+                        Acessou PDF
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <button
@@ -1180,6 +1197,14 @@ export default function AdminDashboard() {
                           {entry.errorMessage && (
                             <span className="text-muted-foreground block truncate">
                               {entry.errorMessage}
+                            </span>
+                          )}
+                          {entry.metadata?.reference && (
+                            <span className="text-muted-foreground block truncate">
+                              Fatura {entry.metadata.reference}
+                              {typeof entry.metadata.value === "number"
+                                ? ` · ${formatValue(entry.metadata.value)}`
+                                : ""}
                             </span>
                           )}
                         </div>

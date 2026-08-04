@@ -212,6 +212,10 @@ const auditLogTypeValidator = v.union(
   v.literal("billing_error"),
   v.literal("billing_access"),
   v.literal("logout"),
+  // Customer payment actions (logged client-side via /api/mikweb/action)
+  v.literal("barcode_copied"),
+  v.literal("pix_copied"),
+  v.literal("pdf_viewed"),
 );
 
 export type AuditLogType = Infer<typeof auditLogTypeValidator>;

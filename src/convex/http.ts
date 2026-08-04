@@ -151,7 +151,7 @@ function getUserAgent(request: Request): string {
 }
 
 async function logEvent(ctx: any, event: {
-  type: "login_success" | "login_failure" | "login_rate_limited" | "billing_error" | "billing_access" | "logout";
+  type: "login_success" | "login_failure" | "login_rate_limited" | "billing_error" | "billing_access" | "logout" | "barcode_copied" | "pix_copied" | "pdf_viewed";
   cpf?: string;
   customerId?: string;
   customerName?: string;
@@ -605,6 +605,76 @@ const billingDownloadHandler = httpAction(async (ctx, request) => {
     console.error("[BILLING_DOWNLOAD_ERROR]", err);
     return new Response(JSON.stringify({ error: "Erro ao baixar PDF." }), {
       status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/mikweb/action — Log a customer payment action (copy/PIX/PDF)
+// Fire-and-forget from the client. Requires a valid customer session.
+// ---------------------------------------------------------------------------
+const CUSTOMER_ACTIONS = ["barcode_copied", "pix_copied", "pdf_viewed"] as const;
+type CustomerAction = (typeof CUSTOMER_ACTIONS)[number];
+
+const customerActionHandler = httpAction(async (ctx, request) => {
+  try {
+    const cookieHeader = request.headers.get("cookie") || "";
+    const match = cookieHeader.match(/mikweb_session=([^;]+)/);
+    const sessionToken = match ? match[1] : null;
+
+    if (!sessionToken) {
+      return new Response(JSON.stringify({ error: "Sessão não encontrada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const session = await ctx.runQuery(api.sessions.getSession, { sessionToken });
+    if (!session) {
+      return new Response(JSON.stringify({ error: "Sessão expirada." }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const body = (await request.json()) as {
+      action?: string;
+      billingId?: string;
+      reference?: string;
+      value?: number;
+    };
+
+    if (!body.action || !CUSTOMER_ACTIONS.includes(body.action as CustomerAction)) {
+      return new Response(JSON.stringify({ error: "Ação inválida." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await logEvent(ctx, {
+      type: body.action as CustomerAction,
+      cpf: session.cpf,
+      customerId: session.customerId,
+      customerName: session.customerName,
+      ipAddress: getClientIp(request),
+      userAgent: getUserAgent(request),
+      metadata: {
+        billingId: body.billingId ?? null,
+        reference: body.reference ?? null,
+        value: typeof body.value === "number" ? body.value : null,
+      },
+    });
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    // Fire-and-forget — never surface errors to the client. Log for diagnostics.
+    console.error("[CUSTOMER_ACTION_LOG_ERROR]", err);
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -1142,6 +1212,7 @@ http.route({ path: "/api/mikweb/select-contact", method: "POST", handler: select
 http.route({ path: "/api/mikweb/customer", method: "GET", handler: customerHandler });
 http.route({ path: "/api/mikweb/billings", method: "GET", handler: billingsHandler });
 http.route({ path: "/api/mikweb/billings/:id/download", method: "GET", handler: billingDownloadHandler });
+http.route({ path: "/api/mikweb/action", method: "POST", handler: customerActionHandler });
 
 http.route({ path: "/api/admin/login", method: "POST", handler: adminLoginHandler });
 http.route({ path: "/api/admin/logout", method: "POST", handler: adminLogoutHandler });

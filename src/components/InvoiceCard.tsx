@@ -31,6 +31,7 @@ import {
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
 import { statusConfig } from "@/lib/status-config";
+import { logCustomerAction } from "@/lib/audit-actions";
 import type { BillingSummary } from "@/hooks/use-billings";
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,29 @@ export default function InvoiceCard({
   const copiedId = extCopiedId !== undefined ? extCopiedId : intCopiedId;
   const handleCopy = extHandleCopy || intHandleCopy;
 
+  // ── Customer action helpers — copy/open + audit log (fire-and-forget) ──
+  const logCtx = {
+    billingId: billing.id,
+    reference: billing.competencia,
+    value: billing.valor,
+  };
+  const copyBarcode = () => {
+    copyBarcode();
+    logCustomerAction("barcode_copied", logCtx);
+  };
+  const copyPix = () => {
+    copyPix();
+    logCustomerAction("pix_copied", logCtx);
+  };
+  const openPdf = () => {
+    openPdf();
+    logCustomerAction("pdf_viewed", logCtx);
+  };
+  const openPdfProxy = () => {
+    window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
+    logCustomerAction("pdf_viewed", logCtx);
+  };
+
   const smartLabel = getSmartLabel(billing);
   const styles = getUrgencyStyles(smartLabel.type);
   const status = statusConfig[billing.status] || statusConfig.pendente;
@@ -217,7 +241,7 @@ export default function InvoiceCard({
                 className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+                  copyBarcode();
                 }}
               >
                 {copiedId === `line-${billing.id}` ? (
@@ -235,7 +259,7 @@ export default function InvoiceCard({
                 className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+                  copyPix();
                 }}
               >
                 {copiedId === `pix-${billing.id}` ? (
@@ -253,7 +277,7 @@ export default function InvoiceCard({
                 className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(billing.url_boleto!, "_blank");
+                  openPdf();
                 }}
               >
                 <Download className="h-3 w-3 mr-1" />
@@ -343,7 +367,7 @@ export default function InvoiceCard({
                   className="h-7 text-xs text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+                    copyBarcode();
                   }}
                 >
                   {copiedId === `line-${billing.id}` ? (
@@ -361,7 +385,7 @@ export default function InvoiceCard({
                   className="h-7 text-xs text-muted-foreground hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+                    copyPix();
                   }}
                 >
                   {copiedId === `pix-${billing.id}` ? (
@@ -378,10 +402,7 @@ export default function InvoiceCard({
                 className="h-7 text-xs text-muted-foreground hover:text-foreground ml-auto"
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.open(
-                    `/api/mikweb/billings/${billing.id}/download`,
-                    "_blank"
-                  );
+                  openPdfProxy();
                 }}
               >
                 <Download className="h-3 w-3 mr-1" />
@@ -452,7 +473,7 @@ export default function InvoiceCard({
               className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
               onClick={(e) => {
                 e.stopPropagation();
-                handleCopy(billing.linha_digitavel!, `line-${billing.id}`);
+                copyBarcode();
               }}
             >
               {copiedId === `line-${billing.id}` ? (
@@ -470,7 +491,7 @@ export default function InvoiceCard({
               className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
               onClick={(e) => {
                 e.stopPropagation();
-                handleCopy(billing.pix_copiaecola!, `pix-${billing.id}`);
+                copyPix();
               }}
             >
               {copiedId === `pix-${billing.id}` ? (
@@ -488,7 +509,7 @@ export default function InvoiceCard({
               className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
               onClick={(e) => {
                 e.stopPropagation();
-                window.open(billing.url_boleto!, "_blank");
+                openPdf();
               }}
             >
               <Download className="h-2.5 w-2.5 mr-1" />
