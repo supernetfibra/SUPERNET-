@@ -227,8 +227,8 @@ export const getCustomerById = action({
 });
 
 /**
- * Validate the initial password (last 4 digits of CPF).
- * The user's initial password is the last 4 digits of their CPF/CNPJ.
+ * Validate the initial password (first 4 digits of CPF).
+ * The user's initial password is the first 4 digits of their CPF/CNPJ.
  */
 export const validateInitialPassword = action({
   args: {
@@ -243,11 +243,11 @@ export const validateInitialPassword = action({
       `/customers/${args.customerId}`
     );
 
-    // Extract the last 4 digits of the customer's CPF/CNPJ
+    // Extract the first 4 digits of the customer's CPF/CNPJ
     const cpfDigits = (customer.cpf_cnpj || "").replace(/\D/g, "");
-    const last4Cpf = cpfDigits.slice(-4);
+    const first4Cpf = cpfDigits.slice(0, 4);
 
-    if (last4Cpf && normalizedPassword === last4Cpf) {
+    if (first4Cpf && normalizedPassword === first4Cpf) {
       return { valid: true };
     }
 

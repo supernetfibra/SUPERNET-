@@ -136,7 +136,7 @@ export default function Login() {
               <CardDescription className="text-sm text-muted-foreground">
                 {step === "cpf"
                   ? "Informe seu CPF para continuar."
-                  : `Use os 4 últimos dígitos do seu CPF como senha inicial.`}
+                  : `Use os 4 primeiros dígitos do seu CPF como senha inicial.`}
               </CardDescription>
             </CardHeader>
 
@@ -260,7 +260,7 @@ export default function Login() {
                           ref={passwordRef}
                           id="password"
                           type={showPassword ? "text" : "password"}
-                          placeholder={normalizeCpf(cpf) === "00000000000" ? "Digite a senha de admin" : "Últimos 4 dígitos do CPF"}
+                          placeholder={normalizeCpf(cpf) === "00000000000" ? "Digite a senha de admin" : "Primeiros 4 dígitos do CPF"}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           className="h-10 text-sm pr-10"
@@ -283,7 +283,7 @@ export default function Login() {
                       <p className="text-xs text-muted-foreground">
                         {normalizeCpf(cpf) === "00000000000"
                           ? "Use a senha de administrador fornecida pela provedora."
-                          : "Sua senha inicial são os 4 últimos dígitos do seu CPF."}
+                          : "Sua senha inicial são os 4 primeiros dígitos do seu CPF."}
                       </p>
                     </div>
 

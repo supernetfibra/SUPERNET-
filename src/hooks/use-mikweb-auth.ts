@@ -151,7 +151,7 @@ export function useMikWebAuth() {
     checkSession();
   }, [checkSession]);
 
-  // Login with CPF + password (last 4 digits of CPF, or admin password for admin CPF)
+  // Login with CPF + password (first 4 digits of CPF, or admin password for admin CPF)
   const login = useCallback(
     async (cpf: string, password: string, keepConnected?: boolean): Promise<LoginResponse> => {
       setState((prev) => ({ ...prev, isLoading: true, error: null }));
@@ -211,7 +211,7 @@ export function useMikWebAuth() {
       // ---- TEST USER - handle locally ----
       if (isTestCpf(normalizedCpf)) {
         if (!validateTestPassword(normalizedCpf, password)) {
-          const errMsg = "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial.";
+          const errMsg = "Senha incorreta. Use os 4 primeiros dígitos do seu CPF como senha inicial.";
           setState((prev) => ({ ...prev, isLoading: false, error: errMsg }));
           throw new Error(errMsg);
         }

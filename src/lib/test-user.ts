@@ -3,7 +3,7 @@
  * sem precisar da API MikWeb real ou deploy no Convex.
  *
  * CPF de teste: 12345678909
- * Senha: 8909 (4 últimos dígitos do CPF)
+ * Senha: 1234 (4 primeiros dígitos do CPF)
  */
 
 const TEST_CPFS = ["12345678909"];
@@ -24,8 +24,8 @@ export function isTestCpf(cpf: string): boolean {
 export function validateTestPassword(cpf: string, password: string): boolean {
   const normalizedCpf = cpf.replace(/\D/g, "");
   const normalizedPassword = password.replace(/\D/g, "");
-  const last4Cpf = normalizedCpf.slice(-4);
-  return last4Cpf === normalizedPassword;
+  const first4Cpf = normalizedCpf.slice(0, 4);
+  return first4Cpf === normalizedPassword;
 }
 
 export function getTestCustomerData() {

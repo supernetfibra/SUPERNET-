@@ -16,7 +16,7 @@ auth.addHttpRoutes(http);
 
 // ---------------------------------------------------------------------------
 // Test user configuration — bypasses MikWeb API for development/preview
-// CPF: 12345678909  |  Password: últimos 4 dígitos (8909)
+// CPF: 12345678909  |  Password: primeiros 4 dígitos (1234)
 // ---------------------------------------------------------------------------
 const TEST_CPFS = ["12345678909"];
 
@@ -201,12 +201,12 @@ const loginHandler = httpAction(async (ctx, request) => {
 
     // ---- TEST USER - bypass real API ----
     if (isTestCpf(cpf)) {
-      const testPassword = cpf.slice(-4); // "8900"
+      const testPassword = cpf.slice(0, 4); // "1234"
       const normalizedPassword = body.password.replace(/\D/g, "");
 
       if (normalizedPassword !== testPassword) {
         return new Response(
-          JSON.stringify({ error: "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial." }),
+          JSON.stringify({ error: "Senha incorreta. Use os 4 primeiros dígitos do seu CPF como senha inicial." }),
           { status: 401, headers: { "Content-Type": "application/json" } }
         );
       }
@@ -285,7 +285,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       console.warn(`[LOGIN_FAILED] CPF: ${cpf}, IP: ${clientIp}`);
       await logEvent(ctx, { type: "login_failure", cpf, customerId: String(customer.id), customerName: customer.full_name, ipAddress: clientIp, userAgent, errorMessage: "Senha incorreta" });
       return new Response(
-        JSON.stringify({ error: "Senha incorreta. Use os 4 últimos dígitos do seu CPF como senha inicial." }),
+        JSON.stringify({ error: "Senha incorreta. Use os 4 primeiros dígitos do seu CPF como senha inicial." }),
         { status: 401, headers: { "Content-Type": "application/json" } }
       );
     }
