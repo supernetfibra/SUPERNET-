@@ -46,6 +46,7 @@ import {
   Search,
   Send,
   Bell,
+  Home,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
@@ -186,6 +187,19 @@ function formatRelativeTime(ts: number): string {
   return `há ${d}d`;
 }
 
+/** Format an 11-digit CPF as 000.000.000-00 */
+function formatCpf(cpf: string): string {
+  const d = cpf.replace(/\D/g, "");
+  if (d.length !== 11) return cpf;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+const installStatusInfo: Record<string, { label: string; color: string }> = {
+  pending: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400" },
+  approved: { label: "Aprovada", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
+  rejected: { label: "Recusada", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
+};
+
 const typeLabels: Record<string, { label: string; color: string }> = {
   login_success: { label: "Login OK", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
   login_failure: { label: "Falha Login", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
@@ -254,6 +268,18 @@ export default function AdminDashboard() {
 
   // Audit log CPF filter
   const [auditCpf, setAuditCpf] = useState("");
+
+  // Installation requests (new customer signup)
+  const [installRequests, setInstallRequests] = useState<any[]>([]);
+  const [installSummary, setInstallSummary] = useState<{
+    total: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+  } | null>(null);
+  const [installLoading, setInstallLoading] = useState(false);
+  const [installFilter, setInstallFilter] = useState("all");
+  const [processingRequest, setProcessingRequest] = useState<string | null>(null);
 
   // Track if welcome toast has been shown for this session
   const welcomeShown = useRef(false);
@@ -677,6 +703,65 @@ export default function AdminDashboard() {
       toast.error("Erro ao enviar notificação.");
     } finally {
       setPushSending(false);
+    }
+  };
+
+  const loadInstallRequests = useCallback(async () => {
+    setInstallLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (installFilter && installFilter !== "all") {
+        params.set("status", installFilter);
+      }
+      const res = await adminFetch(
+        `/api/admin/install-requests?${params.toString()}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setInstallRequests(data.requests || []);
+        setInstallSummary(data.summary || null);
+      }
+    } catch {
+      // Panel is non-critical — keep previous state on failure
+    } finally {
+      setInstallLoading(false);
+    }
+  }, [installFilter]);
+
+  useEffect(() => {
+    if (isVerified) loadInstallRequests();
+  }, [isVerified, loadInstallRequests]);
+
+  const handleInstallRequestStatus = async (
+    requestId: string,
+    status: "approved" | "rejected"
+  ) => {
+    setProcessingRequest(requestId);
+    try {
+      const res = await adminFetch(
+        `/api/admin/install-requests/${requestId}/status`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao atualizar a solicitação.");
+        return;
+      }
+      toast.success(
+        status === "approved"
+          ? "Solicitação aprovada"
+          : "Solicitação recusada",
+        { description: "O status foi atualizado." }
+      );
+      loadInstallRequests();
+    } catch {
+      toast.error("Erro ao atualizar a solicitação.");
+    } finally {
+      setProcessingRequest(null);
     }
   };
 
@@ -1466,6 +1551,190 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Solicitações de Instalação */}
+      <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.35s_both]">
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Home className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">
+                Solicitações de Instalação
+              </CardTitle>
+              {installSummary && installSummary.pending > 0 && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border-amber-200 dark:border-amber-900"
+                >
+                  {installSummary.pending} pendente
+                  {installSummary.pending === 1 ? "" : "s"}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Select
+                value={installFilter}
+                onValueChange={(v) => setInstallFilter(v)}
+              >
+                <SelectTrigger className="h-7 text-[10px] w-[130px]">
+                  <SelectValue placeholder="Filtrar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" className="text-xs">
+                    Todas
+                  </SelectItem>
+                  <SelectItem value="pending" className="text-xs">
+                    Pendentes
+                  </SelectItem>
+                  <SelectItem value="approved" className="text-xs">
+                    Aprovadas
+                  </SelectItem>
+                  <SelectItem value="rejected" className="text-xs">
+                    Recusadas
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <button
+                onClick={loadInstallRequests}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                disabled={installLoading}
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${installLoading ? "animate-spin" : ""}`}
+                />
+              </button>
+            </div>
+          </div>
+          <CardDescription className="text-xs text-muted-foreground">
+            Pedidos de instalação enviados pela página inicial.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {installLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : installRequests.length === 0 ? (
+            <div className="text-center py-12">
+              <Home className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">
+                Nenhuma solicitação
+                {installFilter !== "all" ? " neste filtro" : ""}.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Os pedidos da página inicial aparecerão aqui.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[520px] overflow-y-auto">
+              {installRequests.map((r) => {
+                const statusInfo =
+                  installStatusInfo[r.status] || {
+                    label: r.status,
+                    color: "text-gray-500 bg-gray-50",
+                  };
+                const date = new Date(r.createdAt);
+                const addressParts = [
+                  r.street && `${r.street}${r.number ? `, ${r.number}` : ""}`,
+                  r.neighborhood,
+                  r.city,
+                  r.state,
+                ].filter(Boolean);
+
+                return (
+                  <div
+                    key={r._id}
+                    className="p-3 rounded-sm border border-border/60 text-xs"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-foreground font-medium truncate">
+                          {r.fullName}
+                        </p>
+                        <p className="text-muted-foreground">
+                          CPF {formatCpf(r.cpf)} · {r.phone}
+                        </p>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`text-[9px] font-medium px-1.5 py-0 border-none shrink-0 ${statusInfo.color}`}
+                      >
+                        {statusInfo.label}
+                      </Badge>
+                    </div>
+
+                    {addressParts.length > 0 && (
+                      <p className="text-muted-foreground mt-1 truncate">
+                        {addressParts.join(" · ")}
+                      </p>
+                    )}
+                    {r.email && (
+                      <p className="text-muted-foreground truncate">{r.email}</p>
+                    )}
+                    {r.desiredPlan && (
+                      <p className="text-muted-foreground">
+                        Plano: {r.desiredPlan}
+                      </p>
+                    )}
+                    {r.message && (
+                      <p className="text-muted-foreground mt-1 italic">
+                        &ldquo;{r.message}&rdquo;
+                      </p>
+                    )}
+                    {r.adminNote && (
+                      <p className="text-muted-foreground mt-1">
+                        Nota: {r.adminNote}
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-[10px] text-muted-foreground">
+                        {date.toLocaleDateString("pt-BR")} ·{" "}
+                        {date.toLocaleTimeString("pt-BR", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                      {r.status === "pending" && (
+                        <div className="flex gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-[10px] shrink-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20"
+                            onClick={() =>
+                              handleInstallRequestStatus(r._id, "approved")
+                            }
+                            disabled={processingRequest === r._id}
+                          >
+                            {processingRequest === r._id ? (
+                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                            ) : (
+                              <CheckCircle2 className="h-3 w-3 mr-1" />
+                            )}
+                            Aprovar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-[10px] shrink-0 text-destructive hover:text-destructive/80"
+                            onClick={() =>
+                              handleInstallRequestStatus(r._id, "rejected")
+                            }
+                            disabled={processingRequest === r._id}
+                          >
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Recusar
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Total Stats */}
       {auditSummary && (

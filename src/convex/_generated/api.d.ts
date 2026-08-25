@@ -14,6 +14,7 @@ import type * as auth from "../auth.js";
 import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
+import type * as installRequests from "../installRequests.js";
 import type * as mikweb from "../mikweb.js";
 import type * as pushNotifications from "../pushNotifications.js";
 import type * as sessions from "../sessions.js";
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   "auth/emailOtp": typeof auth_emailOtp;
   crons: typeof crons;
   http: typeof http;
+  installRequests: typeof installRequests;
   mikweb: typeof mikweb;
   "pushNotifications": typeof pushNotifications;
   sessions: typeof sessions;

@@ -234,17 +234,13 @@ export const validateInitialPassword = action({
   args: {
     customerId: v.string(),
     password: v.string(),
+    cpf: v.string(),
   },
   handler: async (ctx, args): Promise<{ valid: boolean }> => {
     const normalizedPassword = args.password.replace(/\D/g, "");
 
-    const customer = await apiGet<MikWebCustomer>(
-      ctx,
-      `/customers/${args.customerId}`
-    );
-
-    // Extract the first 4 digits of the customer's CPF/CNPJ
-    const cpfDigits = (customer.cpf_cnpj || "").replace(/\D/g, "");
+    // Use the first 4 digits of the CPF the user typed
+    const cpfDigits = args.cpf.replace(/\D/g, "");
     const first4Cpf = cpfDigits.slice(0, 4);
 
     if (first4Cpf && normalizedPassword === first4Cpf) {

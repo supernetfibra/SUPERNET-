@@ -93,6 +93,35 @@ const schema = defineSchema(
       .index("by_cpf", ["cpf"])
       .index("by_timestamp", ["timestamp"]),
 
+    // Installation requests from the public landing page (new customer signup)
+    installRequests: defineTable({
+      fullName: v.string(),
+      cpf: v.string(),
+      phone: v.string(),
+      email: v.optional(v.string()),
+      zipCode: v.optional(v.string()),
+      street: v.optional(v.string()),
+      number: v.optional(v.string()),
+      complement: v.optional(v.string()),
+      neighborhood: v.optional(v.string()),
+      city: v.optional(v.string()),
+      state: v.optional(v.string()),
+      desiredPlan: v.optional(v.string()),
+      message: v.optional(v.string()),
+      agreedToTerms: v.boolean(),
+      status: v.union(
+        v.literal("pending"),
+        v.literal("approved"),
+        v.literal("rejected"),
+      ),
+      adminNote: v.optional(v.string()),
+      reviewedAt: v.optional(v.number()),
+      ipAddress: v.optional(v.string()),
+      createdAt: v.number(),
+    }).index("by_status", ["status"])
+      .index("by_createdAt", ["createdAt"])
+      .index("by_cpf", ["cpf"]),
+
     // Push notification subscriptions
     pushSubscriptions: defineTable({
       endpoint: v.string(),

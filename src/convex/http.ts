@@ -271,6 +271,7 @@ const loginHandler = httpAction(async (ctx, request) => {
       validationResult = await ctx.runAction(api.mikweb.validateInitialPassword, {
         customerId: String(customer.id),
         password: body.password,
+        cpf,
       });
     } catch (err) {
       console.error(`[LOGIN_ERROR] validatePassword: ${err}`);
@@ -1063,6 +1064,158 @@ const adminPushHandler = httpAction(async (ctx, request) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/public/install-request — New customer installation request
+// Public (no session). Includes honeypot + per-IP rate limiting + validation.
+// ---------------------------------------------------------------------------
+const publicInstallRequestHandler = httpAction(async (ctx, request) => {
+  try {
+    const clientIp = getClientIp(request);
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return adminError("Corpo da requisição inválido.");
+    }
+
+    // Honeypot: real users never fill this hidden field. Bots do — accept
+    // silently without storing anything (they must not learn they were caught).
+    if (body.website && String(body.website).trim().length > 0) {
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: ADMIN_JSON_HEADERS,
+      });
+    }
+
+    // Per-IP rate limit (same in-memory mechanism as login)
+    if (!checkRateLimit(`install:${clientIp}`)) {
+      return adminError("Muitas solicitações. Tente novamente em 15 minutos.", 429);
+    }
+
+    const fullName = String(body.fullName || "").trim();
+    const cpf = String(body.cpf || "").replace(/\D/g, "");
+    const phone = String(body.phone || "").replace(/\D/g, "");
+    const email = String(body.email || "").trim();
+    const agreedToTerms = body.agreedToTerms === true;
+
+    if (fullName.length < 3) {
+      return adminError("Informe seu nome completo.");
+    }
+    if (cpf.length !== 11) {
+      return adminError("CPF inválido. Informe os 11 dígitos.");
+    }
+    if (phone.length < 10) {
+      return adminError("Telefone inválido. Informe um número com DDD.");
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return adminError("E-mail inválido.");
+    }
+    if (!agreedToTerms) {
+      return adminError("Você precisa aceitar os termos para enviar a solicitação.");
+    }
+
+    const optionalStr = (key: string): string | undefined => {
+      const raw = body[key];
+      if (raw === undefined || raw === null) return undefined;
+      const s = String(raw).trim();
+      return s.length > 0 ? s.slice(0, 500) : undefined;
+    };
+
+    await ctx.runMutation(api.installRequests.submitInstallRequest, {
+      fullName: fullName.slice(0, 200),
+      cpf,
+      phone,
+      email: email ? email.slice(0, 200) : undefined,
+      zipCode: optionalStr("zipCode"),
+      street: optionalStr("street"),
+      number: optionalStr("number"),
+      complement: optionalStr("complement"),
+      neighborhood: optionalStr("neighborhood"),
+      city: optionalStr("city"),
+      state: optionalStr("state"),
+      desiredPlan: optionalStr("desiredPlan"),
+      message: optionalStr("message"),
+      agreedToTerms,
+      ipAddress: clientIp,
+    });
+
+    console.log(`[INSTALL_REQUEST] Nova solicitação de ${fullName} (${cpf}) — IP ${clientIp}`);
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[INSTALL_REQUEST_ERROR]", err);
+    return adminError("Erro ao enviar a solicitação. Tente novamente.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Admin: Installation requests
+// ---------------------------------------------------------------------------
+
+// GET /api/admin/install-requests?status=pending|approved|rejected
+const adminInstallRequestsHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const url = new URL(request.url);
+    const status = url.searchParams.get("status") || undefined;
+
+    const requests = await ctx.runQuery(api.installRequests.listInstallRequests, {
+      status: status as any,
+    });
+    const summary = await ctx.runQuery(api.installRequests.getInstallRequestsSummary);
+
+    return new Response(JSON.stringify({ requests, summary }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_INSTALL_REQUESTS_ERROR]", err);
+    return adminError("Erro ao listar solicitações.", 500);
+  }
+});
+
+// POST /api/admin/install-requests/:id/status — approve or reject
+const adminInstallRequestStatusHandler = httpAction(async (ctx, request) => {
+  if (!(await requireAdmin(ctx, request))) return adminUnauthorized();
+  try {
+    const url = new URL(request.url);
+    const parts = url.pathname.split("/");
+    // parts = ["", "api", "admin", "install-requests", "<id>", "status"]
+    const requestId = parts[4];
+
+    if (!requestId) {
+      return adminError("ID da solicitação não informado.");
+    }
+
+    const body = (await request.json()) as {
+      status?: string;
+      adminNote?: string;
+    };
+
+    if (body.status !== "approved" && body.status !== "rejected") {
+      return adminError("Status inválido. Use 'approved' ou 'rejected'.");
+    }
+
+    await ctx.runMutation(api.installRequests.updateInstallRequestStatus, {
+      requestId: requestId as any,
+      status: body.status,
+      adminNote: body.adminNote?.trim() || undefined,
+    });
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: ADMIN_JSON_HEADERS,
+    });
+  } catch (err) {
+    console.error("[ADMIN_INSTALL_REQUEST_STATUS_ERROR]", err);
+    return adminError("Erro ao atualizar a solicitação.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Helper: mask phone for display
 // ---------------------------------------------------------------------------
 function maskPhone(phone: string): string {
@@ -1166,6 +1319,10 @@ const pushUnsubscribeHandler = httpAction(async (ctx, request) => {
 // ---------------------------------------------------------------------------
 // Register routes
 // ---------------------------------------------------------------------------
+http.route({ path: "/api/public/install-request", method: "POST", handler: publicInstallRequestHandler });
+http.route({ path: "/api/admin/install-requests", method: "GET", handler: adminInstallRequestsHandler });
+http.route({ path: "/api/admin/install-requests/:id/status", method: "POST", handler: adminInstallRequestStatusHandler });
+
 http.route({ path: "/api/push/subscribe", method: "POST", handler: pushSubscribeHandler });
 http.route({ path: "/api/push/unsubscribe", method: "POST", handler: pushUnsubscribeHandler });
 
