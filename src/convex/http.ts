@@ -1121,7 +1121,7 @@ const publicInstallRequestHandler = httpAction(async (ctx, request) => {
       return s.length > 0 ? s.slice(0, 500) : undefined;
     };
 
-    await ctx.runMutation(api.installRequests.submitInstallRequest, {
+    await ctx.runMutation(api.install_requests.submitInstallRequest, {
       fullName: fullName.slice(0, 200),
       cpf,
       phone,
@@ -1162,10 +1162,10 @@ const adminInstallRequestsHandler = httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const status = url.searchParams.get("status") || undefined;
 
-    const requests = await ctx.runQuery(api.installRequests.listInstallRequests, {
+    const requests = await ctx.runQuery(api.install_requests.listInstallRequests, {
       status: status as any,
     });
-    const summary = await ctx.runQuery(api.installRequests.getInstallRequestsSummary);
+    const summary = await ctx.runQuery(api.install_requests.getInstallRequestsSummary);
 
     return new Response(JSON.stringify({ requests, summary }), {
       status: 200,
@@ -1199,7 +1199,7 @@ const adminInstallRequestStatusHandler = httpAction(async (ctx, request) => {
       return adminError("Status inválido. Use 'approved' ou 'rejected'.");
     }
 
-    await ctx.runMutation(api.installRequests.updateInstallRequestStatus, {
+    await ctx.runMutation(api.install_requests.updateInstallRequestStatus, {
       requestId: requestId as any,
       status: body.status,
       adminNote: body.adminNote?.trim() || undefined,
@@ -1261,7 +1261,7 @@ const pushSubscribeHandler = httpAction(async (ctx, request) => {
       );
     }
 
-    await ctx.runMutation(api.pushNotifications.saveSubscription, {
+    await ctx.runMutation(api.push_mutations.saveSubscription, {
       endpoint: body.endpoint,
       keys: body.keys,
       sessionToken,
@@ -1298,7 +1298,7 @@ const pushUnsubscribeHandler = httpAction(async (ctx, request) => {
       );
     }
 
-    await ctx.runMutation(api.pushNotifications.removeSubscription, {
+    await ctx.runMutation(api.push_mutations.removeSubscription, {
       endpoint: body.endpoint,
     });
 

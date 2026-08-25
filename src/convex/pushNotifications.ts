@@ -13,14 +13,16 @@
 "use node";
 
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { action, mutation, query, internalAction } from "./_generated/server";
+import { api } from "./_generated/api";
+import { action, internalAction } from "./_generated/server";
 import webPush from "web-push";
 
 // Helper to bypass circular type references when calling queries from actions
 // in the same module. The runtime still resolves correctly via the Convex
 // internal API — this is purely a TypeScript workaround.
-const PN = internal.pushNotifications as any;
+const PN = api.pushNotifications as any;
+const PQ = api.push_queries as any;
+const PM = api.push_mutations as any;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,132 +51,12 @@ function getVapidConfig() {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Subscribe / Unsubscribe Mutations
-// ---------------------------------------------------------------------------
-
-export const saveSubscription = mutation({
-  args: {
-    endpoint: v.string(),
-    keys: v.object({
-      p256dh: v.string(),
-      auth: v.string(),
-    }),
-    sessionToken: v.string(),
-    userAgent: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("mikwebSessions")
-      .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.sessionToken))
-      .first();
-
-    if (!session) {
-      throw new Error("Sess\u00e3o n\u00e3o encontrada ou expirada.");
-    }
-
-    const existing = await ctx.db
-      .query("pushSubscriptions")
-      .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
-      .first();
-
-    if (existing) {
-      await ctx.db.delete(existing._id);
-    }
-
-    await ctx.db.insert("pushSubscriptions", {
-      endpoint: args.endpoint,
-      keys: args.keys,
-      sessionToken: args.sessionToken,
-      cpf: session.cpf,
-      customerId: session.customerId,
-      customerName: session.customerName,
-      userAgent: args.userAgent,
-      createdAt: Date.now(),
-    });
-
-    return { success: true };
-  },
-});
-
-export const removeSubscription = mutation({
-  args: {
-    endpoint: v.string(),
-    sessionToken: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("pushSubscriptions")
-      .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
-      .first();
-
-    if (existing) {
-      await ctx.db.delete(existing._id);
-    }
-
-    return { success: true };
-  },
-});
-
-export const removeSubscriptionBySession = mutation({
-  args: { sessionToken: v.string() },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.db
-      .query("pushSubscriptions")
-      .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.sessionToken))
-      .collect();
-
-    await Promise.all(subscriptions.map((sub) => ctx.db.delete(sub._id)));
-
-    return { success: true, removed: subscriptions.length };
-  },
-});
+// Mutations moved to push_mutations.ts (cannot be in "use node" file)
 
 // ---------------------------------------------------------------------------
-// Queries
-// ---------------------------------------------------------------------------
+// Queries moved to push_queries.ts (cannot be in "use node" file)
 
-export const getSubscriptionsByCpf = query({
-  args: { cpf: v.string() },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.db
-      .query("pushSubscriptions")
-      .withIndex("by_cpf", (q) => q.eq("cpf", args.cpf))
-      .collect();
-
-    return subscriptions.map((s) => ({
-      endpoint: s.endpoint,
-      keys: s.keys,
-      cpf: s.cpf,
-      customerId: s.customerId,
-      customerName: s.customerName,
-      createdAt: s.createdAt,
-    }));
-  },
-});
-
-export const getSubscriptionsBySession = query({
-  args: { sessionToken: v.string() },
-  handler: async (ctx, args) => {
-    const subscriptions = await ctx.db
-      .query("pushSubscriptions")
-      .withIndex("by_sessionToken", (q) => q.eq("sessionToken", args.sessionToken))
-      .collect();
-
-    return subscriptions.map((s) => ({
-      endpoint: s.endpoint,
-      keys: s.keys,
-      createdAt: s.createdAt,
-    }));
-  },
-});
-
-export const getAllSubscriptions = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db.query("pushSubscriptions").collect();
-  },
-});
+// getAllSubscriptions moved to push_queries.ts (cannot be in "use node" file)
 
 // ---------------------------------------------------------------------------
 // Send push notification to a single subscription
@@ -248,7 +130,7 @@ export const sendNotificationToCustomer = internalAction({
     data: v.optional(v.any()),
   },
   handler: async (ctx, args): Promise<{ sent: number; failed: number }> => {
-    const raw = await ctx.runQuery(PN.getSubscriptionsByCpf, {
+    const raw = await ctx.runQuery(PQ.getSubscriptionsByCpf, {
       cpf: args.cpf,
     });
     const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
@@ -280,7 +162,7 @@ export const broadcastNotification = internalAction({
     data: v.optional(v.any()),
   },
   handler: async (ctx, args): Promise<{ total: number; sent: number; failed: number }> => {
-    const raw = await ctx.runQuery(PN.getAllSubscriptions);
+    const raw = await ctx.runQuery(PQ.getAllSubscriptions);
     const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
 
     const results = await Promise.allSettled(
@@ -313,7 +195,7 @@ export const sendTestNotification = action({
     body: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ sent: number; failed: number }> => {
-    const raw = await ctx.runQuery(PN.getSubscriptionsBySession, {
+    const raw = await ctx.runQuery(PQ.getSubscriptionsBySession, {
       sessionToken: args.sessionToken,
     });
     const subscriptions: PushSubInfo[] = (raw || []).map(toPushSubInfo);
@@ -340,7 +222,7 @@ export const sendTestNotification = action({
 export const checkAndNotify = internalAction({
   args: {},
   handler: async (ctx): Promise<{ notified: number; totalCpfs: number }> => {
-    const raw = await ctx.runQuery(PN.getAllSubscriptions);
+    const raw = await ctx.runQuery(PQ.getAllSubscriptions);
     const allSubs: any[] = raw || [];
 
     if (allSubs.length === 0) {
