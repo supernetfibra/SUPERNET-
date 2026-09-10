@@ -28,6 +28,9 @@ import { BillingProvider } from "@/lib/billing-context";
 // Theme provider
 import { ThemeProvider } from "@/lib/theme-provider";
 
+// Update notification (detects new deploys)
+import { UpdateNotification } from "@/components/update-notification";
+
 // Service Worker registration
 const SW_PATH = "/sw.js";
 
@@ -136,6 +139,7 @@ createRoot(document.getElementById("root")!).render(
         <BrandingProvider>
           <ThemeProvider>
           <BillingProvider>
+          <UpdateNotification />
           <BrowserRouter>
             <RouteSyncer />
             <Routes>

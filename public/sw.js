@@ -4,28 +4,19 @@
  * Handles:
  * - Push notifications
  * - Offline fallback for navigation requests
- * - Cache-first for all GET requests (including cross-origin content
- *   like provider logos that are explicitly cached by the app)
- * - Precache of core pages at install time for basic offline functionality
+ * - Network-first for HTML/navigation (always gets latest version)
+ * - Cache-first for static assets (fast loading)
+ * - Auto-update detection via client message
  */
 
 // ── !! KEEP IN SYNC with src/lib/cache-config.ts !! ───────────────────
-// The TS app code imports CACHE_NAME from the shared module above.
-// This file is plain JS (not processed by Vite), so the value is duplicated
-// here. When bumping the version, update BOTH places.
-const CACHE_NAME = "portal-cliente-v2";
+const CACHE_NAME = "portal-cliente-v3";
 
 // ── Precache these URLs at install time ────────────────────────────────
-// These are fetched and cached when the SW is first installed, ensuring
-// the app shell and login page work even without connectivity.
-// JS/CSS chunks are auto-cached by the fetch handler during online browsing.
 const PRECACHE_URLS = [
   "/",
   "/index.html",
   "/login",
-  "/dashboard",
-  "/faturas",
-  "/perfil",
   "/logo-192.png",
   "/logo-512.png",
   "/manifest.webmanifest",
@@ -33,7 +24,6 @@ const PRECACHE_URLS = [
 
 async function precacheAssets(urls) {
   const cache = await caches.open(CACHE_NAME);
-  // Remove inner try/catch so Promise.allSettled sees actual rejections.
   const results = await Promise.allSettled(
     urls.map(async (url) => {
       const response = await fetch(url);
@@ -41,7 +31,6 @@ async function precacheAssets(urls) {
         await cache.put(url, response);
         return true;
       }
-      console.warn("[SW] Precache failed (status", response.status, "):", url);
       return false;
     }),
   );
@@ -58,12 +47,11 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// On activate — claim all clients so the SW controls pages immediately
+// On activate — claim all clients + clean old caches
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all([
       self.clients.claim(),
-      // Clean old caches if needed
       caches.keys().then((names) =>
         Promise.all(
           names
@@ -75,9 +63,66 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Push event — receive a push message and show a notification
-// ---------------------------------------------------------------------------
+// ── Message handler — force update check from frontend ─────────────────
+// When the frontend sends { type: "CHECK_UPDATE" }, the SW fetches
+// /api/version and compares with the stored version. If different,
+// it tells all clients to reload.
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "CHECK_UPDATE") {
+    checkForUpdate();
+  }
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+async function checkForUpdate() {
+  try {
+    const response = await fetch("/api/version", { cache: "no-store" });
+    if (!response.ok) return;
+    const { version } = await response.json();
+
+    const currentVersion = await getVersionFromCache();
+
+    if (currentVersion && version !== currentVersion) {
+      console.log("[SW] New version detected:", version, "(was:", currentVersion + ")");
+      // Notify all clients that a new version is available
+      const clients = await self.clients.matchAll();
+      for (const client of clients) {
+        client.postMessage({ type: "NEW_VERSION", version });
+      }
+    }
+
+    // Store the new version
+    await storeVersion(version);
+  } catch (err) {
+    console.warn("[SW] Update check failed:", err);
+  }
+}
+
+async function getVersionFromCache() {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const response = await cache.match("/api/version");
+    if (response) {
+      const data = await response.json();
+      return data.version;
+    }
+  } catch {}
+  return null;
+}
+
+async function storeVersion(version) {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const response = new Response(JSON.stringify({ version }), {
+      headers: { "Content-Type": "application/json" },
+    });
+    await cache.put("/api/version", response);
+  } catch {}
+}
+
+// ── Push notification ──────────────────────────────────────────────────
 self.addEventListener("push", (event) => {
   let data;
   try {
@@ -105,9 +150,6 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// ---------------------------------------------------------------------------
-// Notification click — handle user interaction with the notification
-// ---------------------------------------------------------------------------
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
@@ -139,15 +181,10 @@ self.addEventListener("notificationclick", (event) => {
 // ---------------------------------------------------------------------------
 // Fetch — adaptive strategy based on request type.
 //
-// Strategies:
-//   API requests (/api/*)         → Network-first (fresh data when online,
-//                                    cached response when offline).
-//   Navigation requests           → Network-first with offline page fallback.
-//   All other (assets, images)    → Cache-first (instant from cache,
-//                                    fallback to network).
-//
-// All strategies auto-cache successful same-origin GET responses so the
-// next visit works even without connectivity.
+//   API requests (/api/*)     → Network-first (fresh data, cached offline)
+//   Navigation (HTML)         → Network-first (always gets latest deploy)
+//   Static assets             → Cache-first (fast, versioned by Vite hash)
+//   /api/version              → Never cached (always fresh)
 // ---------------------------------------------------------------------------
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
@@ -158,10 +195,14 @@ async function handleFetch(request) {
   const url = new URL(request.url);
   const isSameOrigin = request.url.startsWith(self.location.origin);
   const isApiPath = url.pathname.startsWith("/api/");
+  const isNavigation = request.mode === "navigate";
+
+  // ── /api/version — never cache, always fresh ────────────────────────
+  if (url.pathname === "/api/version") {
+    return fetch(request);
+  }
 
   // ── API requests: network-first ──────────────────────────────────────
-  // Always try the network first so the user sees fresh data.
-  // When offline, fall back to the cached response.
   if (isApiPath) {
     try {
       const response = await fetch(request);
@@ -183,8 +224,24 @@ async function handleFetch(request) {
     }
   }
 
-  // ── Non-API, non-navigation: cache-first ─────────────────────────────
-  // Static assets, images, etc. — serve from cache instantly.
+  // ── Navigation requests: network-first (gets latest HTML on every navigation) ──
+  if (isNavigation) {
+    try {
+      const response = await fetch(request);
+      if (response.ok && isSameOrigin) {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+      }
+      return response;
+    } catch {
+      // Offline — try cache, then fallback
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      return offlinePage();
+    }
+  }
+
+  // ── Static assets: cache-first (Vite hashes filenames, so new = new URL) ──
   const cached = await caches.match(request);
   if (cached) return cached;
 
@@ -196,10 +253,6 @@ async function handleFetch(request) {
     }
     return response;
   } catch {
-    // Offline and not in cache
-    if (request.mode === "navigate") {
-      return offlinePage();
-    }
     return new Response("", { status: 503, statusText: "Service Unavailable" });
   }
 }
@@ -217,4 +270,3 @@ function offlinePage() {
     { headers: { "Content-Type": "text/html; charset=UTF-8" } },
   );
 }
-

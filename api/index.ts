@@ -1422,6 +1422,16 @@ app.post("/push/test", async (c) => {
 });
 
 // ===========================================================================
+// VERSION ENDPOINT — used by frontend to detect new deploys
+// ===========================================================================
+
+const APP_VERSION = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || process.env.APP_VERSION || String(Date.now());
+
+app.get("/version", (c) => {
+  return json({ version: APP_VERSION, timestamp: Date.now() });
+});
+
+// ===========================================================================
 // Export for Vercel
 // ===========================================================================
 export default app;
