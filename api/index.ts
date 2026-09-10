@@ -36,7 +36,25 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { getSupabaseServerClient } from "../src/lib/supabase-server";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+// ---------------------------------------------------------------------------
+// Supabase server client (inline to avoid import path issues in Vercel)
+// ---------------------------------------------------------------------------
+let _serverClient: SupabaseClient | null = null;
+
+function getSupabaseServerClient(): SupabaseClient {
+  if (_serverClient) return _serverClient;
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars");
+  }
+  _serverClient = createClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return _serverClient;
+}
 
 const app = new Hono().basePath("/api");
 
