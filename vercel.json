@@ -24,19 +24,6 @@
       ]
     }
   ],
-  "env": {
-    "VITE_SUPABASE_URL": "@supabase-url",
-    "VITE_SUPABASE_ANON_KEY": "@supabase-anon-key",
-    "SUPABASE_URL": "@supabase-url",
-    "SUPABASE_SERVICE_ROLE_KEY": "@supabase-service-role-key",
-    "MIKWEB_API_URL": "@mikweb-api-url",
-    "MIKWEB_API_TOKEN": "@mikweb-api-token",
-    "MIKWEB_ADMIN_PASSWORD": "@mikweb-admin-password",
-    "VITE_VAPID_PUBLIC_KEY": "@vapid-public-key",
-    "VAPID_PRIVATE_KEY": "@vapid-private-key",
-    "VAPID_SUBJECT": "mailto:admin@portalcliente.com.br",
-    "CORS_ORIGIN": "*"
-  },
   "functions": {
     "api/index.ts": {
       "maxDuration": 30
