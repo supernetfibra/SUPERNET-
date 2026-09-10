@@ -1,8 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { InstrumentationProvider, installRemoveChildDiagnostic } from "@/instrumentation.tsx";
 import { registerDiagnostics } from "@/lib/diagnostics";
-import { ConvexAuthProvider } from "@convex-dev/auth/react";
-import { ConvexReactClient } from "convex/react";
 import { useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation, Navigate } from "react-router";
@@ -36,37 +34,30 @@ const SW_PATH = "/sw.js";
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
-  // Don't register in development — the SW caches old JS bundles from a
-  // previous build and serves them stale on full page reloads (HMR is
-  // already disabled in vite.config.ts, so Vite does full reloads).
-  // Covers all common loopback addresses: localhost, 127.0.0.1, ::1, 0.0.0.0.
-  if (window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1" ||
-      window.location.hostname === "::1" ||
-      window.location.hostname === "0.0.0.0") {
+  // Don't register in development
+  if (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "::1" ||
+    window.location.hostname === "0.0.0.0"
+  ) {
     console.log("[SW] Skipping registration in development mode.");
     return;
   }
 
-  // Register on page load with a small delay to not block rendering
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register(SW_PATH, { scope: "/" })
       .then((registration) => {
         console.log("[SW] Registered:", registration.scope);
-
-        // If there's a waiting SW, activate it immediately
         if (registration.waiting) {
           registration.waiting.postMessage({ type: "SKIP_WAITING" });
         }
-
-        // Handle updates — when a new SW is found, reload to activate
         registration.addEventListener("updatefound", () => {
           const newWorker = registration.installing;
           if (newWorker) {
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                // New content is available, offer update
                 console.log("[SW] New version available — reload to update.");
               }
             });
@@ -75,9 +66,6 @@ function registerServiceWorker() {
       })
       .catch((err) => console.warn("[SW] Registration failed:", err));
 
-    // When a new SW takes over, the new version is already active
-    // (skipWaiting + clients.claim). A hard reload is disruptive and
-    // causes a black flash — the user can update on next visit.
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       console.log("[SW] Controller changed — new version active.");
     });
@@ -87,8 +75,6 @@ function registerServiceWorker() {
 registerServiceWorker();
 
 // All pages are lazy-loaded for optimal code splitting.
-// Admin pages were previously eager but are on obscure routes (/admin,*)
-// and contain heavy components (Select, icons, complex forms).
 const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
@@ -99,9 +85,6 @@ const Invoices = lazy(() => import("./pages/Invoices"));
 const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const NotFound = lazy(() => import("./pages/NotFound"));
-
-const convexUrl = import.meta.env.VITE_CONVEX_URL || 'https://small-sparrow-797.convex.cloud';
-const convex = new ConvexReactClient(convexUrl);
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
@@ -144,16 +127,11 @@ function RouteSyncer() {
 // Mount the app
 // ---------------------------------------------------------------------------
 
-// Install the removeChild diagnostic BEFORE createRoot so React 19's patching
-// sees the patched version from the very first render.
 installRemoveChildDiagnostic();
-
-// Register the console diagnostics command (type __diagnostics() in DevTools).
 registerDiagnostics();
 
 createRoot(document.getElementById("root")!).render(
   <InstrumentationProvider>
-    <ConvexAuthProvider client={convex}>
       <AuthProvider>
         <BrandingProvider>
           <ThemeProvider>
@@ -192,14 +170,11 @@ createRoot(document.getElementById("root")!).render(
           </ThemeProvider>
         </BrandingProvider>
       </AuthProvider>
-    </ConvexAuthProvider>
   </InstrumentationProvider>,
 );
 
 // ---------------------------------------------------------------------------
 // Mount VlyToolbar in a completely separate React root AFTER the main app.
-// Uses a dynamic import + deferred mount to avoid interfering with the main
-// app's React instance during initial render.
 // ---------------------------------------------------------------------------
 (function mountVlyToolbar() {
   const isVlyDev =
@@ -209,7 +184,6 @@ createRoot(document.getElementById("root")!).render(
 
   if (!isVlyDev) return;
 
-  // Defer to avoid any module-resolution conflicts during initial render
   setTimeout(async () => {
     try {
       const { createElement } = await import("react");

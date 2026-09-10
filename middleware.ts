@@ -55,11 +55,9 @@ function isCrawler(userAgent: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Convex branding endpoint
+// Branding endpoint (served by the Hono API backend)
 // ---------------------------------------------------------------------------
-const CONVEX_SITE_URL =
-  process.env.CONVEX_SITE_URL || "https://small-sparrow-797.convex.site";
-const BRANDING_URL = `${CONVEX_SITE_URL}/api/admin/branding`;
+const BRANDING_URL = "/api/admin/branding";
 
 interface BrandingData {
   providerName?: string;
@@ -101,9 +99,14 @@ export async function middleware(
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
 
-  // ── Pass-through for internal recursion ──
+  // ── Pass-through for internal recursion and API routes ──
   if (url.searchParams.has("__og")) {
     return undefined; // Vercel continues normal routing
+  }
+
+  // Skip API routes entirely — they should never get OG-tag treatment
+  if (url.pathname.startsWith("/api/")) {
+    return undefined;
   }
 
   // ── Only page-like paths get OG-tag treatment ──

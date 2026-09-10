@@ -27,9 +27,6 @@ export default defineConfig({
           if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/') || id.includes('node_modules/react-router') || id.includes('node_modules/@remix-run')) {
             return 'react-vendor';
           }
-          if (id.includes('node_modules/convex/') || id.includes('node_modules/@convex-dev/')) {
-            return 'convex-vendor';
-          }
           // Radix UI — used across most pages, good to cache together
           if (id.includes('node_modules/@radix-ui/')) {
             return 'radix-ui';
@@ -82,7 +79,6 @@ export default defineConfig({
       'react',
       'react-dom',
       'react-router',
-      '@convex-dev/auth/react',
     ],
   },
   // Performance hints
@@ -91,11 +87,11 @@ export default defineConfig({
     // module hot-reloading, causing "Importing a module script failed" errors
     // that cascade into React removeChild NotFoundError crashes.
     hmr: false,
-    // Proxy /api/* requests to the Convex HTTP site for HTTP actions
-    // (admin login, MikWeb login, config, branding, audit logs, etc.)
+    // Proxy /api/* requests to the local Hono dev server
+    // Run: npx vercel dev  (or start the Hono server separately on port 3001)
     proxy: {
       '/api': {
-        target: process.env.CONVEX_SITE_URL || 'https://handsome-mandrill-33.convex.site',
+        target: process.env.API_DEV_URL || 'http://localhost:3001',
         changeOrigin: true,
       },
     },

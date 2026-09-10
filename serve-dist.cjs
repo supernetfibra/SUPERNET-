@@ -1,6 +1,6 @@
 // Simple static server for the production build (dist/)
-// Serves the built assets with SPA fallback AND proxies /api/* to the Convex
-// HTTP site (mirrors vercel.json rewrites), so admin login, real-customer
+// Serves the built assets with SPA fallback AND proxies /api/* to the Hono
+// API backend (mirrors vercel.json rewrites), so admin login, real-customer
 // login and branding work in the preview like in production.
 const http = require('http');
 const fs = require('fs');
@@ -8,8 +8,8 @@ const path = require('path');
 
 const PORT = 4173;
 const ROOT = path.join(__dirname, 'dist');
-// Production Convex HTTP site (matches vercel.json). Overridable via env.
-const CONVEX_SITE = process.env.CONVEX_SITE_URL || 'https://small-sparrow-797.convex.site';
+// API backend URL (matches vercel.json). Overridable via env.
+const API_BACKEND = process.env.API_BACKEND_URL || 'http://localhost:3001';
 
 const MIME = {
   '.html': 'text/html',
@@ -23,7 +23,7 @@ const MIME = {
 };
 
 async function handleApi(req, res) {
-  const upstream = `${CONVEX_SITE}${req.url}`;
+  const upstream = `${API_BACKEND}${req.url}`;
   const init = { method: req.method, headers: {} };
   // Forward cookies (session/auth) and content-type from the client
   if (req.headers.cookie) init.headers.cookie = req.headers.cookie;
@@ -85,5 +85,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Preview server listening on http://127.0.0.1:${PORT} (proxy: ${CONVEX_SITE})`);
+  console.log(`Preview server listening on http://127.0.0.1:${PORT} (proxy: ${API_BACKEND})`);
 });

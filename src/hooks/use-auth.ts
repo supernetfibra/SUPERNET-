@@ -1,20 +1,7 @@
-import { api } from "@/convex/_generated/api";
-import { useAuthActions } from "@convex-dev/auth/react";
-import { useConvexAuth, useQuery } from "convex/react";
+/**
+ * Re-export useAuth from auth-context for backward compatibility.
+ * Previously this used Convex auth (@convex-dev/auth/react), but now uses
+ * the custom MikWeb session-based auth from auth-context.
+ */
 
-export function useAuth() {
-  const { isLoading: isAuthLoading, isAuthenticated } = useConvexAuth();
-  const user = useQuery(api.users.currentUser);
-  const { signIn, signOut } = useAuthActions();
-
-  // Derive isLoading directly from the dependencies instead of managing separate state
-  const isLoading = isAuthLoading || user === undefined;
-
-  return {
-    isLoading,
-    isAuthenticated,
-    user,
-    signIn,
-    signOut,
-  };
-}
+export { useAuth } from "@/lib/auth-context";
