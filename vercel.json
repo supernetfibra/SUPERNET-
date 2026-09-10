@@ -1,7 +1,13 @@
 {
   "buildCommand": "bun run build",
-  "outputDirectory": "dist",
   "installCommand": "bun install",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 30,
+      "includeFiles": "src/**"
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",
