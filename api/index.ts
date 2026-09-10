@@ -1450,6 +1450,8 @@ app.get("/version", (c) => {
 });
 
 // ===========================================================================
-// Export for Vercel
+// Export for Vercel serverless function
 // ===========================================================================
-export default app;
+export default async function handler(request: Request): Promise<Response> {
+  return app.fetch(request);
+}
