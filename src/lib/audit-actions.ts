@@ -18,6 +18,8 @@ interface CustomerActionOptions {
   value?: number;
 }
 
+import { authFetch } from "./api-config";
+
 // Coalescing window — the same (action, billingId) fired twice within this
 // window is treated as a single event (guards against double-clicks).
 const DEDUPE_WINDOW_MS = 2000;
@@ -37,7 +39,7 @@ export function logCustomerAction(
   // wouldn't queue it reliably.
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
 
-  fetch("/api/mikweb/action", {
+  authFetch("/api/mikweb/action", {
     method: "POST",
     credentials: "include",
     keepalive: true,

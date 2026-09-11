@@ -37,6 +37,7 @@ import { formatCpf, maskCpf } from "@/lib/cpf";
 import { formatPhone } from "@/lib/phone";
 import { getTestCustomerData, isTestCpf } from "@/lib/test-user";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { authFetch } from "@/lib/api-config";
 import { useToast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -106,9 +107,7 @@ export default function Profile() {
         }
         // ---- END TEST USER ----
 
-        const response = await fetch("/api/mikweb/customer", {
-          credentials: "include",
-        });
+        const response = await authFetch("/api/mikweb/customer");
 
         let errorDetail = "";
         try {
@@ -577,10 +576,9 @@ function NotificationCard() {
 
   const sendTestNotification = async () => {
     try {
-      const res = await fetch("/api/push/test", {
+      const res = await authFetch("/api/push/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
       });
 
       if (res.ok) {

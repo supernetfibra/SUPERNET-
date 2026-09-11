@@ -87,13 +87,5 @@ export default defineConfig({
     // module hot-reloading, causing "Importing a module script failed" errors
     // that cascade into React removeChild NotFoundError crashes.
     hmr: false,
-    // Proxy /api/* requests to the local Hono dev server
-    // Run: npx vercel dev  (or start the Hono server separately on port 3001)
-    proxy: {
-      '/api': {
-        target: process.env.API_DEV_URL || 'http://localhost:3001',
-        changeOrigin: true,
-      },
-    },
   },
 });

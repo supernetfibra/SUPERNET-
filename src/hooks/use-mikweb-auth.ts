@@ -15,6 +15,7 @@ import {
   getStoredTestSession,
 } from "@/lib/test-user";
 import { generateSessionToken } from "@/lib/session-token";
+import { apiUrl, authFetch, storeSessionToken, clearSessionToken } from "@/lib/api-config";
 
 // ---------------------------------------------------------------------------
 // Admin credentials — CPF específico + senha dedicada para acesso admin
@@ -113,10 +114,7 @@ export function useMikWebAuth() {
     // ---- END TEST USER ----
 
     try {
-      const response = await fetch("/api/mikweb/me", {
-        method: "GET",
-        credentials: "include",
-      });
+      const response = await authFetch("/api/mikweb/me", { method: "GET" });
 
       if (response.ok) {
         const data: MeResponse = await response.json();
@@ -162,10 +160,9 @@ export function useMikWebAuth() {
       if (isAdminCpf(normalizedCpf)) {
         console.log("[AUTH] Admin CPF detectado, validando senha no servidor...");
         try {
-          const response = await fetch("/api/admin/login", {
+          const response = await fetch(apiUrl("/api/admin/login"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "include",
             body: JSON.stringify({ password }),
           });
 
@@ -229,10 +226,9 @@ export function useMikWebAuth() {
       // ---- END TEST USER ----
 
       try {
-        const response = await fetch("/api/mikweb/login", {
+        const response = await fetch(apiUrl("/api/mikweb/login"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({ cpf, password, keepConnected }),
         });
 
@@ -245,6 +241,12 @@ export function useMikWebAuth() {
             error: data.error || "Erro ao fazer login.",
           }));
           throw new Error(data.error || "Erro ao fazer login.");
+        }
+
+        // Persist the session token — the backend is cross-origin, so the
+        // session travels via header instead of cookies.
+        if (data.sessionToken) {
+          storeSessionToken(data.sessionToken);
         }
 
         // Authentication complete — always go straight to dashboard
@@ -283,13 +285,11 @@ export function useMikWebAuth() {
     clearTestSession();
 
     try {
-      await fetch("/api/mikweb/logout", {
-        method: "POST",
-        credentials: "include",
-      });
+      await authFetch("/api/mikweb/logout", { method: "POST" });
     } catch {
       // Ignore logout errors — clear state anyway
     }
+    clearSessionToken();
 
     setState({
       isLoading: false,

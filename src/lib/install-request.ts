@@ -3,6 +3,8 @@
  * landing page to the public endpoint POST /api/public/install-request.
  */
 
+import { apiUrl } from "./api-config";
+
 export interface InstallRequestPayload {
   fullName: string;
   cpf: string;
@@ -32,7 +34,7 @@ export async function submitInstallRequest(
   payload: InstallRequestPayload
 ): Promise<InstallRequestResult> {
   try {
-    const res = await fetch("/api/public/install-request", {
+    const res = await fetch(apiUrl("/api/public/install-request"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

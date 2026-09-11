@@ -1,0 +1,6 @@
+project_id = "supernet-fibra"
+
+[functions.api]
+# The Edge Function handles its own auth via session-token headers
+# (x-session-token / x-admin-token), not Supabase JWTs.
+verify_jwt = false

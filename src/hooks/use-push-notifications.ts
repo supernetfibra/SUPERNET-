@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { authFetch } from "@/lib/api-config";
 
 // Public VAPID key — must be set as VITE_VAPID_PUBLIC_KEY in .env
 const VAPID_PUBLIC_KEY =
@@ -177,10 +178,9 @@ export function usePushNotifications() {
         throw new Error("Subscription object is invalid");
       }
 
-      const response = await fetch("/api/push/subscribe", {
+      const response = await authFetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           endpoint: subJSON.endpoint,
           keys: subJSON.keys,
@@ -221,10 +221,9 @@ export function usePushNotifications() {
 
         // Remove from server
         const subJSON = subscription.toJSON();
-        await fetch("/api/push/unsubscribe", {
+        await authFetch("/api/push/unsubscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({
             endpoint: subJSON.endpoint || "",
           }),

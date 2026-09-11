@@ -6,11 +6,11 @@
  * - Offline fallback for navigation requests
  * - Network-first for HTML/navigation (always gets latest version)
  * - Cache-first for static assets (fast loading)
- * - Auto-update detection via client message
+ * - Auto-update detection via /version.json (written at build time)
  */
 
 // ── !! KEEP IN SYNC with src/lib/cache-config.ts !! ───────────────────
-const CACHE_NAME = "portal-cliente-v3";
+const CACHE_NAME = "portal-cliente-v4";
 
 // ── Precache these URLs at install time ────────────────────────────────
 const PRECACHE_URLS = [
@@ -35,37 +35,16 @@ async function precacheAssets(urls) {
     }),
   );
   const succeeded = results.filter(
-    (r) => r.status === "fulfilled" && r.value === true,
+    (r) => r.status === "fulfilled" && r.value,
   ).length;
-  console.log("[SW] Precache complete:", succeeded, "/", urls.length);
+  console.log(
+    `[SW] Precached ${succeeded}/${urls.length} assets into ${CACHE_NAME}`,
+  );
 }
-
-// On install — activate immediately + precache core assets
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    Promise.all([self.skipWaiting(), precacheAssets(PRECACHE_URLS)]),
-  );
-});
-
-// On activate — claim all clients + clean old caches
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    Promise.all([
-      self.clients.claim(),
-      caches.keys().then((names) =>
-        Promise.all(
-          names
-            .filter((n) => n !== CACHE_NAME)
-            .map((n) => caches.delete(n))
-        )
-      ),
-    ])
-  );
-});
 
 // ── Message handler — force update check from frontend ─────────────────
 // When the frontend sends { type: "CHECK_UPDATE" }, the SW fetches
-// /api/version and compares with the stored version. If different,
+// /version.json and compares with the stored version. If different,
 // it tells all clients to reload.
 self.addEventListener("message", (event) => {
   if (event.data?.type === "CHECK_UPDATE") {
@@ -78,14 +57,19 @@ self.addEventListener("message", (event) => {
 
 async function checkForUpdate() {
   try {
-    const response = await fetch("/api/version", { cache: "no-store" });
+    const response = await fetch("/version.json", { cache: "no-store" });
     if (!response.ok) return;
     const { version } = await response.json();
 
     const currentVersion = await getVersionFromCache();
 
     if (currentVersion && version !== currentVersion) {
-      console.log("[SW] New version detected:", version, "(was:", currentVersion + ")");
+      console.log(
+        "[SW] New version detected:",
+        version,
+        "(was:",
+        currentVersion + ")",
+      );
       // Notify all clients that a new version is available
       const clients = await self.clients.matchAll();
       for (const client of clients) {
@@ -103,7 +87,7 @@ async function checkForUpdate() {
 async function getVersionFromCache() {
   try {
     const cache = await caches.open(CACHE_NAME);
-    const response = await cache.match("/api/version");
+    const response = await cache.match("/version.json");
     if (response) {
       const data = await response.json();
       return data.version;
@@ -118,7 +102,7 @@ async function storeVersion(version) {
     const response = new Response(JSON.stringify({ version }), {
       headers: { "Content-Type": "application/json" },
     });
-    await cache.put("/api/version", response);
+    await cache.put("/version.json", response);
   } catch {}
 }
 
@@ -162,7 +146,7 @@ self.addEventListener("notificationclick", (event) => {
     .matchAll({ type: "window", includeUncontrolled: true })
     .then((windowClients) => {
       const matchingClient = windowClients.find(
-        (client) => client.url.includes(self.location.origin) && "focus" in client
+        (client) => client.url.includes(self.location.origin) && "focus" in client,
       );
 
       if (matchingClient) {
@@ -181,10 +165,12 @@ self.addEventListener("notificationclick", (event) => {
 // ---------------------------------------------------------------------------
 // Fetch — adaptive strategy based on request type.
 //
-//   API requests (/api/*)     → Network-first (fresh data, cached offline)
 //   Navigation (HTML)         → Network-first (always gets latest deploy)
 //   Static assets             → Cache-first (fast, versioned by Vite hash)
-//   /api/version              → Never cached (always fresh)
+//   Cross-origin API calls    → Passed straight through (no caching — the
+//                               browser handles CORS; caching a cross-origin
+//                               opaque response would corrupt JSON handling)
+//   /version.json             → Never cached (always fresh)
 // ---------------------------------------------------------------------------
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
@@ -194,19 +180,23 @@ self.addEventListener("fetch", (event) => {
 async function handleFetch(request) {
   const url = new URL(request.url);
   const isSameOrigin = request.url.startsWith(self.location.origin);
-  const isApiPath = url.pathname.startsWith("/api/");
   const isNavigation = request.mode === "navigate";
 
-  // ── /api/version — never cache, always fresh ────────────────────────
-  if (url.pathname === "/api/version") {
+  // ── /version.json — never cache, always fresh ───────────────────────
+  if (isSameOrigin && url.pathname === "/version.json") {
     return fetch(request);
   }
 
-  // ── API requests: network-first ──────────────────────────────────────
-  if (isApiPath) {
+  // ── Cross-origin (Supabase API) — pass through untouched ────────────
+  if (!isSameOrigin) {
+    return fetch(request);
+  }
+
+  // ── Same-origin API paths (legacy) — network-first ──────────────────
+  if (url.pathname.startsWith("/api/")) {
     try {
       const response = await fetch(request);
-      if (response.ok && isSameOrigin) {
+      if (response.ok) {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
       }
@@ -214,13 +204,10 @@ async function handleFetch(request) {
     } catch {
       const cached = await caches.match(request);
       if (cached) return cached;
-      return new Response(
-        JSON.stringify({ error: "Sem conexão", billings: [] }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return new Response(JSON.stringify({ error: "Sem conexão" }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      });
     }
   }
 
@@ -228,7 +215,7 @@ async function handleFetch(request) {
   if (isNavigation) {
     try {
       const response = await fetch(request);
-      if (response.ok && isSameOrigin) {
+      if (response.ok) {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
       }
@@ -247,7 +234,7 @@ async function handleFetch(request) {
 
   try {
     const response = await fetch(request);
-    if (response.ok && isSameOrigin) {
+    if (response.ok) {
       const clone = response.clone();
       caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
     }

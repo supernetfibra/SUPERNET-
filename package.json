@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:api": "npx vercel dev",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/write-version.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "preview": "vite preview",
-    "deploy": "bash deploy.sh"
+    "deploy": "bash deploy.sh",
+    "deploy:functions": "supabase functions deploy api --no-verify-jwt"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -53,7 +53,6 @@
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^12.23.25",
-    "hono": "^4.10.7",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.555.0",
     "next-themes": "^0.4.6",

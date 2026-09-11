@@ -32,6 +32,7 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
 import { statusConfig } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
+import { authFetch } from "@/lib/api-config";
 import type { BillingSummary } from "@/hooks/use-billings";
 
 // ---------------------------------------------------------------------------
@@ -145,8 +146,19 @@ export default function InvoiceCard({
     openPdf();
     logCustomerAction("pdf_viewed", logCtx);
   };
-  const openPdfProxy = () => {
-    window.open(`/api/mikweb/billings/${billing.id}/download`, "_blank");
+  const openPdfProxy = async () => {
+    try {
+      // The download endpoint requires the session header, so fetch the PDF
+      // as a blob and open it via object URL (window.open can't send headers).
+      const res = await authFetch(`/api/mikweb/billings/${billing.id}/download`);
+      if (!res.ok) throw new Error("PDF indisponível");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      console.warn("[PDF] Não foi possível abrir o boleto.");
+    }
     logCustomerAction("pdf_viewed", logCtx);
   };
 

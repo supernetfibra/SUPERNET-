@@ -55,9 +55,12 @@ function isCrawler(userAgent: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Branding endpoint (served by the Hono API backend)
+// Branding endpoint (Supabase Edge Function — public route)
 // ---------------------------------------------------------------------------
-const BRANDING_URL = "/api/admin/branding";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const BRANDING_URL = SUPABASE_URL
+  ? `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/api/admin/branding`
+  : "/api/admin/branding";
 
 interface BrandingData {
   providerName?: string;
@@ -143,10 +146,8 @@ export async function middleware(
   } catch {
     // If fetching the page itself fails, just pass through
     return undefined;
-  }
-
-  // ── Fetch branding from Convex ──
-  const branding = await fetchBranding();
+  }    // Fetch branding from the Supabase Edge Function
+    const branding = await fetchBranding();
   const providerName = branding.providerName || "Portal do Cliente";
   const logoUrl = branding.logoUrl || "";
 

@@ -3,7 +3,7 @@
  *
  * How it works:
  * 1. Registers a message listener on the Service Worker.
- * 2. When the SW detects a new version (via /api/version check), it sends
+ * 2. When the SW detects a new version (via /version.json check), it sends
  *    a "NEW_VERSION" message to all clients.
  * 3. This component receives that message and shows a toast with a reload button.
  * 4. The SW also checks for updates every 5 minutes automatically.

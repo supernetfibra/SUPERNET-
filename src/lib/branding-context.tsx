@@ -11,6 +11,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { extractDominantColor } from "./extract-dominant-color";
 import { CACHE_NAME } from "./cache-config";
+import { apiUrl } from "./api-config";
 
 interface BrandingConfig {
   providerName: string;
@@ -381,7 +382,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   // Sync from server in the background — reads accentColorRef for latest value,
   // avoiding the stale closure that would otherwise capture mount-time state.
   useEffect(() => {
-    fetch("/api/admin/branding", { credentials: "include" })
+    fetch(apiUrl("/api/admin/branding"), { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.providerName) {

@@ -20,12 +20,12 @@ import {
 } from "react";
 import { useAuth } from "./auth-context";
 import { getTestBillings, isTestCpf } from "./test-user";
+import { authFetch } from "./api-config";
 
 // ---------------------------------------------------------------------------
 // Import billing types and helpers from billing-utils (shared, no circular dep)
 // ---------------------------------------------------------------------------
 
-import { CACHE_NAME } from "./cache-config";
 import diagStore from "./diagnostics";
 
 import {
@@ -123,21 +123,16 @@ export function BillingProvider({ children }: { children: ReactNode }) {
       try {
         setIsLoading(true);
 
-        // Fetch ALL invoices — the backend (Convex + MikWeb) now handles
-        // pagination internally, fetching ALL pages and accumulating results.
-        // This ensures clients with years of history see every invoice,
-        // not just the first page of oldest ones.
-        const response = await fetch("/api/mikweb/billings", {
+        // Fetch ALL invoices — the backend handles pagination internally,
+        // fetching ALL pages and accumulating results. This ensures clients
+        // with years of history see every invoice.
+        const response = await authFetch("/api/mikweb/billings", {
           method: "GET",
-          credentials: "include",
         });
 
         if (!response.ok) {
           throw new Error("Erro ao buscar faturas.");
         }
-
-        // Clone BEFORE reading the body — once consumed, clone() throws TypeError
-        const swCacheClone = response.clone();
 
         const data = await response.json();
 
@@ -161,15 +156,6 @@ export function BillingProvider({ children }: { children: ReactNode }) {
 
           // Save to localStorage for offline fallback (fast, immediate access)
           saveToCache(customer.id, mapped);
-
-          // Also cache the raw HTTP response in the SW cache so the SW
-          // can serve it even on the first visit (when SW may not be active).
-          if ("caches" in window) {
-            caches
-              .open(CACHE_NAME)
-              .then((cache) => cache.put("/api/mikweb/billings", swCacheClone))
-              .catch(() => {});
-          }
 
           // ── Diagnostic: push to store + console ──
           const customerTag = customer.id.slice(0, 12) + "...";
