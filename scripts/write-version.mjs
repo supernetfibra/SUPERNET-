@@ -3,10 +3,10 @@
  * deployments and prompt users to reload.
  *
  * Version = short git SHA when available (stable per deploy), otherwise a
- * timestamp (e.g. local builds without git metadata).
+ * hash of package.json + timestamp (local builds without git metadata).
  */
 import { execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 const distDir = resolve(process.cwd(), "dist");
@@ -18,7 +18,11 @@ try {
     encoding: "utf8",
   }).trim();
 } catch {
-  version = `t${Date.now().toString(36)}`;
+  // Fallback: hash do package.json (estável por deploy) + timestamp curto
+  const pkg = readFileSync(resolve(process.cwd(), "package.json"), "utf8");
+  const pkgHash = Buffer.from(pkg).toString("base64url").slice(0, 7);
+  const ts = Date.now().toString(36).slice(-5);
+  version = `pkg:${pkgHash}.${ts}`;
 }
 
 const payload = { version, builtAt: new Date().toISOString() };

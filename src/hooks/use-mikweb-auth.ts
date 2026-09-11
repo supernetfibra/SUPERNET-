@@ -14,7 +14,6 @@ import {
   clearTestSession,
   getStoredTestSession,
 } from "@/lib/test-user";
-import { generateSessionToken } from "@/lib/session-token";
 import { apiUrl, authFetch, storeSessionToken, clearSessionToken } from "@/lib/api-config";
 
 // ---------------------------------------------------------------------------
@@ -23,6 +22,17 @@ import { apiUrl, authFetch, storeSessionToken, clearSessionToken } from "@/lib/a
 // A senha é validada no servidor (MIKWEB_ADMIN_PASSWORD), nunca no cliente.
 // ---------------------------------------------------------------------------
 const ADMIN_CPF = "00000000000";
+
+/**
+ * Gera um token de sessão aleatório (fallback local).
+ * O token real vem do servidor; este é só fallback caso não chegue.
+ */
+function generateSessionToken(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 
 function isAdminCpf(cpf: string): boolean {
