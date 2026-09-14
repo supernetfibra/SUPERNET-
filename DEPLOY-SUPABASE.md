@@ -13,13 +13,10 @@ npx supabase login
 ## 2. Vincular o projeto (uma única vez)
 
 ```bash
-npx supabase link --project-ref <PROJECT_REF>
+npx supabase link --project-ref ssvwlbwsprjpfmevdnvb
 ```
 
-O `PROJECT_REF` é a parte inicial da URL do projeto: `https://<PROJECT_REF>.supabase.co`.
-
-Alternativa: a integração Vercel↔Supabase já criou as variáveis no Vercel —
-copie `SUPABASE_URL` de lá para descobrir o ref.
+O project ref é `ssvwlbwsprjpfmevdnvb` — a URL do projeto é `https://ssvwlbwsprjpfmevdnvb.supabase.co`.
 
 ## 3. Configurar os secrets do backend
 
@@ -46,15 +43,15 @@ npm run deploy:functions
 
 ```bash
 # Health check
-curl https://<PROJECT_REF>.supabase.co/functions/v1/api/version
+curl https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/version
 
 # Login admin (deve retornar sessionToken)
-curl -X POST https://<PROJECT_REF>.supabase.co/functions/v1/api/admin/login \
+curl -X POST https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/admin/login \
   -H 'Content-Type: application/json' \
   -d '{"password":"slackware@"}'
 
 # Login cliente teste
-curl -X POST https://<PROJECT_REF>.supabase.co/functions/v1/api/mikweb/login \
+curl -X POST https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/mikweb/login \
   -H 'Content-Type: application/json' \
   -d '{"cpf":"12345678909","password":"1234"}'
 ```
@@ -65,6 +62,7 @@ curl -X POST https://<PROJECT_REF>.supabase.co/functions/v1/api/mikweb/login \
 - [ ] Secrets configurados (passo 3)
 - [ ] Edge Function deployada (passo 4)
 - [ ] `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` disponíveis na Vercel (integração)
+- [ ] `VITE_SUPABASE_URL` deve apontar para o projeto real: `https://ssvwlbwsprjpfmevdnvb.supabase.co`
 - [ ] Deploy do frontend na Vercel
 - [ ] Login admin em `/login` com CPF `000.000.000-00` + senha `MIKWEB_ADMIN_PASSWORD`
 

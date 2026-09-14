@@ -10,7 +10,7 @@
     "format": "prettier --write .",
     "preview": "vite preview",
     "deploy": "bash deploy.sh",
-    "deploy:functions": "supabase functions deploy api --no-verify-jwt"
+    "deploy:functions": "npx supabase functions deploy api --no-verify-jwt"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

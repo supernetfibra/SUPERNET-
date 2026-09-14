@@ -51,7 +51,7 @@ async function handleApi(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  // Proxy API requests to the Convex backend
+  // Proxy API requests to the Supabase Edge Function backend
   if (req.url.startsWith('/api/')) {
     handleApi(req, res).catch((err) => {
       res.writeHead(502, { 'Content-Type': 'application/json' });

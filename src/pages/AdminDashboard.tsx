@@ -415,7 +415,7 @@ export default function AdminDashboard() {
         }
       }
     } catch {
-      // Config endpoint might not exist as HTTP; data is loaded via Convex
+      // Config endpoint might not exist yet; data is loaded from Supabase
     }
 
     await loadAuditLogs();
@@ -506,7 +506,7 @@ export default function AdminDashboard() {
         return;
       }
 
-      // 2. Fallback: try via Convex backend (server-side, sem CORS)
+      // 2. Fallback: try via Supabase Edge Function (server-side, sem CORS)
       try {
         const res = await adminFetch("/api/admin/test-connection", {
           method: "POST",
@@ -517,7 +517,7 @@ export default function AdminDashboard() {
         setConnectionResult(data);
         return;
       } catch {
-        // Convex unavailable
+        // Supabase Edge Function unavailable
       }
 
       // Both methods failed

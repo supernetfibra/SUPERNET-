@@ -1,8 +1,7 @@
 /**
  * API Configuration — points to the Supabase Edge Function backend.
  *
- * The backend runs as a Supabase Edge Function ("api"), so in production the
- * frontend calls `https://<project>.supabase.co/functions/v1/api/...`.
+ * The backend runs as a Supabase Edge Function ("api"), so in production the  * frontend calls `https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/...`.
  * Cross-origin requests can't rely on cookies, so authenticated calls go
  * through `authFetch`, which attaches the session token as a header.
  *

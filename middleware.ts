@@ -4,7 +4,7 @@
  * Social-media crawlers (WhatsApp, Facebook, Telegram, Twitter, etc.) do NOT
  * execute JavaScript. They only see the static HTML served by Vercel.
  * This middleware detects crawler User-Agents, fetches the provider branding
- * from the Convex backend, and injects the correct <title>, og:title,
+ * from the Supabase Edge Function backend, and injects the correct <title>, og:title,
  * and og:image meta tags before returning the HTML.
  *
  * Regular users pass through uninterrupted (no performance impact).
@@ -14,7 +14,7 @@
  * 2. If the URL already has `?__og=1` → pass through (prevents recursion).
  * 3. If the User-Agent matches a known crawler:
  *    a. Fetch the real index.html with `?__og=1` (bypasses middleware).
- *    b. Fetch branding config from Convex HTTP endpoint.
+ *    b. Fetch branding config from Supabase Edge Function.
  *    c. Inject <title>, og:title, og:image into the HTML.
  *    d. Return the modified HTML with a short cache-control header.
  * 4. Otherwise → pass through (Return undefined → Vercel continues normally).
@@ -57,7 +57,7 @@ function isCrawler(userAgent: string): boolean {
 // ---------------------------------------------------------------------------
 // Branding endpoint (Supabase Edge Function — public route)
 // ---------------------------------------------------------------------------
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ""; // ref real: ssvwlbwsprjpfmevdnvb
 const BRANDING_URL = SUPABASE_URL
   ? `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/api/admin/branding`
   : "/api/admin/branding";
