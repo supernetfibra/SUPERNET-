@@ -31,6 +31,14 @@ import {
   Camera,
   X,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import TermsOfUseContent from "@/components/terms-content";
+import PrivacyContent from "@/components/privacy-content";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
@@ -73,6 +81,8 @@ export default function Landing() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
 
   // Photo state (base64 data URLs)
   const [photos, setPhotos] = useState<{
@@ -696,7 +706,7 @@ export default function Landing() {
                       Li e concordo com os{" "}
                       <button
                         type="button"
-                        onClick={() => navigate("/termos")}
+                        onClick={() => setTermsOpen(true)}
                         className="text-foreground underline underline-offset-2 hover:text-foreground/80"
                       >
                         termos de uso
@@ -704,7 +714,7 @@ export default function Landing() {
                       e a{" "}
                       <button
                         type="button"
-                        onClick={() => navigate("/privacidade")}
+                        onClick={() => setPrivacyOpen(true)}
                         className="text-foreground underline underline-offset-2 hover:text-foreground/80"
                       >
                         política de privacidade
@@ -747,6 +757,26 @@ export default function Landing() {
           </p>
         </div>
       </footer>
+
+      {/* Terms of Use dialog */}
+      <Dialog open={termsOpen} onOpenChange={setTermsOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Termos de Uso</DialogTitle>
+          </DialogHeader>
+          <TermsOfUseContent />
+        </DialogContent>
+      </Dialog>
+
+      {/* Privacy Policy dialog */}
+      <Dialog open={privacyOpen} onOpenChange={setPrivacyOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Política de Privacidade</DialogTitle>
+          </DialogHeader>
+          <PrivacyContent />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

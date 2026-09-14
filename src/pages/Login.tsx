@@ -20,6 +20,14 @@ import { useNavigate } from "react-router";
 import { normalizeCpf, formatCpf, isValidCpf } from "@/lib/cpf";
 import { useAuth } from "@/lib/auth-context";
 import { useBranding } from "@/lib/branding-context";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import TermsOfUseContent from "@/components/terms-content";
+import PrivacyContent from "@/components/privacy-content";
 
 type Step = "cpf" | "password";
 
@@ -35,6 +43,8 @@ export default function Login() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [keepConnected, setKeepConnected] = useState(false);
   const [cpfTouched, setCpfTouched] = useState(false);
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
 
   const ADMIN_CPF = "00000000000";
@@ -331,18 +341,17 @@ export default function Login() {
           </Card>
 
           <p className="text-center text-xs text-muted-foreground mt-8">
-            Ao acessar, você concorda com nossos{" "}
-            <button
+            Ao acessar, você concorda com nossos{" "}              <button
               type="button"
-              onClick={() => navigate("/termos")}
+              onClick={() => setTermsOpen(true)}
               className="underline hover:text-foreground transition-colors"
             >
               Termos de Uso
             </button>{" "}
             e{" "}
-            <button
+              <button
               type="button"
-              onClick={() => navigate("/privacidade")}
+              onClick={() => setPrivacyOpen(true)}
               className="underline hover:text-foreground transition-colors"
             >
               Política de Privacidade
@@ -362,6 +371,26 @@ export default function Login() {
           </p>
         </div>
       </footer>
+
+      {/* Terms of Use dialog */}
+      <Dialog open={termsOpen} onOpenChange={setTermsOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Termos de Uso</DialogTitle>
+          </DialogHeader>
+          <TermsOfUseContent />
+        </DialogContent>
+      </Dialog>
+
+      {/* Privacy Policy dialog */}
+      <Dialog open={privacyOpen} onOpenChange={setPrivacyOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Política de Privacidade</DialogTitle>
+          </DialogHeader>
+          <PrivacyContent />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
