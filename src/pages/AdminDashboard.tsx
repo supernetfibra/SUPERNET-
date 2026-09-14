@@ -1267,16 +1267,17 @@ export default function AdminDashboard() {
                     return (
                       <div
                         key={entry._id}
-                        className="flex items-center gap-3 px-3 py-2 rounded-sm hover:bg-secondary/30 transition-colors text-xs"
+                        className="flex items-start gap-3 px-3 py-2 rounded-sm hover:bg-secondary/30 transition-colors text-xs"
                       >
                         <Badge
                           variant="outline"
-                          className={`text-[9px] font-medium px-1.5 py-0 border-none shrink-0 ${typeInfo.color}`}
+                          className={`text-[9px] font-medium px-1.5 py-0 border-none shrink-0 mt-0.5 ${typeInfo.color}`}
                         >
                           {typeInfo.label}
                         </Badge>
 
                         <div className="flex-1 min-w-0">
+                          {/* Line 1: Nome + CPF */}
                           <div className="flex items-center gap-2 flex-wrap">
                             {entry.customerName ? (
                               <span className="text-foreground font-medium truncate">
@@ -1293,26 +1294,25 @@ export default function AdminDashboard() {
                               </span>
                             )}
                           </div>
-                          {entry.errorMessage && (
-                            <span className="text-muted-foreground block truncate">
-                              {entry.errorMessage}
-                            </span>
-                          )}
-                          {entry.metadata?.reference && (
-                            <span className="text-muted-foreground block truncate">
-                              Fatura {entry.metadata.reference}
-                              {typeof entry.metadata.value === "number"
-                                ? ` · ${formatValue(entry.metadata.value)}`
-                                : ""}
-                            </span>
-                          )}
-                          {entry.ipAddress && (
-                            <span className="text-[10px] text-muted-foreground font-mono block">
-                              IP {entry.ipAddress}
-                            </span>
-                          )}
+                          {/* Line 2: O que fez (ação) */}
+                          <div className="text-muted-foreground mt-0.5">
+                            {entry.errorMessage && (
+                              <span className="block truncate">
+                                {entry.errorMessage}
+                              </span>
+                            )}
+                            {entry.metadata?.reference && (
+                              <span className="block truncate">
+                                Fatura {entry.metadata.reference}
+                                {typeof entry.metadata.value === "number"
+                                  ? ` · ${formatValue(entry.metadata.value)}`
+                                  : ""}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
+                        {/* Line 3: Data + Hora + IP */}
                         <div className="text-right shrink-0">
                           <p className="text-[10px] text-muted-foreground">
                             {date.toLocaleDateString("pt-BR")}
@@ -1323,6 +1323,11 @@ export default function AdminDashboard() {
                               minute: "2-digit",
                             })}
                           </p>
+                          {entry.ipAddress && (
+                            <p className="text-[9px] text-muted-foreground font-mono mt-0.5">
+                              {entry.ipAddress}
+                            </p>
+                          )}
                         </div>
                       </div>
                     );
