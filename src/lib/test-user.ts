@@ -292,3 +292,62 @@ export function getStoredTestSession(): TestSession | null {
     return null;
   }
 }
+
+/**
+ * Generate a sample PDF blob for test user billings.
+ * Since test users don't have a real backend session, we can't proxy to MikWeb.
+ */
+export function generateSamplePdf(opts: {
+  reference: string;
+  dueDay: string;
+  value: number;
+  status: string;
+}): Blob {
+  const pdf = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Length 420>>stream
+BT
+/F1 18 Tf
+72 720 Td
+(FATURA - TESTE) Tj
+/F1 12 Tf
+0 -30 Td
+(Competencia: ${opts.reference}) Tj
+0 -20 Td
+(Vencimento: ${opts.dueDay}) Tj
+0 -20 Td
+(Valor: R$ ${opts.value.toFixed(2)}) Tj
+0 -20 Td
+(Status: ${opts.status}) Tj
+0 -40 Td
+/F1 10 Tf
+(Este e um documento de teste gerado pela area do cliente.) Tj
+0 -15 Td
+(Para fins de demonstracao apenas.) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000266 00000 n 
+0000000340 00000 n 
+trailer<</Size 6/Root 1 0 R>>
+startxref
+813
+%%EOF`;
+  return new Blob([pdf], { type: "application/pdf" });
+}
+
+/**
+ * Check whether we're in test-user mode (client-side mock).
+ */
+export function isTestUser(): boolean {
+  return getStoredTestSession() !== null;
+}

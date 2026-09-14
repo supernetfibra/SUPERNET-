@@ -33,6 +33,7 @@ import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
 import { statusConfig } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
 import { authFetch } from "@/lib/api-config";
+import { isTestUser, generateSamplePdf } from "@/lib/test-user";
 import type { BillingSummary } from "@/hooks/use-billings";
 
 // ---------------------------------------------------------------------------
@@ -135,24 +136,33 @@ export default function InvoiceCard({
     value: billing.valor,
   };
   const copyBarcode = () => {
-    copyBarcode();
+    handleCopy(billing.linha_digitavel || "", `line-${billing.id}`);
     logCustomerAction("barcode_copied", logCtx);
   };
   const copyPix = () => {
-    copyPix();
+    handleCopy(billing.pix_copiaecola || "", `pix-${billing.id}`);
     logCustomerAction("pix_copied", logCtx);
   };
   const openPdf = () => {
-    openPdf();
-    logCustomerAction("pdf_viewed", logCtx);
+    openPdfProxy();
   };
   const openPdfProxy = async () => {
     try {
-      // The download endpoint requires the session header, so fetch the PDF
-      // as a blob and open it via object URL (window.open can't send headers).
-      const res = await authFetch(`/api/mikweb/billings/${billing.id}/download`);
-      if (!res.ok) throw new Error("PDF indisponível");
-      const blob = await res.blob();
+      let blob: Blob;
+      if (isTestUser()) {
+        // Test users don't have a backend session, so generate a sample PDF client-side
+        blob = generateSamplePdf({
+          reference: billing.competencia,
+          dueDay: billing.vencimento,
+          value: billing.valor,
+          status: billing.status,
+        });
+      } else {
+        // Real users: fetch the PDF via the backend proxy (requires session header)
+        const res = await authFetch(`/api/mikweb/billings/${billing.id}/download`);
+        if (!res.ok) throw new Error("PDF indisponível");
+        blob = await res.blob();
+      }
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -282,20 +292,18 @@ export default function InvoiceCard({
                 PIX
               </Button>
             )}
-            {billing.url_boleto && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs text-muted-foreground hover:text-foreground"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openPdf();
-                }}
-              >
-                <Download className="h-3 w-3 mr-1" />
-                PDF
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                openPdf();
+              }}
+            >
+              <Download className="h-3 w-3 mr-1" />
+              PDF
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -514,20 +522,18 @@ export default function InvoiceCard({
               PIX
             </Button>
           )}
-          {billing.url_boleto && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                openPdf();
-              }}
-            >
-              <Download className="h-2.5 w-2.5 mr-1" />
-              PDF
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+            onClick={(e) => {
+              e.stopPropagation();
+              openPdf();
+            }}
+          >
+            <Download className="h-2.5 w-2.5 mr-1" />
+            PDF
+          </Button>
         </div>
       </CardContent>
     </Card>

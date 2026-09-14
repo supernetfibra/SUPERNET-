@@ -30,6 +30,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
+import { authFetch } from "@/lib/api-config";
+import { isTestUser, generateSamplePdf } from "@/lib/test-user";
 
 export default function InvoiceDetail() {
   const navigate = useNavigate();
@@ -132,9 +134,26 @@ export default function InvoiceDetail() {
       logCtx
     );
   };
-  const openPdf = () => {
-    if (billing.url_boleto) {
-      window.open(billing.url_boleto, "_blank");
+  const openPdf = async () => {
+    try {
+      let blob: Blob;
+      if (isTestUser()) {
+        blob = generateSamplePdf({
+          reference: billing.competencia,
+          dueDay: billing.vencimento,
+          value: billing.valor,
+          status: billing.status,
+        });
+      } else {
+        const res = await authFetch(`/api/mikweb/billings/${billing.id}/download`);
+        if (!res.ok) throw new Error("PDF indisponível");
+        blob = await res.blob();
+      }
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      console.warn("[PDF] Não foi possível abrir o boleto.");
     }
     logCustomerAction("pdf_viewed", logCtx);
   };
@@ -351,7 +370,6 @@ export default function InvoiceDetail() {
                       size="sm"
                       className="flex-1 text-xs h-9"
                       onClick={openPdf}
-                      disabled={!billing.url_boleto}
                     >
                       <Download className="h-3.5 w-3.5 mr-1.5" />
                       Download PDF
