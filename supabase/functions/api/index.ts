@@ -1329,6 +1329,16 @@ app.post("/public/install-request", async (c) => {
     if (phone.length < 10) return jsonError("Telefone inválido.");
     if (!body.agreedToTerms) return jsonError("É necessário aceitar os termos.");
 
+    // Helper: validate and cap base64 photo (max ~800KB encoded ≈ ~600KB raw)
+    const MAX_PHOTO_BYTES = 800_000;
+    const sanitizePhoto = (val: unknown): string | null => {
+      if (typeof val !== "string" || !val.startsWith("data:image/")) return null;
+      // Strip the data-URL prefix, keep only the base64 part
+      const base64 = val.split(",")[1] || "";
+      if (base64.length > MAX_PHOTO_BYTES) return null; // too large
+      return val;
+    };
+
     await insertOrThrow("install_requests", {
       full_name: fullName.slice(0, 200),
       cpf,
@@ -1343,6 +1353,10 @@ app.post("/public/install-request", async (c) => {
       state: body.state || null,
       desired_plan: body.desiredPlan || null,
       message: body.message || null,
+      photo_house_front: sanitizePhoto(body.photoHouseFront),
+      photo_street: sanitizePhoto(body.photoStreet),
+      photo_id_front: sanitizePhoto(body.photoIdFront),
+      photo_id_back: sanitizePhoto(body.photoIdBack),
       agreed_to_terms: true,
       ip_address: getClientIp(request),
       status: "pending",

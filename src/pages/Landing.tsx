@@ -28,6 +28,8 @@ import {
   Loader2,
   AlertTriangle,
   Send,
+  Camera,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
@@ -72,6 +74,66 @@ export default function Landing() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
+  // Photo state (base64 data URLs)
+  const [photos, setPhotos] = useState<{
+    houseFront: string | null;
+    street: string | null;
+    idFront: string | null;
+    idBack: string | null;
+  }>({ houseFront: null, street: null, idFront: null, idBack: null });
+
+  /** Compress and resize an image file to a base64 data URL (max ~600KB). */
+  const compressImage = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_WIDTH = 1200;
+          const MAX_HEIGHT = 1200;
+          let { width, height } = img;
+          if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+            const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+          // Compress to JPEG quality 0.7
+          resolve(canvas.toDataURL("image/jpeg", 0.7));
+        };
+        img.onerror = () => reject(new Error("Falha ao carregar imagem"));
+        img.src = reader.result as string;
+      };
+      reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+      reader.readAsDataURL(file);
+    });
+
+  const handlePhoto = (
+    key: keyof typeof photos
+  ) => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10_000_000) {
+      setFormError("Imagem muito grande. Máximo 10MB.");
+      return;
+    }
+    try {
+      const compressed = await compressImage(file);
+      setPhotos((p) => ({ ...p, [key]: compressed }));
+    } catch {
+      setFormError("Erro ao processar imagem. Tente outra foto.");
+    }
+    // Reset input so same file can be re-selected
+    e.target.value = "";
+  };
+
+  const removePhoto = (key: keyof typeof photos) => () => {
+    setPhotos((p) => ({ ...p, [key]: null }));
+  };
+
   const update =
     (key: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -100,6 +162,7 @@ export default function Landing() {
       message: "",
       website: "",
     });
+    setPhotos({ houseFront: null, street: null, idFront: null, idBack: null });
     setAgreedToTerms(false);
     setFormError(null);
     setSubmitted(false);
@@ -147,6 +210,10 @@ export default function Landing() {
       message: form.message.trim() || undefined,
       agreedToTerms,
       website: form.website,
+      photoHouseFront: photos.houseFront || undefined,
+      photoStreet: photos.street || undefined,
+      photoIdFront: photos.idFront || undefined,
+      photoIdBack: photos.idBack || undefined,
     });
     setSubmitting(false);
 
@@ -562,6 +629,61 @@ export default function Landing() {
                       className="min-h-20 text-sm"
                       maxLength={500}
                     />
+                  </div>
+
+                  {/* Photo uploads */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-medium text-muted-foreground">
+                      Fotos <span className="text-muted-foreground/50">(opcional, mas ajuda na avaliação)
+                    </span>
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">
+                      Envie fotos da frente da casa, da rua e da sua identidade (frente e verso).
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {([
+                        ["houseFront", "Frente da casa"],
+                        ["street", "Rua"],
+                        ["idFront", "Identidade (frente)"],
+                        ["idBack", "Identidade (verso)"],
+                      ] as const).map(([key, label]) => (
+                        <div key={key}>
+                          {photos[key] ? (
+                            <div className="relative group">
+                              <img
+                                src={photos[key]!}
+                                alt={label}
+                                className="w-full h-24 object-cover rounded-sm border border-border"
+                              />
+                              <button
+                                type="button"
+                                onClick={removePhoto(key)}
+                                className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                              <p className="text-[9px] text-muted-foreground mt-0.5 truncate">
+                                {label}
+                              </p>
+                            </div>
+                          ) : (
+                            <label className="flex flex-col items-center justify-center h-24 rounded-sm border border-dashed border-border/80 hover:border-foreground/30 cursor-pointer transition-colors bg-secondary/20">
+                              <Camera className="h-4 w-4 text-muted-foreground/60 mb-1" />
+                              <span className="text-[10px] text-muted-foreground text-center leading-tight px-1">
+                                {label}
+                              </span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                className="sr-only"
+                                onChange={handlePhoto(key)}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <label className="flex items-start gap-2.5 cursor-pointer select-none pt-1">

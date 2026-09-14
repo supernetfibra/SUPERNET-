@@ -1728,6 +1728,36 @@ export default function AdminDashboard() {
                           </p>
                         )}
 
+                        {/* Photos */}
+                        {(r.photoHouseFront || r.photoStreet || r.photoIdFront || r.photoIdBack) && (
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            {r.photoHouseFront && (
+                              <div>
+                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Frente da casa</p>
+                                <img src={r.photoHouseFront} alt="Frente da casa" className="w-full h-28 object-cover rounded-sm border border-border" />
+                              </div>
+                            )}
+                            {r.photoStreet && (
+                              <div>
+                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Rua</p>
+                                <img src={r.photoStreet} alt="Rua" className="w-full h-28 object-cover rounded-sm border border-border" />
+                              </div>
+                            )}
+                            {r.photoIdFront && (
+                              <div>
+                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Identidade (frente)</p>
+                                <img src={r.photoIdFront} alt="Identidade frente" className="w-full h-28 object-cover rounded-sm border border-border" />
+                              </div>
+                            )}
+                            {r.photoIdBack && (
+                              <div>
+                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Identidade (verso)</p>
+                                <img src={r.photoIdBack} alt="Identidade verso" className="w-full h-28 object-cover rounded-sm border border-border" />
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between mt-2">
                           <p className="text-[10px] text-muted-foreground">
                             {date.toLocaleDateString("pt-BR")} ·{" "}

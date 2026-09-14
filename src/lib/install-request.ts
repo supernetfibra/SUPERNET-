@@ -23,6 +23,11 @@ export interface InstallRequestPayload {
   // Honeypot field — bots fill it, real users never see it. Keep it out of
   // the payload construction so it is only ever sent when a bot fills it.
   website?: string;
+  // Photos (base64 data URLs, compressed client-side)
+  photoHouseFront?: string;
+  photoStreet?: string;
+  photoIdFront?: string;
+  photoIdBack?: string;
 }
 
 export interface InstallRequestResult {
