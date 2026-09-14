@@ -47,6 +47,7 @@ import {
   Send,
   Bell,
   Home,
+  ChevronRight,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
@@ -280,6 +281,7 @@ export default function AdminDashboard() {
   } | null>(null);
   const [installLoading, setInstallLoading] = useState(false);
   const [installFilter, setInstallFilter] = useState("all");
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(null);
 
   // Track if welcome toast has been shown for this session
@@ -1655,11 +1657,21 @@ export default function AdminDashboard() {
                   r.state,
                 ].filter(Boolean);
 
+                const isExpanded = expandedRequestId === r._id;
+
                 return (
                   <div
                     key={r._id}
-                    className="p-3 rounded-sm border border-border/60 text-xs"
+                    className={`p-3 rounded-sm border text-xs transition-colors ${
+                      isExpanded
+                        ? "border-border bg-secondary/20"
+                        : "border-border/60 hover:bg-secondary/30 cursor-pointer"
+                    }`}
+                    onClick={() =>
+                      setExpandedRequestId(isExpanded ? null : r._id)
+                    }
                   >
+                    {/* Summary — always visible */}
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-foreground font-medium truncate">
@@ -1669,79 +1681,98 @@ export default function AdminDashboard() {
                           CPF {formatCpf(r.cpf)} · {r.phone}
                         </p>
                       </div>
-                      <Badge
-                        variant="outline"
-                        className={`text-[9px] font-medium px-1.5 py-0 border-none shrink-0 ${statusInfo.color}`}
-                      >
-                        {statusInfo.label}
-                      </Badge>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] font-medium px-1.5 py-0 border-none ${statusInfo.color}`}
+                        >
+                          {statusInfo.label}
+                        </Badge>
+                        <ChevronRight
+                          className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                            isExpanded ? "rotate-90" : ""
+                          }`}
+                        />
+                      </div>
                     </div>
 
-                    {addressParts.length > 0 && (
-                      <p className="text-muted-foreground mt-1 truncate">
-                        {addressParts.join(" · ")}
-                      </p>
-                    )}
-                    {r.email && (
-                      <p className="text-muted-foreground truncate">{r.email}</p>
-                    )}
-                    {r.desiredPlan && (
-                      <p className="text-muted-foreground">
-                        Plano: {r.desiredPlan}
-                      </p>
-                    )}
-                    {r.message && (
-                      <p className="text-muted-foreground mt-1 italic">
-                        &ldquo;{r.message}&rdquo;
-                      </p>
-                    )}
-                    {r.adminNote && (
-                      <p className="text-muted-foreground mt-1">
-                        Nota: {r.adminNote}
-                      </p>
-                    )}
+                    {/* Details — only visible when expanded */}
+                    {isExpanded && (
+                      <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
+                        {addressParts.length > 0 && (
+                          <p className="text-muted-foreground">
+                            {addressParts.join(", ")}
+                          </p>
+                        )}
+                        {r.zipCode && (
+                          <p className="text-muted-foreground">
+                            CEP: {r.zipCode}
+                          </p>
+                        )}
+                        {r.email && (
+                          <p className="text-muted-foreground">{r.email}</p>
+                        )}
+                        {r.desiredPlan && (
+                          <p className="text-muted-foreground">
+                            Plano desejado: {r.desiredPlan}
+                          </p>
+                        )}
+                        {r.message && (
+                          <p className="text-muted-foreground italic">
+                            &ldquo;{r.message}&rdquo;
+                          </p>
+                        )}
+                        {r.adminNote && (
+                          <p className="text-muted-foreground">
+                            Nota: {r.adminNote}
+                          </p>
+                        )}
 
-                    <div className="flex items-center justify-between mt-2">
-                      <p className="text-[10px] text-muted-foreground">
-                        {date.toLocaleDateString("pt-BR")} ·{" "}
-                        {date.toLocaleTimeString("pt-BR", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                      {r.status === "pending" && (
-                        <div className="flex gap-1.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-[10px] shrink-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20"
-                            onClick={() =>
-                              handleInstallRequestStatus(r._id, "approved")
-                            }
-                            disabled={processingRequest === r._id}
-                          >
-                            {processingRequest === r._id ? (
-                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                            ) : (
-                              <CheckCircle2 className="h-3 w-3 mr-1" />
-                            )}
-                            Aprovar
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-[10px] shrink-0 text-destructive hover:text-destructive/80"
-                            onClick={() =>
-                              handleInstallRequestStatus(r._id, "rejected")
-                            }
-                            disabled={processingRequest === r._id}
-                          >
-                            <XCircle className="h-3 w-3 mr-1" />
-                            Recusar
-                          </Button>
+                        <div className="flex items-center justify-between mt-2">
+                          <p className="text-[10px] text-muted-foreground">
+                            {date.toLocaleDateString("pt-BR")} ·{" "}
+                            {date.toLocaleTimeString("pt-BR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </p>
+                          {r.status === "pending" && (
+                            <div className="flex gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-[10px] shrink-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleInstallRequestStatus(r._id, "approved");
+                                }}
+                                disabled={processingRequest === r._id}
+                              >
+                                {processingRequest === r._id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                ) : (
+                                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                                )}
+                                Aprovar
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-[10px] shrink-0 text-destructive hover:text-destructive/80"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleInstallRequestStatus(r._id, "rejected");
+                                }}
+                                disabled={processingRequest === r._id}
+                              >
+                                <XCircle className="h-3 w-3 mr-1" />
+                                Recusar
+                              </Button>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
