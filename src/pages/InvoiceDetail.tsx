@@ -150,7 +150,15 @@ export default function InvoiceDetail() {
         blob = await res.blob();
       }
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
+      const win = window.open(url, "_blank");
+      if (!win || win.closed || typeof win.closed === "undefined") {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `fatura-${billing.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch {
       console.warn("[PDF] Não foi possível abrir o boleto.");

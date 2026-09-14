@@ -163,8 +163,20 @@ export default function InvoiceCard({
         if (!res.ok) throw new Error("PDF indisponível");
         blob = await res.blob();
       }
+      // Open the PDF: try window.open first (works when called synchronously
+      // within a click handler). If blocked (returns null after async await),
+      // fall back to <a download> which triggers a file download.
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
+      const win = window.open(url, "_blank");
+      if (!win || win.closed || typeof win.closed === "undefined") {
+        // Popup was blocked — fall back to download
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `fatura-${billing.id}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch {
       console.warn("[PDF] Não foi possível abrir o boleto.");

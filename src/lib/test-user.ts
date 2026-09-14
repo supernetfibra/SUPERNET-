@@ -303,46 +303,87 @@ export function generateSamplePdf(opts: {
   value: number;
   status: string;
 }): Blob {
-  const pdf = `%PDF-1.4
-1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
-2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
-3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj
-4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
-5 0 obj<</Length 420>>stream
-BT
-/F1 18 Tf
-72 720 Td
-(FATURA - TESTE) Tj
-/F1 12 Tf
-0 -30 Td
-(Competencia: ${opts.reference}) Tj
-0 -20 Td
-(Vencimento: ${opts.dueDay}) Tj
-0 -20 Td
-(Valor: R$ ${opts.value.toFixed(2)}) Tj
-0 -20 Td
-(Status: ${opts.status}) Tj
-0 -40 Td
-/F1 10 Tf
-(Este e um documento de teste gerado pela area do cliente.) Tj
-0 -15 Td
-(Para fins de demonstracao apenas.) Tj
-ET
-endstream
-endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000266 00000 n 
-0000000340 00000 n 
-trailer<</Size 6/Root 1 0 R>>
-startxref
-813
-%%EOF`;
-  return new Blob([pdf], { type: "application/pdf" });
+  // Build PDF properly with correct byte offsets and stream length.
+  // All offsets are computed dynamically so the PDF is always valid.
+  const lines = [
+    "%PDF-1.4",
+    "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+    "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
+    "3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj",
+    "4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj",
+  ];
+
+  const streamContent = [
+    "BT",
+    "/F1 18 Tf",
+    "72 720 Td",
+    "(FATURA - TESTE) Tj",
+    "/F1 12 Tf",
+    "0 -30 Td",
+    `(Competencia: ${opts.reference}) Tj`,
+    "0 -20 Td",
+    `(Vencimento: ${opts.dueDay}) Tj`,
+    "0 -20 Td",
+    `(Valor: R\$ ${opts.value.toFixed(2)}) Tj`,
+    "0 -20 Td",
+    `(Status: ${opts.status}) Tj`,
+    "0 -40 Td",
+    "/F1 10 Tf",
+    "(Este e um documento de teste gerado pela area do cliente.) Tj",
+    "0 -15 Td",
+    "(Para fins de demonstracao apenas.) Tj",
+    "ET",
+  ].join("\n");
+
+  // Object 5 (stream) — compute byte positions dynamically
+  const obj5Header = "5 0 obj";
+  const lengthValue = streamContent.length;
+  const beforeStream = `<</Length ${lengthValue}>>stream\n`;
+  // We need the byte offset of each object for the xref table
+  // Build the full document string first, then parse offsets
+  const bodyParts = [
+    ...lines,
+    `${obj5Header}<</Length ${lengthValue}>>stream`,
+    streamContent,
+    "endstream",
+    "endobj",
+  ];
+
+  const body = bodyParts.join("\n");
+  const bodyBytes = new TextEncoder().encode(body + "\n");
+
+  // Collect object byte offsets
+  const offsets: number[] = [];
+  const searchStr = body + "\n";
+  let pos = 0;
+  for (let objNum = 1; objNum <= 5; objNum++) {
+    const marker = `${objNum} 0 obj`;
+    const idx = searchStr.indexOf(marker, pos);
+    offsets.push(idx >= 0 ? idx : 0);
+    pos = idx + 1;
+  }
+
+  // xref table
+  const xrefStart = bodyBytes.length;
+  const xrefEntries = ["0000000000 65535 f "];
+  for (const off of offsets) {
+    xrefEntries.push(
+      `${String(off).padStart(10, "0")} 00000 n `
+    );
+  }
+
+  const trailer = [
+    "xref",
+    `0 ${offsets.length + 1}`,
+    ...xrefEntries,
+    `trailer<</Size ${offsets.length + 1}/Root 1 0 R>>`,
+    `startxref`,
+    `${xrefStart}`,
+    "%%EOF",
+  ].join("\n");
+
+  const fullPdf = new TextEncoder().encode(body + "\n" + trailer);
+  return new Blob([fullPdf], { type: "application/pdf" });
 }
 
 /**
