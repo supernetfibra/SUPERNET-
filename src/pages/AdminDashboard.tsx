@@ -438,7 +438,14 @@ export default function AdminDashboard() {
       );
       if (res.ok) {
         const data = await res.json();
-        setAuditLogs(data.logs || []);
+        // Map snake_case DB columns to camelCase frontend interface
+        const logs = (data.logs || []).map((l: Record<string, unknown>) => ({
+          ...l,
+          customerName: l.customer_name || l.customerName,
+          ipAddress: l.ip_address || l.ipAddress,
+          errorMessage: l.error_message || l.errorMessage,
+        }));
+        setAuditLogs(logs);
         setAuditSummary(data.summary || null);
       }
     } catch (err) {
@@ -1270,16 +1277,22 @@ export default function AdminDashboard() {
                         </Badge>
 
                         <div className="flex-1 min-w-0">
-                          {entry.customerName && (
-                            <span className="text-foreground font-medium truncate block">
-                              {entry.customerName}
-                            </span>
-                          )}
-                          {entry.cpf && (
-                            <span className="text-muted-foreground">
-                              CPF: ***{entry.cpf.slice(-3)}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {entry.customerName ? (
+                              <span className="text-foreground font-medium truncate">
+                                {entry.customerName}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">
+                                Cliente
+                              </span>
+                            )}
+                            {entry.cpf && (
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                CPF {formatCpf(entry.cpf)}
+                              </span>
+                            )}
+                          </div>
                           {entry.errorMessage && (
                             <span className="text-muted-foreground block truncate">
                               {entry.errorMessage}
@@ -1291,6 +1304,11 @@ export default function AdminDashboard() {
                               {typeof entry.metadata.value === "number"
                                 ? ` · ${formatValue(entry.metadata.value)}`
                                 : ""}
+                            </span>
+                          )}
+                          {entry.ipAddress && (
+                            <span className="text-[10px] text-muted-foreground font-mono block">
+                              IP {entry.ipAddress}
                             </span>
                           )}
                         </div>
@@ -1306,12 +1324,6 @@ export default function AdminDashboard() {
                             })}
                           </p>
                         </div>
-
-                        {entry.ipAddress && (
-                          <span className="text-[10px] text-muted-foreground font-mono hidden sm:block">
-                            {entry.ipAddress}
-                          </span>
-                        )}
                       </div>
                     );
                   })}
