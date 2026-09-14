@@ -1323,11 +1323,7 @@ export default function AdminDashboard() {
                               minute: "2-digit",
                             })}
                           </p>
-                          {entry.ipAddress && (
-                            <p className="text-[9px] text-muted-foreground font-mono mt-0.5">
-                              {entry.ipAddress}
-                            </p>
-                          )}
+
                         </div>
                       </div>
                     );
