@@ -51,6 +51,7 @@ import {
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
+import { apiUrl } from "@/lib/api-config";
 
 // ---------------------------------------------------------------------------
 // Token helper — reads from localStorage and appends as query param
@@ -111,7 +112,7 @@ function withAdminToken(url: string): string {
 }
 
 function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(url), { ...init, credentials: "include" });
+  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
 }
 
 // ---------------------------------------------------------------------------
