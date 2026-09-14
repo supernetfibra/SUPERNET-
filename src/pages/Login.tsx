@@ -332,11 +332,19 @@ export default function Login() {
 
           <p className="text-center text-xs text-muted-foreground mt-8">
             Ao acessar, você concorda com nossos{" "}
-            <button className="underline hover:text-foreground transition-colors">
+            <button
+              type="button"
+              onClick={() => navigate("/termos")}
+              className="underline hover:text-foreground transition-colors"
+            >
               Termos de Uso
             </button>{" "}
             e{" "}
-            <button className="underline hover:text-foreground transition-colors">
+            <button
+              type="button"
+              onClick={() => navigate("/privacidade")}
+              className="underline hover:text-foreground transition-colors"
+            >
               Política de Privacidade
             </button>
             .

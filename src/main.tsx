@@ -88,6 +88,8 @@ const Invoices = lazy(() => import("./pages/Invoices"));
 const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const TermsOfUse = lazy(() => import("./pages/TermsOfUse"));
+const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
@@ -146,6 +148,8 @@ createRoot(document.getElementById("root")!).render(
               {/* Public routes — lazy loaded */}
               <Route path="/" element={<Suspense fallback={<PageSpinner />}><Landing /></Suspense>} />
               <Route path="/login" element={<Suspense fallback={<PageSpinner />}><Login /></Suspense>} />
+              <Route path="/termos" element={<Suspense fallback={<PageSpinner />}><TermsOfUse /></Suspense>} />
+              <Route path="/privacidade" element={<Suspense fallback={<PageSpinner />}><PrivacyPolicy /></Suspense>} />
 
               {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
               <Route path="/admin" element={<Suspense fallback={<PageSpinner />}><AdminLogin /></Suspense>} />

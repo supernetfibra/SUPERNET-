@@ -694,10 +694,22 @@ export default function Landing() {
                     />
                     <span className="text-xs text-muted-foreground leading-relaxed">
                       Li e concordo com os{" "}
-                      <span className="text-foreground underline underline-offset-2">
+                      <button
+                        type="button"
+                        onClick={() => navigate("/termos")}
+                        className="text-foreground underline underline-offset-2 hover:text-foreground/80"
+                      >
                         termos de uso
-                      </span>{" "}
-                      e a política de privacidade do {providerName}.
+                      </button>{" "}
+                      e a{" "}
+                      <button
+                        type="button"
+                        onClick={() => navigate("/privacidade")}
+                        className="text-foreground underline underline-offset-2 hover:text-foreground/80"
+                      >
+                        política de privacidade
+                      </button>{" "}
+                      do {providerName}.
                     </span>
                   </label>
 
