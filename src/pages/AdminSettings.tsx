@@ -26,6 +26,8 @@ import {
   EyeOff,
   ExternalLink,
   XCircle,
+  Bell,
+  Send,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
@@ -139,6 +141,12 @@ export default function AdminSettings() {
     success: boolean;
     message: string;
   } | null>(null);
+
+  // ── Push notifications state ──
+  const [pushTitle, setPushTitle] = useState("");
+  const [pushBody, setPushBody] = useState("");
+  const [pushCpf, setPushCpf] = useState("");
+  const [pushSending, setPushSending] = useState(false);
 
   // ── Branding handlers ──
   const handleSaveBranding = async () => {
@@ -257,6 +265,47 @@ export default function AdminSettings() {
       });
     } finally {
       setTestingConnection(false);
+    }
+  };
+
+  // ── Push notification handler ──
+  const handleSendPush = async () => {
+    if (!pushTitle.trim() || !pushBody.trim()) {
+      toast.error("Preencha título e mensagem.");
+      return;
+    }
+    setPushSending(true);
+    try {
+      const res = await adminFetch("/api/admin/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: pushTitle,
+          body: pushBody,
+          cpf: pushCpf.trim() ? pushCpf : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        toast.error(data.error || "Erro ao enviar notificação.");
+        return;
+      }
+      if (data.total != null) {
+        toast.success("Notificação enviada", {
+          description: `${data.sent}/${data.total} dispositivos notificados.`,
+        });
+      } else {
+        toast.success("Notificação enviada", {
+          description: `${data.sent} dispositivo(s) notificado(s).`,
+        });
+      }
+      setPushTitle("");
+      setPushBody("");
+      setPushCpf("");
+    } catch {
+      toast.error("Erro ao enviar notificação.");
+    } finally {
+      setPushSending(false);
     }
   };
 
@@ -515,6 +564,70 @@ export default function AdminSettings() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Push Notifications ── */}
+      <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.1s_both]">
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-2">
+            <Bell className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">
+              Notificações Push
+            </CardTitle>
+          </div>
+          <CardDescription className="text-xs text-muted-foreground">
+            Envie para todos os inscritos ou para um CPF específico.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label className="text-xs font-medium text-muted-foreground">
+              Título
+            </Label>
+            <Input
+              placeholder="Ex: Nova fatura disponível"
+              value={pushTitle}
+              onChange={(e) => setPushTitle(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium text-muted-foreground">
+              Mensagem
+            </Label>
+            <Input
+              placeholder="Ex: Sua fatura de julho já está disponível."
+              value={pushBody}
+              onChange={(e) => setPushBody(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium text-muted-foreground">
+              CPF <span className="text-muted-foreground/50">(opcional)</span>
+            </Label>
+            <Input
+              placeholder="Vazio = todos os clientes inscritos"
+              value={pushCpf}
+              onChange={(e) => setPushCpf(e.target.value)}
+              className="h-9 text-xs font-mono"
+            />
+          </div>
+          <Button
+            variant="default"
+            size="sm"
+            className="w-full text-xs h-9"
+            onClick={handleSendPush}
+            disabled={pushSending || !pushTitle.trim() || !pushBody.trim()}
+          >
+            {pushSending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            {pushSending ? "Enviando..." : "Enviar notificação"}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
