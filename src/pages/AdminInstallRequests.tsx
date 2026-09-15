@@ -66,7 +66,7 @@ import { formatCpf } from "@/lib/cpf";
 // ---------------------------------------------------------------------------
 
 interface InstallRequest {
-  _id: string;
+  id: string;
   fullName: string;
   cpf: string;
   phone: string;
@@ -589,19 +589,19 @@ export default function AdminInstallRequests() {
             {filteredRequests.map((request) => {
               const statusConfig = STATUS_CONFIG[request.status] || STATUS_CONFIG.pending;
               const StatusIcon = statusConfig.icon;
-              const isExpanded = expandedId === request._id;
+              const isExpanded = expandedId === request.id;
               const address = buildAddress(request);
               const photos = getPhotos(request);
 
               return (
                 <Card
-                  key={request._id}
+                  key={request.id}
                   className={`border shadow-none transition-all ${
                     isExpanded
                       ? "border-border"
                       : "border-border/60 hover:border-border cursor-pointer"
                   }`}
-                  onClick={() => setExpandedId(isExpanded ? null : request._id)}
+                  onClick={() => setExpandedId(isExpanded ? null : request.id)}
                 >
                   <CardContent className="p-4">
                     {/* Header row — always visible */}
@@ -814,11 +814,11 @@ export default function AdminInstallRequests() {
                                 className="h-8 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleStatus(request._id, "approved");
+                                  handleStatus(request.id, "approved");
                                 }}
-                                disabled={processingId === request._id}
+                                disabled={processingId === request.id}
                               >
-                                {processingId === request._id ? (
+                                {processingId === request.id ? (
                                   <Loader2 className="h-3 w-3 animate-spin mr-1" />
                                 ) : (
                                   <CheckCircle2 className="h-3 w-3 mr-1" />
@@ -831,9 +831,9 @@ export default function AdminInstallRequests() {
                                 className="h-8 text-xs text-destructive hover:text-destructive/80 border-destructive/30"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleStatus(request._id, "rejected");
+                                  handleStatus(request.id, "rejected");
                                 }}
-                                disabled={processingId === request._id}
+                                disabled={processingId === request.id}
                               >
                                 <XCircle className="h-3 w-3 mr-1" />
                                 Recusar

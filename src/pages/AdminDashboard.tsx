@@ -1291,18 +1291,18 @@ export default function AdminDashboard() {
                   r.state,
                 ].filter(Boolean);
 
-                const isExpanded = expandedRequestId === r._id;
+                const isExpanded = expandedRequestId === r.id;
 
                 return (
                   <div
-                    key={r._id}
+                    key={r.id}
                     className={`p-3 rounded-sm border text-xs transition-colors ${
                       isExpanded
                         ? "border-border bg-secondary/20"
                         : "border-border/60 hover:bg-secondary/30 cursor-pointer"
                     }`}
                     onClick={() =>
-                      setExpandedRequestId(isExpanded ? null : r._id)
+                      setExpandedRequestId(isExpanded ? null : r.id)
                     }
                   >
                     {/* Summary — always visible */}
@@ -1408,11 +1408,11 @@ export default function AdminDashboard() {
                                 className="h-7 text-[10px] shrink-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleInstallRequestStatus(r._id, "approved");
+                                  handleInstallRequestStatus(r.id, "approved");
                                 }}
-                                disabled={processingRequest === r._id}
+                                disabled={processingRequest === r.id}
                               >
-                                {processingRequest === r._id ? (
+                                {processingRequest === r.id ? (
                                   <Loader2 className="h-3 w-3 animate-spin mr-1" />
                                 ) : (
                                   <CheckCircle2 className="h-3 w-3 mr-1" />
@@ -1425,9 +1425,9 @@ export default function AdminDashboard() {
                                 className="h-7 text-[10px] shrink-0 text-destructive hover:text-destructive/80"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleInstallRequestStatus(r._id, "rejected");
+                                  handleInstallRequestStatus(r.id, "rejected");
                                 }}
-                                disabled={processingRequest === r._id}
+                                disabled={processingRequest === r.id}
                               >
                                 <XCircle className="h-3 w-3 mr-1" />
                                 Recusar
