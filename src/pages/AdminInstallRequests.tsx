@@ -290,15 +290,29 @@ export default function AdminInstallRequests() {
 
   /**
    * Generate a printable HTML document and trigger the browser print dialog.
-   * Opens in a new window so the admin can print without leaving the page.
+   * Uses a hidden iframe to avoid popup blockers.
    */
   const printDocument = (title: string, html: string) => {
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-      toast.error("Bloqueado pelo popup. Permita popups para imprimir.");
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.left = "0";
+    iframe.style.top = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "none";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) {
+      toast.error("Erro ao preparar impressão.");
+      iframe.remove();
       return;
     }
-    printWindow.document.write(`
+
+    doc.open();
+    doc.write(`
       <!DOCTYPE html>
       <html lang="pt-BR">
       <head>
@@ -326,8 +340,14 @@ export default function AdminInstallRequests() {
       <body>${html}</body>
       </html>
     `);
-    printWindow.document.close();
-    setTimeout(() => printWindow.print(), 500);
+    doc.close();
+
+    // Wait for the iframe to render, then trigger print
+    setTimeout(() => {
+      iframe.contentWindow?.print();
+      // Remove iframe after print dialog closes
+      setTimeout(() => iframe.remove(), 1000);
+    }, 300);
   };
 
   /** Print Terms of Use + Privacy Policy acceptance */
