@@ -79,6 +79,7 @@ interface InstallRequest {
   state?: string;
   desiredPlan?: string;
   message?: string;
+  agreedToTerms?: boolean;
   status: "pending" | "approved" | "rejected";
   adminNote?: string;
   photoHouseFront?: string;
@@ -505,91 +506,124 @@ export default function AdminInstallRequests() {
                     {/* Expanded details */}
                     {isExpanded && (
                       <div className="mt-4 pt-4 border-t border-border/60 space-y-4">
-                        {/* Contact info */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-2">
+                        {/* All fields — always shown */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {/* Column 1: Personal data */}
+                          <div className="space-y-3">
                             <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               Dados pessoais
                             </h4>
-                            <div className="space-y-1.5 text-xs">
-                              <div className="flex items-center gap-2 text-muted-foreground">
-                                <Users className="h-3 w-3 shrink-0" />
-                                <span>{request.fullName}</span>
+                            <div className="space-y-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                <span className="text-muted-foreground w-16 shrink-0">Nome</span>
+                                <span className="text-foreground">{request.fullName || <span className="text-muted-foreground/50 italic">—</span>}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-muted-foreground">
+                              <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
-                                <span className="font-mono">CPF {formatCpf(request.cpf)}</span>
+                                <span className="text-muted-foreground w-16 shrink-0">CPF</span>
+                                <span className="text-foreground font-mono">{formatCpf(request.cpf) || <span className="text-muted-foreground/50 italic">—</span>}</span>
                               </div>
-                              <div className="flex items-center gap-2 text-muted-foreground">
-                                <Phone className="h-3 w-3 shrink-0" />
-                                <span>{request.phone}</span>
+                              <div className="flex items-center gap-2">
+                                <Phone className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                <span className="text-muted-foreground w-16 shrink-0">Telefone</span>
+                                <span className="text-foreground">{request.phone || <span className="text-muted-foreground/50 italic">—</span>}</span>
                               </div>
-                              {request.email && (
-                                <div className="flex items-center gap-2 text-muted-foreground">
-                                  <Mail className="h-3 w-3 shrink-0" />
-                                  <span>{request.email}</span>
-                                </div>
-                              )}
+                              <div className="flex items-center gap-2">
+                                <Mail className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                <span className="text-muted-foreground w-16 shrink-0">E-mail</span>
+                                <span className="text-foreground">{request.email || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                              </div>
                             </div>
                           </div>
 
-                          <div className="space-y-2">
+                          {/* Column 2: Address */}
+                          <div className="space-y-3">
                             <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                               Endereço
                             </h4>
-                            {address ? (
-                              <div className="space-y-1.5 text-xs text-muted-foreground">
-                                <div className="flex items-start gap-2">
-                                  <MapPin className="h-3 w-3 shrink-0 mt-0.5" />
-                                  <div>
-                                    <p>{address}</p>
-                                    {request.zipCode && (
-                                      <p className="text-[10px]">CEP: {request.zipCode}</p>
-                                    )}
-                                  </div>
-                                </div>
+                            <div className="space-y-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <MapPin className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                <span className="text-muted-foreground w-16 shrink-0">Rua</span>
+                                <span className="text-foreground">{request.street || <span className="text-muted-foreground/50 italic">Não informado</span>}{request.number ? `, ${request.number}` : ''}</span>
                               </div>
-                            ) : (
-                              <p className="text-xs text-muted-foreground italic">Não informado</p>
-                            )}
+                              <div className="flex items-center gap-2">
+                                <span className="h-3 w-3 shrink-0" />
+                                <span className="text-muted-foreground w-16 shrink-0">Bairro</span>
+                                <span className="text-foreground">{request.neighborhood || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="h-3 w-3 shrink-0" />
+                                <span className="text-muted-foreground w-16 shrink-0">Cidade</span>
+                                <span className="text-foreground">{request.city || <span className="text-muted-foreground/50 italic">Não informado</span>}{request.state ? `/${request.state}` : ''}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="h-3 w-3 shrink-0" />
+                                <span className="text-muted-foreground w-16 shrink-0">CEP</span>
+                                <span className="text-foreground font-mono">{request.zipCode || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="h-3 w-3 shrink-0" />
+                                <span className="text-muted-foreground w-16 shrink-0">Compl.</span>
+                                <span className="text-foreground">{request.complement || <span className="text-muted-foreground/50 italic">—</span>}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
 
-                            {request.desiredPlan && (
-                              <div className="mt-2">
-                                <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                                  Plano desejado
-                                </h4>
+                        {/* Full-width fields */}
+                        <div className="space-y-3">
+                          <div className="space-y-2 text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="text-muted-foreground w-[60px] sm:w-[68px] shrink-0 font-medium">Plano</span>
+                              {request.desiredPlan ? (
                                 <Badge variant="outline" className="text-[10px] font-medium border-border">
                                   {request.desiredPlan}
                                 </Badge>
-                              </div>
-                            )}
+                              ) : (
+                                <span className="text-muted-foreground/50 italic">Não informado</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-muted-foreground w-[60px] sm:w-[68px] shrink-0 font-medium">Termos</span>
+                              <span className="text-foreground">{request.agreedToTerms ? 'Aceitos' : <span className="text-red-500">Não aceitos</span>}</span>
+                            </div>
                           </div>
                         </div>
 
                         {/* Message */}
-                        {request.message && (
-                          <div className="space-y-1">
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                              <MessageSquare className="h-3 w-3" />
-                              Observação do cliente
-                            </h4>
-                            <p className="text-xs text-muted-foreground italic bg-secondary/30 rounded-sm p-3">
+                        <div className="space-y-1">
+                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3" />
+                            Observação do cliente
+                          </h4>
+                          {request.message ? (
+                            <p className="text-xs text-foreground italic bg-secondary/30 rounded-sm p-3">
                               &ldquo;{request.message}&rdquo;
                             </p>
-                          </div>
-                        )}
+                          ) : (
+                            <p className="text-xs text-muted-foreground/50 italic bg-secondary/30 rounded-sm p-3">
+                              Nenhuma observação informada
+                            </p>
+                          )}
+                        </div>
 
                         {/* Admin note */}
-                        {request.adminNote && (
-                          <div className="space-y-1">
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                              Nota do admin
-                            </h4>
-                            <p className="text-xs text-muted-foreground bg-secondary/30 rounded-sm p-3">
+                        <div className="space-y-1">
+                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Nota do admin
+                          </h4>
+                          {request.adminNote ? (
+                            <p className="text-xs text-foreground bg-secondary/30 rounded-sm p-3">
                               {request.adminNote}
                             </p>
-                          </div>
-                        )}
+                          ) : (
+                            <p className="text-xs text-muted-foreground/50 italic bg-secondary/30 rounded-sm p-3">
+                              Nenhuma nota registrada
+                            </p>
+                          )}
+                        </div>
 
                         {/* Photos */}
                         {photos.length > 0 && (
