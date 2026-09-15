@@ -33,6 +33,7 @@ import { useTheme } from "@/lib/theme-provider";
 const adminNavigation = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Solicitações", href: "/admin/install-requests", icon: Home },
+  { name: "Configurações", href: "/admin/settings", icon: Settings },
 ];
 
 export default function AdminLayout() {
