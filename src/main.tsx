@@ -84,6 +84,7 @@ registerServiceWorker();
 const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
+const AdminLayout = lazy(() => import("./pages/AdminLayout"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const AdminInstallRequests = lazy(() => import("./pages/AdminInstallRequests"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
@@ -158,8 +159,16 @@ createRoot(document.getElementById("root")!).render(
 
               {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
               <Route path="/admin" element={<Suspense fallback={<PageSpinner />}><AdminLogin /></Suspense>} />
-              <Route path="/admin/dashboard" element={<Suspense fallback={<PageSpinner />}><AdminDashboard /></Suspense>} />
-              <Route path="/admin/install-requests" element={<Suspense fallback={<PageSpinner />}><AdminInstallRequests /></Suspense>} />
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <Suspense fallback={<AppLayoutSkeleton />}><AdminLayout /></Suspense>
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="/admin/dashboard" element={<Suspense fallback={<DashboardSkeleton />}><AdminDashboard /></Suspense>} />
+                <Route path="/admin/install-requests" element={<Suspense fallback={<InvoicesSkeleton />}><AdminInstallRequests /></Suspense>} />
+              </Route>
 
               {/* Protected routes — lazy loaded */}
               <Route

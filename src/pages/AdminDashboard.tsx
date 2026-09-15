@@ -888,26 +888,15 @@ export default function AdminDashboard() {
   // Main dashboard
   // ---------------------------------------------------------------------------
   return (
-    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-12 px-4 animate-[fadeIn_0.3s_ease-out]">
+    <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-medium tracking-tight text-foreground">
-            Administração
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Configure a integração com a API MikWeb e acompanhe o histórico de acessos.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-xs h-8 text-muted-foreground"
-          onClick={handleLogout}
-        >
-          <LogOut className="h-3.5 w-3.5 mr-1.5" />
-          Sair
-        </Button>
+      <div>
+        <h1 className="text-xl font-medium tracking-tight text-foreground">
+          Administração
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Configure a integração com a API MikWeb e acompanhe o histórico de acessos.
+        </p>
       </div>
 
       {/* Summary Cards */}

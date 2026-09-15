@@ -35,7 +35,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   Home,
-  ArrowLeft,
   RefreshCw,
   Loader2,
   CheckCircle2,
@@ -288,39 +287,33 @@ export default function AdminInstallRequests() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
-      <div className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
-          <button
-            onClick={() => navigate("/admin/dashboard")}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <div className="flex items-center gap-2 flex-1">
-            <Home className="h-4 w-4 text-muted-foreground" />
-            <h1 className="text-sm font-medium">Solicitações de Instalação</h1>
-            {summary && summary.pending > 0 && (
-              <Badge
-                variant="outline"
-                className="text-[10px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400"
-              >
-                {summary.pending} pendente{summary.pending === 1 ? "" : "s"}
-              </Badge>
-            )}
-          </div>
-          <button
-            onClick={loadRequests}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Home className="h-4 w-4 text-muted-foreground" />
+          <h1 className="text-xl font-medium tracking-tight text-foreground">
+            Solicitações de Instalação
+          </h1>
+          {summary && summary.pending > 0 && (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400"
+            >
+              {summary.pending} pendente{summary.pending === 1 ? "" : "s"}
+            </Badge>
+          )}
         </div>
+        <button
+          onClick={loadRequests}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          disabled={loading}
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div className="space-y-6">
         {/* Statistics */}
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-[slideUp_0.3s_ease-out]">
