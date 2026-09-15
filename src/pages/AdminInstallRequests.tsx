@@ -289,10 +289,10 @@ export default function AdminInstallRequests() {
   // ---------------------------------------------------------------------------
 
   /**
-   * Generate a printable HTML document and trigger the browser print dialog.
+   * Generate a printable HTML document and trigger print or PDF download.
    * Uses a hidden iframe to avoid popup blockers.
    */
-  const printDocument = (title: string, html: string) => {
+  const printDocument = (title: string, html: string, mode: "print" | "pdf") => {
     const iframe = document.createElement("iframe");
     iframe.style.position = "fixed";
     iframe.style.left = "0";
@@ -306,13 +306,12 @@ export default function AdminInstallRequests() {
 
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
     if (!doc) {
-      toast.error("Erro ao preparar impressão.");
+      toast.error("Erro ao preparar documento.");
       iframe.remove();
       return;
     }
 
-    doc.open();
-    doc.write(`
+    const fullHtml = `
       <!DOCTYPE html>
       <html lang="pt-BR">
       <head>
@@ -339,19 +338,40 @@ export default function AdminInstallRequests() {
       </head>
       <body>${html}</body>
       </html>
-    `);
+    `;
+
+    doc.open();
+    doc.write(fullHtml);
     doc.close();
 
-    // Wait for the iframe to render, then trigger print
-    setTimeout(() => {
-      iframe.contentWindow?.print();
-      // Remove iframe after print dialog closes
-      setTimeout(() => iframe.remove(), 1000);
-    }, 300);
+    if (mode === "pdf") {
+      // PDF download: open in new tab and let user save as PDF via Ctrl+S or browser menu
+      const printWindow = window.open("", "_blank");
+      if (printWindow) {
+        printWindow.document.write(fullHtml);
+        printWindow.document.close();
+        printWindow.document.title = title;
+        // Auto-trigger print dialog so user can choose "Save as PDF"
+        setTimeout(() => printWindow.print(), 500);
+      } else {
+        // Popup blocked — fall back to iframe approach
+        setTimeout(() => {
+          iframe.contentWindow?.print();
+          setTimeout(() => iframe.remove(), 1000);
+        }, 300);
+      }
+      iframe.remove();
+    } else {
+      // Direct print: use hidden iframe
+      setTimeout(() => {
+        iframe.contentWindow?.print();
+        setTimeout(() => iframe.remove(), 1000);
+      }, 300);
+    }
   };
 
   /** Print Terms of Use + Privacy Policy acceptance */
-  const printTerms = (r: InstallRequest) => {
+  const printTerms = (r: InstallRequest, mode: "print" | "pdf" = "print") => {
     const html = `
       <div class="header">
         <h1>Termos de Uso e Política de Privacidade</h1>
@@ -392,11 +412,11 @@ export default function AdminInstallRequests() {
         Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} — Sistema de Gestão de Clientes
       </div>
     `;
-    printDocument(`Termos de Aceite — ${r.fullName}`, html);
+    printDocument(`Termos de Aceite — ${r.fullName}`, html, mode);
   };
 
   /** Print client registration/installation request */
-  const printRegistration = (r: InstallRequest) => {
+  const printRegistration = (r: InstallRequest, mode: "print" | "pdf" = "print") => {
     const address = buildAddress(r);
     const html = `
       <div class="header">
@@ -442,7 +462,7 @@ export default function AdminInstallRequests() {
         Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} — Sistema de Gestão de Clientes
       </div>
     `;
-    printDocument(`Cadastro — ${r.fullName}`, html);
+    printDocument(`Cadastro — ${r.fullName}`, html, mode);
   };
 
   // ---------------------------------------------------------------------------
@@ -876,7 +896,7 @@ export default function AdminInstallRequests() {
                                     className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      printTerms(request);
+                                      printTerms(request, "print");
                                     }}
                                   >
                                     <Printer className="h-3 w-3 mr-1" />
@@ -888,11 +908,35 @@ export default function AdminInstallRequests() {
                                     className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      printRegistration(request);
+                                      printTerms(request, "pdf");
+                                    }}
+                                  >
+                                    <Download className="h-3 w-3 mr-1" />
+                                    PDF
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      printRegistration(request, "print");
                                     }}
                                   >
                                     <Printer className="h-3 w-3 mr-1" />
                                     Cadastro
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      printRegistration(request, "pdf");
+                                    }}
+                                  >
+                                    <Download className="h-3 w-3 mr-1" />
+                                    Cad. PDF
                                   </Button>
                                 </div>
                               )}
