@@ -39,11 +39,13 @@ import {
 } from "@/components/ui/dialog";
 import TermsOfUseContent from "@/components/terms-content";
 import PrivacyContent from "@/components/privacy-content";
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { submitInstallRequest } from "@/lib/install-request";
+import { maskCpf, maskPhone, maskCep } from "@/lib/form-masks";
+import { lookupCep } from "@/lib/cep-lookup";
 
 const BRAZILIAN_STATES = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT",
@@ -429,7 +431,10 @@ export default function Landing() {
                         inputMode="numeric"
                         placeholder="000.000.000-00"
                         value={form.cpf}
-                        onChange={update("cpf")}
+                        onChange={(e) => {
+                          const masked = maskCpf(e.target.value);
+                          setForm((f) => ({ ...f, cpf: masked.value }));
+                        }}
                         className="h-10 text-sm font-mono"
                         maxLength={14}
                         autoComplete="off"
@@ -448,7 +453,10 @@ export default function Landing() {
                         inputMode="tel"
                         placeholder="(00) 00000-0000"
                         value={form.phone}
-                        onChange={update("phone")}
+                        onChange={(e) => {
+                          const masked = maskPhone(e.target.value);
+                          setForm((f) => ({ ...f, phone: masked.value }));
+                        }}
                         className="h-10 text-sm font-mono"
                         maxLength={15}
                         autoComplete="tel"
@@ -488,7 +496,25 @@ export default function Landing() {
                         inputMode="numeric"
                         placeholder="00000-000"
                         value={form.zipCode}
-                        onChange={update("zipCode")}
+                        onChange={(e) => {
+                          const masked = maskCep(e.target.value);
+                          setForm((f) => ({ ...f, zipCode: masked.value }));
+                          // Auto-fill address when CEP is complete (8 digits)
+                          const digits = masked.value.replace(/\D/g, "");
+                          if (digits.length === 8) {
+                            lookupCep(digits).then((result) => {
+                              if (result) {
+                                setForm((f) => ({
+                                  ...f,
+                                  street: result.street || f.street,
+                                  neighborhood: result.neighborhood || f.neighborhood,
+                                  city: result.city || f.city,
+                                  state: result.state || f.state,
+                                }));
+                              }
+                            });
+                          }
+                        }}
                         className="h-10 text-sm font-mono"
                         maxLength={9}
                       />

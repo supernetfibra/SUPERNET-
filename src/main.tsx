@@ -28,6 +28,9 @@ import { BillingProvider } from "@/lib/billing-context";
 // Theme provider
 import { ThemeProvider } from "@/lib/theme-provider";
 
+// Error boundary for graceful crash handling
+import { ErrorBoundary } from "@/components/error-boundary";
+
 // Update notification (detects new deploys)
 import { UpdateNotification } from "@/components/update-notification";
 
@@ -144,6 +147,7 @@ createRoot(document.getElementById("root")!).render(
           <UpdateNotification />
           <BrowserRouter>
             <RouteSyncer />
+            <ErrorBoundary>
             <Routes>
               {/* Public routes — lazy loaded */}
               <Route path="/" element={<Suspense fallback={<PageSpinner />}><Landing /></Suspense>} />
@@ -172,6 +176,7 @@ createRoot(document.getElementById("root")!).render(
               {/* 404 */}
               <Route path="*" element={<Suspense fallback={<PageSpinner />}><NotFound /></Suspense>} />
             </Routes>
+            </ErrorBoundary>
           </BrowserRouter>
           <Toaster />
           </BillingProvider>

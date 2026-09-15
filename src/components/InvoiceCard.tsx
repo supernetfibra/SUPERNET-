@@ -12,6 +12,7 @@
  * or omit them to use internal per-card copy state.
  */
 
+import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,7 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
 import { statusConfig } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
+import { toast } from "sonner";
 import { authFetch } from "@/lib/api-config";
 import { isTestUser, generateSamplePdf } from "@/lib/test-user";
 import type { BillingSummary } from "@/hooks/use-billings";
@@ -115,7 +117,7 @@ function getUrgencyStyles(type: string) {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function InvoiceCard({
+function InvoiceCardInner({
   billing,
   variant = "default",
   onClick,
@@ -138,10 +140,12 @@ export default function InvoiceCard({
   const copyBarcode = () => {
     handleCopy(billing.linha_digitavel || "", `line-${billing.id}`);
     logCustomerAction("barcode_copied", logCtx);
+    toast.success("Linha digitável copiada!", { duration: 2000 });
   };
   const copyPix = () => {
     handleCopy(billing.pix_copiaecola || "", `pix-${billing.id}`);
     logCustomerAction("pix_copied", logCtx);
+    toast.success("Código PIX copiado!", { duration: 2000 });
   };
   const openPdf = () => {
     openPdfProxy();
@@ -551,3 +555,21 @@ export default function InvoiceCard({
     </Card>
   );
 }
+
+/**
+ * Memoized InvoiceCard — prevents re-renders when billing data hasn't changed.
+ * Compares by billing id, status, valor, and variant (the fields that affect display).
+ */
+export default memo(InvoiceCardInner, (prev, next) => {
+  return (
+    prev.billing.id === next.billing.id &&
+    prev.billing.status === next.billing.status &&
+    prev.billing.valor === next.billing.valor &&
+    prev.billing.linha_digitavel === next.billing.linha_digitavel &&
+    prev.billing.pix_copiaecola === next.billing.pix_copiaecola &&
+    prev.variant === next.variant &&
+    prev.venceText === next.venceText &&
+    prev.currentDias === next.currentDias &&
+    prev.copiedId === next.copiedId
+  );
+});

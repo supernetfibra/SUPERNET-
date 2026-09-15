@@ -5,6 +5,7 @@
  */
 
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   FileText,
   CheckCircle2,
@@ -14,6 +15,8 @@ import {
   RefreshCw,
   AlertTriangle,
   CalendarDays,
+  Search,
+  X,
 } from "lucide-react";
 import { useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router";
@@ -43,9 +46,36 @@ export default function Invoices() {
     PullIndicator,
   } = usePullToRefresh(isLoading, refetch);
 
+  // Search and filter state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pendente" | "vencido" | "pago">("all");
+
+  // Filter billings based on search and status
+  const filteredBillings = useMemo(() => {
+    let result = billings;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter((b: BillingSummary) => {
+        const competencia = (b.competencia || "").toLowerCase();
+        const vencimento = (b.vencimento || "").toLowerCase();
+        const valor = b.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }).toLowerCase();
+        return competencia.includes(q) || vencimento.includes(q) || valor.includes(q);
+      });
+    }
+
+    if (statusFilter !== "all") {
+      result = result.filter((b: BillingSummary) => b.status === statusFilter);
+    }
+
+    return result;
+  }, [billings, searchQuery, statusFilter]);
+
+  const hasActiveFilter = searchQuery.trim() !== "" || statusFilter !== "all";
+
   // Separate unpaid and paid invoices
   const { unpaid, paid, currentBilling } = useMemo(() => {
-    const allUnpaid = billings
+    const allUnpaid = filteredBillings
       .filter((b: BillingSummary) => b.status !== "pago" && b.status !== "cancelado")
       .sort((a: BillingSummary, b: BillingSummary) => {
         // Priority 1: overdue invoices always come before pending
@@ -65,7 +95,7 @@ export default function Invoices() {
         return diasA - diasB;
       });
 
-    const allPaid = billings
+    const allPaid = filteredBillings
       .filter((b: BillingSummary) => b.status === "pago")
       .sort((a: BillingSummary, b: BillingSummary) => {
         // Sort by due date descending (most recent paid first) — proper Date comparison
@@ -206,6 +236,61 @@ export default function Invoices() {
         </p>
       </div>
 
+      {/* Search and filter — only when data is loaded */}
+      {!isLoading && billings.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-2 animate-[slideUp_0.3s_ease-out]">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Buscar por referência, data ou valor..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 text-xs pl-9 pr-8"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <div className="flex gap-1">
+            {(["all", "pendente", "vencido", "pago"] as const).map((status) => (
+              <button
+                key={status}
+                onClick={() => setStatusFilter(status)}
+                className={`px-3 h-9 rounded-md text-[10px] font-medium uppercase tracking-wider transition-all ${
+                  statusFilter === status
+                    ? status === "all"
+                      ? "bg-foreground text-background"
+                      : status === "vencido"
+                      ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                      : status === "pendente"
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+              >
+                {status === "all" ? "Todas" : status === "pendente" ? "Pendente" : status === "vencido" ? "Vencida" : "Paga"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Active filter indicator */}
+      {hasActiveFilter && !isLoading && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground animate-[fadeIn_0.2s_ease-out]">
+          <span>{filteredBillings.length} resultado{filteredBillings.length !== 1 ? "s" : ""}</span>
+          <button onClick={() => { setSearchQuery(""); setStatusFilter("all"); }} className="text-foreground hover:underline">
+            Limpar filtros
+          </button>
+        </div>
+      )}
+
       {/* Offline/Cached indicator */}
       {!isLoading && isCached && (
         <div className="animate-[slideUp_0.3s_ease-out] flex items-center gap-2 px-4 py-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/10 text-xs text-amber-700 dark:text-amber-300">
@@ -265,6 +350,17 @@ export default function Invoices() {
         <div className="text-center py-16">
           <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">Nenhuma fatura encontrada.</p>
+        </div>
+      ) : hasActiveFilter && filteredBillings.length === 0 ? (
+        <div className="text-center py-16">
+          <Search className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground">Nenhuma fatura corresponde aos filtros.</p>
+          <button
+            onClick={() => { setSearchQuery(""); setStatusFilter("all"); }}
+            className="text-xs text-foreground hover:underline mt-2"
+          >
+            Limpar filtros
+          </button>
         </div>
       ) : (
         <>

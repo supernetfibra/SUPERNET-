@@ -6,7 +6,7 @@
  * component that renders the animated pull-down indicator.
  */
 
-import { useRef, useCallback, useState, useEffect, type ReactNode } from "react";
+import React, { useRef, useCallback, useState, useEffect, memo, type ReactNode } from "react";
 import { ArrowDown, RefreshCw } from "lucide-react";
 
 interface UsePullToRefreshReturn {
@@ -20,7 +20,7 @@ interface UsePullToRefreshReturn {
   pullDistance: number;
   isRefreshing: boolean;
   /** Render the pull indicator element at the top of the container */
-  PullIndicator: () => ReactNode;
+  PullIndicator: React.ComponentType;
 }
 
 /**
@@ -80,7 +80,10 @@ export function usePullToRefresh(
     }
   }, [pullDistance, isRefreshing, onRefresh]);
 
-  function PullIndicator() {
+  // Memoized indicator component — doesn't create a new component type on
+  // every render (the previous inline function declaration caused unnecessary
+  // reconciliation work in React).
+  const PullIndicator = memo(function PullIndicator() {
     return (
       <div
         className="absolute left-0 right-0 flex items-center justify-center overflow-hidden transition-all duration-200 ease-out z-10"
@@ -113,7 +116,7 @@ export function usePullToRefresh(
         </div>
       </div>
     );
-  }
+  });
 
   return {
     pullContainerProps: {

@@ -8,13 +8,20 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
+  CardHeader,
+  CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Calendar,
   AlertTriangle,
   WifiOff,
   RefreshCw,
   X,
+  CreditCard,
+  CheckCircle2,
+  Clock,
+  TrendingUp,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
@@ -316,6 +323,106 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Payment Summary Cards */}
+      {!isLoading && billings.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-[slideUp_0.3s_ease-out_0.1s_both]">
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">
+                    {overdueBillings.length}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Vencida{overdueBillings.length !== 1 ? "s" : ""}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                  <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">
+                    {pendingBillings.length}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Pendente{pendingBillings.length !== 1 ? "s" : ""}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">
+                    {billings.filter((b: BillingSummary) => b.status === "pago").length}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Paga{billings.filter((b: BillingSummary) => b.status === "pago").length !== 1 ? "s" : ""}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border shadow-none">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-9 w-9 rounded-full bg-secondary flex items-center justify-center shrink-0">
+                  <TrendingUp className="h-4 w-4 text-foreground" />
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-foreground">
+                    {activeBillings.reduce((s: number, b: BillingSummary) => s + b.valor, 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Em aberto</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Quick Actions */}
+      {!isLoading && billings.length > 0 && (
+        <div className="animate-[slideUp_0.3s_ease-out_0.15s_both]">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-px flex-1 bg-border/30" />
+            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
+              Ações rápidas
+            </span>
+            <div className="h-px flex-1 bg-border/30" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              variant="outline"
+              className="h-auto py-4 flex-col gap-2 text-xs"
+              onClick={() => navigate("/faturas")}
+            >
+              <CreditCard className="h-5 w-5 text-muted-foreground" />
+              <span>Ver todas as faturas</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-auto py-4 flex-col gap-2 text-xs"
+              onClick={() => navigate("/perfil")}
+            >
+              <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
+              <span>Meu perfil</span>
+            </Button>
+          </div>
         </div>
       )}
     </div>

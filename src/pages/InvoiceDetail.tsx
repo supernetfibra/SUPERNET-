@@ -30,6 +30,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusConfig } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
+import { toast } from "sonner";
 import { authFetch } from "@/lib/api-config";
 import { isTestUser, generateSamplePdf } from "@/lib/test-user";
 
@@ -122,10 +123,12 @@ export default function InvoiceDetail() {
   const copyBarcode = () => {
     handleCopy(billing.linha_digitavel!, "linha");
     logCustomerAction("barcode_copied", logCtx);
+    toast.success("Linha digitável copiada!", { duration: 2000 });
   };
   const copyPix = () => {
     handleCopy(billing.pix_copiaecola!, "pix");
     logCustomerAction("pix_copied", logCtx);
+    toast.success("Código PIX copiado!", { duration: 2000 });
   };
   const copyAll = () => {
     handleCopy(billing.linha_digitavel || billing.pix_copiaecola || "", "all");
@@ -133,6 +136,7 @@ export default function InvoiceDetail() {
       billing.linha_digitavel ? "barcode_copied" : "pix_copied",
       logCtx
     );
+    toast.success("Código copiado!", { duration: 2000 });
   };
   const openPdf = async () => {
     try {
