@@ -48,6 +48,7 @@ import {
   Phone,
   Mail,
   MapPin,
+  Printer,
   Calendar,
   MessageSquare,
   Image,
@@ -281,6 +282,147 @@ export default function AdminInstallRequests() {
     if (r.photoIdFront) photos.push({ url: r.photoIdFront, label: "Identidade (frente)" });
     if (r.photoIdBack) photos.push({ url: r.photoIdBack, label: "Identidade (verso)" });
     return photos;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Print helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Generate a printable HTML document and trigger the browser print dialog.
+   * Opens in a new window so the admin can print without leaving the page.
+   */
+  const printDocument = (title: string, html: string) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Bloqueado pelo popup. Permita popups para imprimir.");
+      return;
+    }
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <title>${title}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1a1a1a; line-height: 1.5; padding: 20mm; }
+          h1 { font-size: 16pt; font-weight: 600; margin-bottom: 8px; text-align: center; }
+          h2 { font-size: 12pt; font-weight: 600; margin: 16px 0 8px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+          .header { text-align: center; margin-bottom: 24px; }
+          .header p { font-size: 10pt; color: #666; }
+          .field { margin: 4px 0; }
+          .field-label { font-weight: 600; display: inline-block; min-width: 120px; }
+          .field-value { color: #333; }
+          .empty { color: #999; font-style: italic; }
+          .section { margin-bottom: 16px; }
+          .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+          .footer { margin-top: 40px; border-top: 1px solid #ccc; padding-top: 16px; font-size: 9pt; color: #666; text-align: center; }
+          .signature { margin-top: 60px; display: flex; justify-content: space-between; }
+          .signature-line { width: 200px; border-top: 1px solid #333; text-align: center; padding-top: 4px; font-size: 9pt; }
+          @media print { body { padding: 10mm; } }
+        </style>
+      </head>
+      <body>${html}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    setTimeout(() => printWindow.print(), 500);
+  };
+
+  /** Print Terms of Use + Privacy Policy acceptance */
+  const printTerms = (r: InstallRequest) => {
+    const html = `
+      <div class="header">
+        <h1>Termos de Uso e Política de Privacidade</h1>
+        <p>Comprovante de Aceite — ${r.fullName}</p>
+      </div>
+
+      <div class="section">
+        <div class="field"><span class="field-label">Cliente:</span> <span class="field-value">${r.fullName}</span></div>
+        <div class="field"><span class="field-label">CPF:</span> <span class="field-value">${r.cpf}</span></div>
+        <div class="field"><span class="field-label">Data da solicitação:</span> <span class="field-value">${formatDate(r.createdAt)} às ${formatTime(r.createdAt)}</span></div>
+        <div class="field"><span class="field-label">Aceite dos termos:</span> <span class="field-value">${r.agreedToTerms ? 'SIM — O cliente aceitou os Termos de Uso e a Política de Privacidade' : 'NÃO — O cliente NÃO aceitou os termos'}</span></div>
+      </div>
+
+      <div class="section">
+        <h2>Declaração</h2>
+        <p style="text-align: justify; margin-bottom: 12px;">
+          Declaro que li e compreendi os <strong>Termos de Uso</strong> e a <strong>Política de Privacidade</strong> do serviço de provedoria de internet, incluindo:
+        </p>
+        <ul style="margin-left: 20px; margin-bottom: 12px;">
+          <li>As condições de contratação e vigência do serviço;</li>
+          <li>As obrigações do prestador e do cliente conforme regulamentação da ANATEL;</li>
+          <li>As regras de faturamento, pagamento e rescisão;</li>
+          <li>A coleta, uso e proteção dos meus dados pessoais conforme a LGPD (Lei nº 13.709/2018);</li>
+          <li>Os direitos do titular dos dados, incluindo acesso, correção e exclusão;</li>
+          <li>O uso de notificações push para lembretes de faturas.</li>
+        </ul>
+        <p style="text-align: justify;">
+          Estou ciente de que meus dados pessoais (nome, CPF, endereço, telefone, e-mail e fotografias) serão tratados conforme descrito na Política de Privacidade, e que posso exercer meus direitos a qualquer momento através dos canais de atendimento, incluindo o Disque 1331 da ANATEL.
+        </p>
+      </div>
+
+      <div class="signature">
+        <div class="signature-line">Assinatura do Cliente</div>
+        <div class="signature-line">Assinatura do Representante</div>
+      </div>
+
+      <div class="footer">
+        Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} — Sistema de Gestão de Clientes
+      </div>
+    `;
+    printDocument(`Termos de Aceite — ${r.fullName}`, html);
+  };
+
+  /** Print client registration/installation request */
+  const printRegistration = (r: InstallRequest) => {
+    const address = buildAddress(r);
+    const html = `
+      <div class="header">
+        <h1>Cadastro de Cliente — Solicitação de Instalação</h1>
+        <p>${r.fullName}</p>
+      </div>
+
+      <div class="section">
+        <h2>Dados Pessoais</h2>
+        <div class="grid">
+          <div class="field"><span class="field-label">Nome completo:</span> <span class="field-value">${r.fullName || '<span class="empty">—</span>'}</span></div>
+          <div class="field"><span class="field-label">CPF:</span> <span class="field-value">${r.cpf || '<span class="empty">—</span>'}</span></div>
+          <div class="field"><span class="field-label">Telefone:</span> <span class="field-value">${r.phone || '<span class="empty">—</span>'}</span></div>
+          <div class="field"><span class="field-label">E-mail:</span> <span class="field-value">${r.email || '<span class="empty">Não informado</span>'}</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Endereço</h2>
+        <div class="grid">
+          <div class="field"><span class="field-label">Rua / Avenida:</span> <span class="field-value">${r.street || '<span class="empty">Não informado</span>'}${r.number ? ', ' + r.number : ''}</span></div>
+          <div class="field"><span class="field-label">Complemento:</span> <span class="field-value">${r.complement || '<span class="empty">—</span>'}</span></div>
+          <div class="field"><span class="field-label">Bairro:</span> <span class="field-value">${r.neighborhood || '<span class="empty">Não informado</span>'}</span></div>
+          <div class="field"><span class="field-label">Cidade/UF:</span> <span class="field-value">${r.city || '<span class="empty">Não informado</span>'}${r.state ? '/' + r.state : ''}</span></div>
+          <div class="field"><span class="field-label">CEP:</span> <span class="field-value">${r.zipCode || '<span class="empty">Não informado</span>'}</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Solicitação</h2>
+        <div class="field"><span class="field-label">Plano desejado:</span> <span class="field-value">${r.desiredPlan || '<span class="empty">Não informado</span>'}</span></div>
+        <div class="field"><span class="field-label">Observação:</span> <span class="field-value">${r.message || '<span class="empty">Nenhuma observação</span>'}</span></div>
+        <div class="field"><span class="field-label">Data da solicitação:</span> <span class="field-value">${formatDate(r.createdAt)} às ${formatTime(r.createdAt)}</span></div>
+        <div class="field"><span class="field-label">Status:</span> <span class="field-value">${r.status === 'approved' ? 'APROVADA' : r.status === 'rejected' ? 'RECUSADA' : 'PENDENTE'}</span></div>
+      </div>
+
+      <div class="signature">
+        <div class="signature-line">Assinatura do Cliente</div>
+        <div class="signature-line">Assinatura do Técnico</div>
+      </div>
+
+      <div class="footer">
+        Documento gerado em ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')} — Sistema de Gestão de Clientes
+      </div>
+    `;
+    printDocument(`Cadastro — ${r.fullName}`, html);
   };
 
   // ---------------------------------------------------------------------------
@@ -699,12 +841,42 @@ export default function AdminInstallRequests() {
                             </div>
                           )}
                           {request.status !== "pending" && (
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig.color}`}
-                            >
-                              {statusConfig.label}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig.color}`}
+                              >
+                                {statusConfig.label}
+                              </Badge>
+                              {request.status === "approved" && (
+                                <div className="flex gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      printTerms(request);
+                                    }}
+                                  >
+                                    <Printer className="h-3 w-3 mr-1" />
+                                    Termos
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      printRegistration(request);
+                                    }}
+                                  >
+                                    <Printer className="h-3 w-3 mr-1" />
+                                    Cadastro
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
