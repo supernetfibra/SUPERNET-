@@ -1577,6 +1577,12 @@ export default function AdminDashboard() {
               <CardTitle className="text-sm font-medium">
                 Solicitações de Instalação
               </CardTitle>
+              <button
+                onClick={() => navigate("/admin/install-requests")}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
+              >
+                Ver todas
+              </button>
               {installSummary && installSummary.pending > 0 && (
                 <Badge
                   variant="outline"

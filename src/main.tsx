@@ -85,6 +85,7 @@ const Landing = lazy(() => import("./pages/Landing"));
 const Login = lazy(() => import("./pages/Login"));
 const AdminLogin = lazy(() => import("./pages/AdminLogin"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
+const AdminInstallRequests = lazy(() => import("./pages/AdminInstallRequests"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Invoices = lazy(() => import("./pages/Invoices"));
@@ -158,6 +159,7 @@ createRoot(document.getElementById("root")!).render(
               {/* Admin routes — now lazy-loaded (reduces initial bundle) */}
               <Route path="/admin" element={<Suspense fallback={<PageSpinner />}><AdminLogin /></Suspense>} />
               <Route path="/admin/dashboard" element={<Suspense fallback={<PageSpinner />}><AdminDashboard /></Suspense>} />
+              <Route path="/admin/install-requests" element={<Suspense fallback={<PageSpinner />}><AdminInstallRequests /></Suspense>} />
 
               {/* Protected routes — lazy loaded */}
               <Route
