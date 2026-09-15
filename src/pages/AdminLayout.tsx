@@ -51,7 +51,7 @@ export default function AdminLayout() {
   const isActive = (href: string) => location.pathname === href;
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="h-screen flex flex-col md:flex-row bg-background overflow-hidden">
       {/* ── Desktop sidebar (hidden on mobile) ── */}
       <aside className="hidden md:flex flex-col w-64 border-r border-border bg-card shrink-0 h-screen sticky top-0">
         {/* Logo / Brand */}
@@ -151,7 +151,7 @@ export default function AdminLayout() {
       </aside>
 
       {/* ── Main content ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar (mobile only) */}
         <header className="h-14 border-b border-border flex items-center px-4 bg-card md:hidden sticky top-0 z-30">
           <div className="flex items-center gap-2 flex-1">
