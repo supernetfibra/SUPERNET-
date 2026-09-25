@@ -23,6 +23,20 @@ import { Hono } from "https://esm.sh/hono@4.6.3";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 import { buildPushPayload, type PushSubscription as WebPushSubscription, type PushMessage, type VapidKeys } from "https://esm.sh/@block65/webcrypto-web-push@2.0.0";
 
+// Núcleo puro dos lembretes de fatura (dry-run) — sem I/O, compartilhado com a CLI
+// `scripts/simulate-reminders.ts`. Ver `LEMBRETES-WHATSAPP.md`.
+import { addDays, civilToday, isCivilDate, normalizeBrMobile } from "./notify/model.ts";
+import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
+import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
+import { describeSync } from "./notify/sync.ts";
+import { runSimulation } from "./notify/simulate.ts";
+import { applyOverrides } from "./notify/settings-store.ts";
+import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
+import { maskToken } from "./notify/config.ts";
+import { createUazapiClient } from "./notify/uazapi.ts";
+import { createWhatsAppRuntime } from "./notify/runtime.ts";
+import { handleUazapiWebhook } from "./notify/webhook.ts";
+
 // ---------------------------------------------------------------------------
 // Env helpers
 // ---------------------------------------------------------------------------
@@ -1269,6 +1283,659 @@ app.post("/admin/push", async (c) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// WhatsApp / notificações — helpers de composição
+// ---------------------------------------------------------------------------
+
+/** Uma instância do runtime por chamada: tudo nele é sem estado (as credenciais vêm do banco). */
+function whatsappRuntime() {
+  return createWhatsAppRuntime({
+    db,
+    getEnv: (name: string, fallback?: string) => env(name, fallback),
+    log: (message: string, extra?: Record<string, unknown>) => console.log(`[WHATSAPP] ${message}`, extra ?? ""),
+  });
+}
+
+function uazapiClientFrom(config: { baseUrl: string; instanceToken: string; adminToken: string }) {
+  return createUazapiClient({
+    baseUrl: config.baseUrl,
+    token: config.instanceToken,
+    adminToken: config.adminToken,
+  });
+}
+
+/**
+ * Endpoint interno: aceita o secret de cron OU um admin autenticado (para o painel
+ * conseguir forçar o dreno da fila sem conhecer o secret).
+ */
+async function requireCron(request: Request): Promise<boolean> {
+  const secret = env("CRON_SECRET");
+  const provided = request.headers.get("x-cron-secret") || new URL(request.url).searchParams.get("secret") || "";
+  if (secret && provided === secret) return true;
+  return requireAdmin(request);
+}
+
+/** Webhook é chamado pela UazAPI (server-to-server). Sem secret configurado, aceita. */
+function webhookAuthorized(request: Request): boolean {
+  const secret = env("UAZAPI_WEBHOOK_SECRET");
+  if (!secret) return true;
+  const provided = request.headers.get("x-webhook-secret") || new URL(request.url).searchParams.get("secret") || "";
+  return provided === secret;
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/notifications/simulate — dry-run do pipeline de lembretes
+//
+// Responde "o que sairia hoje, para quem, por qual canal e por que não para o
+// resto" — sem enviar nada, sem gravar nada e sem tocar na UazAPI. Usa o mesmo
+// núcleo puro que o pipeline de produção usará, então o roteamento, as cotas, a
+// janela e a idempotência são os reais. É o passo de validação antes de ligar o
+// envio (LEMBRETES-WHATSAPP.md).
+//
+// A configuração (régua, cotas, janela, hora) vem de `notification_config` +
+// `whatsapp_config`. Os parâmetros abaixo são OVERRIDES: só têm efeito quando vêm na
+// query, e nesse caso aparecem em `report.overrides` — para o relatório nunca se
+// confundir com "o que será enviado".
+//
+// Query (configuração): horizon=7, at=10, cap=20, per-customer-cap=1,
+//                       whatsapp=on|off, rules=[{...}]
+// Query (cenário):      instance=up|down, locked-days=0
+// Query (execução):     source=mikweb|synthetic, today=YYYY-MM-DD, scenario=...,
+//                       opt-in=auto|all|none, push=auto|all|none,
+//                       limit-customers=25, max-pages=10, item-limit=500,
+//                       preview-limit=25, reveal=1
+// ---------------------------------------------------------------------------
+app.get("/admin/notifications/simulate", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+
+  const url = new URL(c.req.raw.url);
+  const param = (name: string, fallback = "") => url.searchParams.get(name) ?? fallback;
+  const has = (name: string) => url.searchParams.has(name);
+  const int = (name: string, fallback: number) => {
+    const raw = url.searchParams.get(name);
+    if (raw === null || raw.trim() === "") return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const today = param("today") || civilToday();
+  if (!isCivilDate(today)) return jsonError("Parâmetro `today` deve estar no formato YYYY-MM-DD.", 400);
+
+  // Cenário, não configuração: simular instância caída e time-lock do WhatsApp.
+  const lockDays = Math.max(int("locked-days", 0), 0);
+  const instanceConnected = param("instance", "up") !== "down";
+
+  const optInParam = param("opt-in", "auto");
+  const pushParam = param("push", "auto");
+  if (!["auto", "all", "none"].includes(optInParam)) return jsonError("`opt-in` deve ser auto, all ou none.", 400);
+  if (!["auto", "all", "none"].includes(pushParam)) return jsonError("`push` deve ser auto, all ou none.", 400);
+
+  const scenarioParam = param("scenario", "realistic");
+  if (!["realistic", "stress", "edge"].includes(scenarioParam)) return jsonError("`scenario` deve ser realistic, stress ou edge.", 400);
+
+  // Régua da rodada, vinda do painel. `rules` na query permite explorar uma régua
+  // diferente sem salvar — e o relatório marca isso como override.
+  let rulesOverride: unknown;
+  const rawRules = url.searchParams.get("rules");
+  if (rawRules !== null && rawRules.trim() !== "") {
+    try {
+      rulesOverride = JSON.parse(rawRules);
+    } catch {
+      return jsonError("`rules` deve ser JSON válido.", 400);
+    }
+    if (!Array.isArray(rulesOverride)) return jsonError("`rules` deve ser uma lista JSON de regras.", 400);
+  }
+
+  try {
+    const loaded = await whatsappRuntime().getSettings();
+    const { settings, applied } = applyOverrides(loaded.settings, {
+      rules: rulesOverride,
+      horizonDays: has("horizon") ? Math.min(Math.max(int("horizon", loaded.settings.horizonDays), 1), 60) : undefined,
+      runAtHour: has("at") ? Math.min(Math.max(int("at", loaded.settings.runAtHour), 0), 23) : undefined,
+      newChatCapPerDay: has("cap") ? Math.max(int("cap", loaded.settings.whatsapp.newChatCapPerDay), 0) : undefined,
+      perCustomerCapPerDay: has("per-customer-cap")
+        ? Math.max(int("per-customer-cap", loaded.settings.whatsapp.perCustomerCapPerDay), 1)
+        : undefined,
+      whatsappEnabled: has("whatsapp") ? param("whatsapp", "on") !== "off" : undefined,
+    });
+
+    let base: LoadedBase;
+    if (param("source", "mikweb") === "synthetic") {
+      const demo = generateDemoBase({ scenario: scenarioParam as DemoScenario, today });
+      base = {
+        customers: demo.customers,
+        billings: demo.billings,
+        pushCustomerIds: demo.pushCustomerIds,
+        contacts: demo.contacts,
+        alreadySent: [],
+        assumptions: demo.assumptions,
+        source: {
+          kind: "synthetic",
+          strategy: "synthetic",
+          customersScanned: demo.customers.length,
+          billingsScanned: demo.billings.length,
+          truncated: false,
+          note: `cenário ${scenarioParam}`,
+        },
+      };
+    } else {
+      base = await loadRealBase(
+        { db, getConfig: getMikWebConfig, apiGetFull: mikwebApiGetFull },
+        {
+          from: today,
+          // Horizonte da configuração (ou do override) define a janela varrida.
+          to: addDays(today, settings.horizonDays - 1),
+          limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
+          maxPages: Math.min(Math.max(int("max-pages", 10), 1), 50),
+          assumeOptIn: optInParam === "auto" ? "table" : (optInParam as "all" | "none"),
+          assumePush: pushParam === "auto" ? "table" : (pushParam as "all" | "none"),
+        }
+      );
+    }
+
+    const report = runSimulation({
+      customers: base.customers,
+      billings: base.billings,
+      pushCustomerIds: base.pushCustomerIds,
+      contacts: base.contacts,
+      alreadySent: base.alreadySent,
+      source: base.source,
+      assumptions: base.assumptions,
+      // A configuração inteira entra no relatório, com fingerprint e procedência: o
+      // que foi simulado fica auditável depois, sem depender da memória de quem rodou.
+      settings: {
+        ...settings,
+        origin: loaded.origin,
+        updatedAt: loaded.updatedAt,
+        updatedBy: loaded.updatedBy,
+        notes: loaded.notes,
+      },
+      overrides: applied,
+      today,
+      revealPhones: param("reveal") === "1",
+      itemLimit: Math.min(Math.max(int("item-limit", 500), 1), 5000),
+      previewLimit: Math.min(Math.max(int("preview-limit", 25), 0), 200),
+      state: {
+        instanceConnected,
+        // Sem `locked-days`, vale o time-lock real registrado na configuração.
+        pausedUntilMs: lockDays > 0 ? new Date(`${today}T12:00:00Z`).getTime() + lockDays * 86_400_000 : undefined,
+      },
+    });
+
+    return json(report);
+  } catch (error) {
+    if (error instanceof MikWebNotConfigured) return jsonError(error.message, 400);
+    console.error("[SIMULATE_LEMBRETES_ERROR]", error);
+    return jsonError("Erro ao simular os lembretes.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/notifications/settings — configuração efetiva do pipeline
+//
+// É a resposta para "o que exatamente rege o envio?": a régua (que o simulador
+// simula e o dispatcher agenda), as cotas e a janela do canal, o fingerprint e a
+// PROCEDÊNCIA (`db` = salvo no painel, `defaults` = ainda a régua do código).
+// Enquanto for `defaults`, um deploy muda o comportamento — salvar fixa.
+// ---------------------------------------------------------------------------
+app.get("/admin/notifications/settings", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const loaded = await whatsappRuntime().getSettings();
+    return json({
+      ...loaded.settings,
+      fingerprint: loaded.fingerprint,
+      origin: loaded.origin,
+      updatedAt: loaded.updatedAt,
+      updatedBy: loaded.updatedBy,
+      notes: loaded.notes,
+      eventKeys: [...RULE_EVENT_KEYS],
+      maxRules: MAX_RULES,
+      defaults: defaultDocument(),
+    });
+  } catch (error) {
+    console.error("[NOTIFICATION_SETTINGS_READ_ERROR]", error);
+    return jsonError("Erro ao ler a configuração de notificações.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/notifications/settings — salva a régua (documento parcial)
+//
+// Só a régua e os parâmetros de agendamento moram aqui. Cota e janela são do canal e
+// continuam em POST /admin/whatsapp/config — um dono por chave, para o painel não
+// sobrescrever a config do canal por acidente.
+// ---------------------------------------------------------------------------
+app.post("/admin/notifications/settings", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+
+  // Tipo errado é bug de cliente, não configuração a corrigir: 400 em vez de gravar.
+  if (body.rules !== undefined && !Array.isArray(body.rules)) return jsonError("`rules` deve ser uma lista.", 400);
+  if (body.rules !== undefined && body.rules.length > MAX_RULES) {
+    return jsonError(`A régua aceita no máximo ${MAX_RULES} regras.`, 400);
+  }
+  for (const field of ["horizonDays", "runAtHour"] as const) {
+    if (body[field] !== undefined && !Number.isFinite(Number(body[field]))) {
+      return jsonError(`\`${field}\` deve ser numérico.`, 400);
+    }
+  }
+
+  const result = await whatsappRuntime().saveSettings(
+    {
+      rules: body.rules,
+      horizonDays: body.horizonDays === undefined ? undefined : Number(body.horizonDays),
+      runAtHour: body.runAtHour === undefined ? undefined : Number(body.runAtHour),
+      skipInactiveCustomers: typeof body.skipInactiveCustomers === "boolean" ? body.skipInactiveCustomers : undefined,
+      portalBaseUrl: typeof body.portalBaseUrl === "string" ? body.portalBaseUrl : undefined,
+      companyName: typeof body.companyName === "string" ? body.companyName : undefined,
+    },
+    { updatedBy: "admin" }
+  );
+
+  if (!result.ok) {
+    console.error("[NOTIFICATION_SETTINGS_SAVE_ERROR]", result.error);
+    return jsonError(result.error, 500);
+  }
+
+  await logEvent({
+    type: "notification_config",
+    metadata: {
+      fingerprint: result.loaded.fingerprint,
+      origin: result.loaded.origin,
+      rules: result.loaded.settings.rules.map((rule) => `${rule.active ? "" : "✕"}${rule.key}@${rule.offsetDays}`),
+      horizonDays: result.loaded.settings.horizonDays,
+      runAtHour: result.loaded.settings.runAtHour,
+    },
+  });
+
+  return json({
+    success: true,
+    ...result.loaded.settings,
+    fingerprint: result.loaded.fingerprint,
+    origin: result.loaded.origin,
+    updatedAt: result.loaded.updatedAt,
+    updatedBy: result.loaded.updatedBy,
+    // Notas da validação (o que foi limitado/corrigido) + o estado da leitura.
+    notes: [...result.notes, ...result.loaded.notes],
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/whatsapp/config — config + status da instância + limites + números
+// ---------------------------------------------------------------------------
+app.get("/admin/whatsapp/config", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const runtime = whatsappRuntime();
+  const config = await runtime.getConfig();
+
+  let instance: { state: string; connected: boolean } | null = null;
+  let limits: unknown = null;
+  let instanceError: string | null = null;
+
+  if (config.baseUrl && config.instanceToken) {
+    try {
+      const client = uazapiClientFrom(config);
+      const status = await client.instanceStatus();
+      instance = { state: status.state, connected: status.connected };
+      limits = await client.messageLimits();
+      await runtime.setStatus(status.state);
+    } catch (error) {
+      instanceError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  let stats: Record<string, number> = {};
+  try {
+    stats = await runtime.outbox.stats({ since: now() - 7 * 24 * 60 * 60 * 1000 });
+  } catch {
+    // migration 003 ainda não aplicada
+  }
+
+  return json({
+    baseUrl: config.baseUrl,
+    instanceName: config.instanceName,
+    enabled: config.enabled,
+    origin: config.origin,
+    hasInstanceToken: !!config.instanceToken,
+    hasAdminToken: !!config.adminToken,
+    instanceTokenMasked: maskToken(config.instanceToken),
+    adminTokenMasked: maskToken(config.adminToken),
+    dailyNewChatCap: config.dailyNewChatCap,
+    perCustomerCap: config.perCustomerCap,
+    windowStart: config.windowStart,
+    windowEnd: config.windowEnd,
+    pausedUntil: config.pausedUntil,
+    lastStatus: config.lastStatus,
+    lastStatusAt: config.lastStatusAt,
+    instance,
+    limits,
+    instanceError,
+    stats,
+    webhookSecretConfigured: !!env("UAZAPI_WEBHOOK_SECRET"),
+    cronSecretConfigured: !!env("CRON_SECRET"),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/whatsapp/config — salvar (token vazio não apaga o existente)
+// ---------------------------------------------------------------------------
+app.post("/admin/whatsapp/config", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const num = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const result = await whatsappRuntime().saveConfig({
+    baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+    adminToken: typeof body.adminToken === "string" ? body.adminToken : undefined,
+    instanceToken: typeof body.instanceToken === "string" ? body.instanceToken : undefined,
+    instanceName: typeof body.instanceName === "string" ? body.instanceName : undefined,
+    enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+    dailyNewChatCap: num(body.dailyNewChatCap),
+    perCustomerCap: num(body.perCustomerCap),
+    windowStart: num(body.windowStart),
+    windowEnd: num(body.windowEnd),
+  });
+
+  if (!result.ok) return jsonError(result.error ?? "Erro ao salvar a configuração.", 500);
+  await logEvent({ type: "whatsapp_config", metadata: { enabled: body.enabled ?? null, origin: "admin" } });
+  return json({ success: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/whatsapp/connect — inicia conexão (QR Code / código de pareamento)
+// ---------------------------------------------------------------------------
+app.post("/admin/whatsapp/connect", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const config = await whatsappRuntime().getConfig();
+  if (!config.baseUrl || !config.instanceToken) {
+    return jsonError("Configure a Server URL e o token da instância antes de conectar.", 400);
+  }
+  const body = await c.req.json().catch(() => ({}));
+  const phone = typeof body.phone === "string" ? normalizeBrMobile(body.phone) : null;
+
+  try {
+    const result = await uazapiClientFrom(config).connect(phone && phone.ok ? { phone: phone.e164 } : undefined);
+    return json({ success: true, qrCode: result.qrCode, pairCode: result.pairCode });
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : "Erro ao iniciar a conexão.", 502);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/whatsapp/test — testa o canal (sem número: só status)
+//
+// Com `number` + `confirm: true` a mensagem de teste entra pela outbox e é
+// entregue pelo mesmo adapter do lembrete. Um "teste" que não passa pela fila não
+// prova nada sobre a fila.
+// ---------------------------------------------------------------------------
+app.post("/admin/whatsapp/test", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const runtime = whatsappRuntime();
+
+  if (!body.number) {
+    const readiness = await runtime.adapter.ready();
+    return json({ ready: readiness.ok, reason: readiness.reason ?? null, retryAt: readiness.retryAt ?? null });
+  }
+  if (body.confirm !== true) return jsonError("É preciso confirmar o envio do teste.", 400);
+
+  const phone = normalizeBrMobile(String(body.number));
+  if (!phone.ok) {
+    return jsonError(
+      phone.reason === "landline" ? "O número informado é fixo — informe um celular." : "Número inválido: informe DDD + celular.",
+      400
+    );
+  }
+
+  try {
+    // `data_hora` no fuso do projeto (UTC-3), sem depender de ICU do runtime.
+    const localStamp = new Date(now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 16).replace("T", " ");
+    const enqueued = await runtime.outbox.enqueue({
+      eventKey: "test",
+      dedupeKey: `test:${phone.e164}:${now()}`,
+      customerId: null,
+      cpf: null,
+      payload: { data_hora: localStamp, nome: "Teste", primeiro_nome: "Teste" },
+      priority: "transactional",
+      channel: "whatsapp",
+      target: phone.e164,
+      rendered: null,
+      scheduledFor: now(),
+    });
+
+    if (!enqueued.deliveryId) return jsonError("Não foi possível enfileirar a mensagem de teste.", 500);
+
+    const summary = await runtime.dispatch({ ids: [enqueued.deliveryId], policy: "manual", limit: 1 });
+    const item = summary.results.find((entry) => entry.deliveryId === enqueued.deliveryId);
+    const ok = summary.sent > 0;
+    if (ok) await logEvent({ type: "whatsapp_sent", metadata: { test: true, target: `${phone.e164.slice(0, 4)}…` } });
+    else await logEvent({ type: "whatsapp_failed", error_message: summary.pauseReason ?? item?.reason ?? "teste não enviado", metadata: { test: true } });
+
+    return json({
+      success: ok,
+      sent: summary.sent,
+      reason: ok ? "Mensagem de teste enviada." : summary.pauseReason ?? item?.reason ?? "Não foi possível enviar o teste.",
+      detail: summary,
+    });
+  } catch (error) {
+    console.error("[WHATSAPP_TEST_ERROR]", error);
+    return jsonError(error instanceof Error ? error.message : "Erro ao enviar a mensagem de teste.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/notifications/send-now — o botão "enviar lembrete"
+//
+// `dryRun: true` devolve a mensagem renderizada para a caixa de confirmação;
+// sem ele, enfileira (idempotente) e despacha pelo mesmo caminho da fila.
+// `force: true` envia mesmo sem opt-in registrado — decisão humana, registrada
+// na auditoria.
+// ---------------------------------------------------------------------------
+app.post("/admin/notifications/send-now", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const cpf = String(body.cpf || "").replace(/\D/g, "");
+  const billingId = String(body.billingId || "");
+
+  if (cpf.length !== 11) return jsonError("CPF inválido.", 400);
+  if (!billingId) return jsonError("billingId é obrigatório.", 400);
+
+  try {
+    const customers = await mikwebApiGet<MikWebCustomer[]>(`/customers?search=${cpf}`);
+    if (!customers?.length) return jsonError("Cliente não encontrado.", 404);
+    const customer = customers[0]!;
+
+    const billings = await mikwebApiGet<MikWebBilling[]>(`/billings?customer_id=${customer.id}`);
+    const billing = (billings || []).find((item) => String(item.id) === billingId);
+    if (!billing) return jsonError("Fatura não encontrada para este cliente.", 404);
+
+    const result = await whatsappRuntime().sendBilling({
+      customer,
+      billing,
+      ruleKey: typeof body.ruleKey === "string" && body.ruleKey ? body.ruleKey : "manual",
+      dryRun: body.dryRun === true,
+      force: body.force === true,
+    });
+
+    if (result.status === "sent") {
+      await logEvent({
+        type: "whatsapp_sent",
+        cpf,
+        customer_id: String(customer.id),
+        customer_name: customer.full_name,
+        metadata: { billingId, reference: billing.reference, ruleKey: result.dedupeKey, forced: result.forced },
+      });
+    } else if (result.status !== "preview") {
+      await logEvent({
+        type: "whatsapp_skipped",
+        cpf,
+        customer_id: String(customer.id),
+        customer_name: customer.full_name,
+        error_message: result.reason,
+        metadata: { billingId, status: result.status },
+      });
+    }
+
+    return json(result);
+  } catch (error) {
+    console.error("[SEND_NOW_ERROR]", error);
+    return jsonError(error instanceof Error ? error.message : "Erro ao enviar o lembrete.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/notifications/deliveries — fila e histórico
+// ---------------------------------------------------------------------------
+app.get("/admin/notifications/deliveries", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const url = new URL(c.req.raw.url);
+  const status = url.searchParams.get("status") || "all";
+  const customerId = url.searchParams.get("customerId") || undefined;
+  const search = url.searchParams.get("search")?.trim().toLowerCase() || undefined;
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50) || 50, 1), 500);
+  const runtime = whatsappRuntime();
+
+  try {
+    const [rawDeliveries, stats] = await Promise.all([
+      runtime.outbox.list({ limit: search ? 300 : limit, status: status as never, customerId }),
+      runtime.outbox.stats({ since: now() - 7 * 24 * 60 * 60 * 1000 }),
+    ]);
+
+    // Opcionalmente associa o nome do cliente a partir de whatsapp_contacts ou evento
+    let deliveries = rawDeliveries;
+    if (search) {
+      const q = search;
+      deliveries = rawDeliveries.filter((d) => {
+        const target = (d.target || "").toLowerCase();
+        const cid = (d.customerId || "").toLowerCase();
+        const cpf = (d.cpf || "").replace(/\D/g, "");
+        const rawCpf = (d.cpf || "").toLowerCase();
+        const err = (d.errorMessage || "").toLowerCase();
+        return (
+          target.includes(q) ||
+          cid.includes(q) ||
+          cpf.includes(q.replace(/\D/g, "")) ||
+          rawCpf.includes(q) ||
+          err.includes(q)
+        );
+      }).slice(0, limit);
+    }
+
+    return json({ deliveries, stats, migrationPending: false });
+  } catch (error) {
+    // Migration 003 pendente é o caso esperado aqui — devolve vazio, não 500.
+    return json({ deliveries: [], stats: {}, migrationPending: true, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/notifications/deliveries/retry — reenvia falhas ou selecionadas
+//
+// Coloca as entregas especificadas (ou todas as que falharam se allFailed: true) de
+// volta em 'queued' com attempts resetados para 0, scheduled_for imediato, e
+// opcionalmente executa o dispatch imediatamente (dispatchNow: true).
+// ---------------------------------------------------------------------------
+app.post("/admin/notifications/deliveries/retry", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const ids: string[] = Array.isArray(body.ids) ? body.ids.filter((id: unknown) => typeof id === "string" && id) : [];
+  const allFailed = body.allFailed === true;
+  const dispatchNow = body.dispatchNow !== false;
+
+  const currentNow = now();
+  try {
+    let targetIds = ids;
+    if (allFailed && targetIds.length === 0) {
+      const { data, error } = await db()
+        .from("notification_deliveries")
+        .select("id")
+        .eq("status", "failed")
+        .limit(100);
+      if (error) throw error;
+      targetIds = (data || []).map((row: Record<string, unknown>) => String(row.id));
+    }
+
+    if (!targetIds.length) {
+      return json({ success: true, updated: 0, message: "Nenhuma entrega elegível para retry." });
+    }
+
+    // Atualiza status para 'queued', reseta attempts e programa para agora
+    const { error: updateError } = await db()
+      .from("notification_deliveries")
+      .update({
+        status: "queued",
+        attempts: 0,
+        scheduled_for: currentNow,
+        error_key: null,
+        error_message: null,
+        status_at: currentNow,
+      })
+      .in("id", targetIds);
+
+    if (updateError) throw updateError;
+
+    let dispatchSummary = null;
+    if (dispatchNow) {
+      dispatchSummary = await whatsappRuntime().dispatch({
+        ids: targetIds,
+        policy: "manual",
+        limit: Math.min(targetIds.length, 50),
+      });
+    }
+
+    return json({
+      success: true,
+      updated: targetIds.length,
+      dispatched: !!dispatchSummary,
+      dispatchSummary,
+    });
+  } catch (error) {
+    console.error("[DELIVERIES_RETRY_ERROR]", error);
+    return jsonError(error instanceof Error ? error.message : "Erro ao reprocessar entregas.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/notifications/deliveries/cancel — cancela mensagens pendentes
+// ---------------------------------------------------------------------------
+app.post("/admin/notifications/deliveries/cancel", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const ids: string[] = Array.isArray(body.ids) ? body.ids.filter((id: unknown) => typeof id === "string" && id) : [];
+  const allQueued = body.allQueued === true;
+
+  if (!ids.length && !allQueued) {
+    return jsonError("Nenhum ID de entrega fornecido para cancelamento.", 400);
+  }
+
+  const currentNow = now();
+  try {
+    let query = db().from("notification_deliveries").update({
+      status: "canceled",
+      error_message: body.reason?.trim() || "Cancelado manualmente pelo administrador",
+      status_at: currentNow,
+    });
+
+    if (allQueued && !ids.length) {
+      query = query.eq("status", "queued");
+    } else {
+      query = query.in("id", ids).eq("status", "queued");
+    }
+
+    const { error: cancelError } = await query;
+    if (cancelError) throw cancelError;
+
+    return json({ success: true, count: ids.length });
+  } catch (error) {
+    console.error("[DELIVERIES_CANCEL_ERROR]", error);
+    return jsonError(error instanceof Error ? error.message : "Erro ao cancelar entregas.", 500);
+  }
+});
+
 app.get("/admin/install-requests", async (c) => {
   if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
   const status = new URL(c.req.raw.url).searchParams.get("status") || undefined;
@@ -1302,6 +1969,123 @@ app.post("/admin/install-requests/:id/status", async (c) => {
     })
     .eq("id", requestId);
   return json({ success: true });
+});
+
+// ===========================================================================
+// ROTAS INTERNAS: CRON E WEBHOOK
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// /api/cron/notify-sync — enfileira os avisos do dia a partir da base real
+//
+// É o par do cron de dispatch: este enfileira, aquele envia. Agendar UMA vez por dia,
+// antes da janela de envio abrir (ex.: 8h, com o cron de dispatch rodando a cada
+// 5–15 min). Sem ele, o pipeline automático simplesmente não existe — quem enfileirava
+// era o botão do painel.
+//
+// O que entra na fila é decidido pelo mesmo núcleo puro do simulador (régua, alcance,
+// payload), então o relatório de `/admin/notifications/simulate` continua sendo a
+// previsão honesta do que sai. Quem aplica cota, janela e time-lock é o dispatcher, na
+// hora de enviar.
+//
+// Query: `days` (1..horizonte, default 1), `dryRun=1` (planeja e responde, sem gravar),
+//        `from=YYYY-MM-DD` (dia alvo), `item-limit` (itens no resumo),
+//        `limit-customers`/`max-pages` (varredura da MikWeb).
+// ---------------------------------------------------------------------------
+app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
+  if (!(await requireCron(c.req.raw))) return jsonError("Não autorizado.", 401);
+
+  const url = new URL(c.req.raw.url);
+  const body = c.req.method === "POST" ? await c.req.json().catch(() => ({})) : {};
+  const raw = (name: string) => body[name] ?? url.searchParams.get(name);
+  const int = (name: string, fallback: number) => {
+    const value = Number(raw(name));
+    return Number.isFinite(value) ? value : fallback;
+  };
+
+  const from = raw("from") === null || raw("from") === undefined || raw("from") === "" ? undefined : String(raw("from"));
+  if (from !== undefined && !isCivilDate(from)) return jsonError("`from` deve estar no formato YYYY-MM-DD.", 400);
+
+  try {
+    const summary = await whatsappRuntime().sync({
+      from,
+      days: Math.min(Math.max(int("days", 1), 1), 60),
+      dryRun: raw("dryRun") === "1" || raw("dryRun") === true,
+      itemLimit: Math.min(Math.max(int("item-limit", 50), 1), 500),
+      loadBase: (window) =>
+        loadSyncBase(
+          { db, getConfig: getMikWebConfig, apiGetFull: mikwebApiGetFull },
+          {
+            dueFrom: window.dueFrom,
+            dueTo: window.dueTo,
+            limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
+            maxPages: Math.min(Math.max(int("max-pages", 10), 1), 50),
+          }
+        ),
+    });
+
+    console.log(`[NOTIFY_SYNC] ${describeSync(summary)}`);
+    return json(summary);
+  } catch (error) {
+    if (error instanceof MikWebNotConfigured) return jsonError(error.message, 400);
+    console.error("[NOTIFY_SYNC_ERROR]", error);
+    return jsonError("Erro ao enfileirar os avisos do dia.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/cron/notify-dispatch — drena a fila de notificações
+//
+// Roda com o secret de cron (`x-cron-secret` ou `?secret=`) ou com um admin
+// autenticado. Agendar a cada 5–15 min (ver LEMBRETES-WHATSAPP.md §8).
+// ---------------------------------------------------------------------------
+app.on(["GET", "POST"], "/cron/notify-dispatch", async (c) => {
+  if (!(await requireCron(c.req.raw))) return jsonError("Não autorizado.", 401);
+
+  const url = new URL(c.req.raw.url);
+  const body = c.req.method === "POST" ? await c.req.json().catch(() => ({})) : {};
+  const requested = Number(body.limit ?? url.searchParams.get("limit") ?? 10);
+  const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 10, 1), 50);
+  const channel = url.searchParams.get("channel") === "push" || body.channel === "push" ? "push" : "whatsapp";
+  const rawPolicy = body.policy ?? url.searchParams.get("policy");
+  const policy = rawPolicy === "manual" ? "manual" : "automated";
+
+  try {
+    const summary = await whatsappRuntime().dispatch({ limit, channel, policy });
+    if (summary.paused) console.warn("[NOTIFY_DISPATCH_PAUSED]", summary.pauseReason);
+    return json(summary);
+  } catch (error) {
+    console.error("[NOTIFY_DISPATCH_ERROR]", error);
+    return jsonError("Erro ao processar a fila de notificações.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/webhooks/uazapi — status de entrega e opt-out
+//
+// Público (a função é deployada com --no-verify-jwt), protegido pelo secret
+// `UAZAPI_WEBHOOK_SECRET`. Sem secret configurado ele aceita: é o que permite
+// testar antes de subir o secret — e aparece como aviso nos logs.
+// ---------------------------------------------------------------------------
+app.post("/webhooks/uazapi", async (c) => {
+  if (!webhookAuthorized(c.req.raw)) return jsonError("Não autorizado.", 401);
+  if (!env("UAZAPI_WEBHOOK_SECRET")) {
+    console.warn("[WHATSAPP_WEBHOOK] UAZAPI_WEBHOOK_SECRET não configurado; webhook aceitando qualquer origem.");
+  }
+
+  const body = await c.req.json().catch(() => null);
+  try {
+    const summary = await handleUazapiWebhook({
+      db,
+      outbox: whatsappRuntime().outbox,
+      log: (message, extra) => console.log(`[WHATSAPP_WEBHOOK] ${message}`, extra ?? ""),
+    }, body);
+    return json({ success: true, ...summary });
+  } catch (error) {
+    console.error("[WHATSAPP_WEBHOOK_ERROR]", error);
+    // 200 mesmo em erro: a UazAPI não deve ficar reenviando o mesmo evento.
+    return json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 // ===========================================================================

@@ -28,7 +28,17 @@ import {
   XCircle,
   Bell,
   Send,
+  MessageCircle,
+  QrCode,
+  PlugZap,
+  FlaskConical,
+  RefreshCw,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AdminSyncDialog } from "@/components/AdminSyncDialog";
+import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { apiUrl } from "@/lib/api-config";
@@ -116,7 +126,37 @@ async function testApiFromBrowser(
 // Component
 // ---------------------------------------------------------------------------
 
+/** Resposta de `GET /api/admin/whatsapp/config` — só os campos que a tela usa. */
+interface WhatsAppConfigView {
+  baseUrl: string;
+  instanceName: string | null;
+  enabled: boolean;
+  origin: "env" | "db" | "none";
+  hasInstanceToken: boolean;
+  hasAdminToken: boolean;
+  instanceTokenMasked: string;
+  adminTokenMasked: string;
+  dailyNewChatCap: number;
+  perCustomerCap: number;
+  windowStart: number;
+  windowEnd: number;
+  pausedUntil: number | null;
+  lastStatus: string | null;
+  lastStatusAt: number | null;
+  instance: { state: string; connected: boolean } | null;
+  limits: {
+    newChatStatus: string | null;
+    newChatUsed: number | null;
+    newChatTotal: number | null;
+    timeLockUntil: number | null;
+  } | null;
+  instanceError: string | null;
+  stats: Record<string, number>;
+}
+
 export default function AdminSettings() {
+  const navigate = useNavigate();
+
   // ── Branding state ──
   const stored = getStoredBranding();
   const [providerName, setProviderName] = useState(stored?.providerName || "");
@@ -147,6 +187,189 @@ export default function AdminSettings() {
   const [pushBody, setPushBody] = useState("");
   const [pushCpf, setPushCpf] = useState("");
   const [pushSending, setPushSending] = useState(false);
+
+  // ── WhatsApp (UazAPI) state ──
+  const [waConfig, setWaConfig] = useState<WhatsAppConfigView | null>(null);
+  const [waLoading, setWaLoading] = useState(true);
+  const [waError, setWaError] = useState<string | null>(null);
+  const [waBaseUrl, setWaBaseUrl] = useState("");
+  const [waInstanceToken, setWaInstanceToken] = useState("");
+  const [waAdminToken, setWaAdminToken] = useState("");
+  const [waShowToken, setWaShowToken] = useState(false);
+  const [waEnabled, setWaEnabled] = useState(false);
+  const [waCaps, setWaCaps] = useState({
+    dailyNewChatCap: 20,
+    perCustomerCap: 1,
+    windowStart: 9,
+    windowEnd: 20,
+  });
+  const [waSaving, setWaSaving] = useState(false);
+  const [waConnecting, setWaConnecting] = useState(false);
+  const [waQr, setWaQr] = useState<string | null>(null);
+  const [waTestNumber, setWaTestNumber] = useState("");
+  const [waTestDialog, setWaTestDialog] = useState(false);
+  const [waSyncOpen, setWaSyncOpen] = useState(false);
+  const [waDispatchOpen, setWaDispatchOpen] = useState(false);
+  const [waChecking, setWaChecking] = useState(false);
+
+  // ── WhatsApp handlers ──
+  /** Aplica a resposta da API no estado da tela (usado pelo efeito e pelos handlers). */
+  const applyWhatsAppConfig = useCallback((data: WhatsAppConfigView) => {
+    setWaConfig(data);
+    setWaBaseUrl(data.baseUrl || "");
+    setWaEnabled(Boolean(data.enabled));
+    setWaCaps({
+      dailyNewChatCap: Number(data.dailyNewChatCap ?? 20),
+      perCustomerCap: Number(data.perCustomerCap ?? 1),
+      windowStart: Number(data.windowStart ?? 9),
+      windowEnd: Number(data.windowEnd ?? 20),
+    });
+    setWaError(data.instanceError || null);
+  }, []);
+
+  const loadWhatsAppConfig = useCallback(async () => {
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/config");
+      if (!res.ok) {
+        setWaError("Não foi possível carregar a configuração do WhatsApp.");
+        return;
+      }
+      applyWhatsAppConfig(await res.json());
+    } catch {
+      setWaError("Erro ao carregar a configuração do WhatsApp.");
+    } finally {
+      setWaLoading(false);
+    }
+  }, [applyWhatsAppConfig]);
+
+  useEffect(() => {
+    // IIFE assíncrona de propósito: os setState só acontecem DEPOIS do fetch, então
+    // o efeito não dispara render em cascata (react-hooks/set-state-in-effect).
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await adminFetch("/api/admin/whatsapp/config");
+        if (cancelled) return;
+        if (!res.ok) {
+          setWaError("Não foi possível carregar a configuração do WhatsApp.");
+          return;
+        }
+        applyWhatsAppConfig(await res.json());
+      } catch {
+        if (!cancelled) setWaError("Erro ao carregar a configuração do WhatsApp.");
+      } finally {
+        if (!cancelled) setWaLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyWhatsAppConfig]);
+
+  const handleSaveWhatsApp = async () => {
+    setWaSaving(true);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseUrl: waBaseUrl,
+          // Token vazio não apaga o que já está salvo (o backend ignora string vazia).
+          instanceToken: waInstanceToken || undefined,
+          adminToken: waAdminToken || undefined,
+          enabled: waEnabled,
+          ...waCaps,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao salvar a configuração do WhatsApp.");
+        return;
+      }
+      toast.success("Configuração do WhatsApp salva!");
+      setWaInstanceToken("");
+      setWaAdminToken("");
+      await loadWhatsAppConfig();
+    } catch {
+      toast.error("Erro ao salvar a configuração do WhatsApp.");
+    } finally {
+      setWaSaving(false);
+    }
+  };
+
+  const handleCheckWhatsApp = async () => {
+    setWaChecking(true);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Não foi possível verificar o canal.");
+        return;
+      }
+      if (data.ready) toast.success("Canal pronto para envio.");
+      else toast.warning(data.reason || "Canal indisponível.");
+      await loadWhatsAppConfig();
+    } catch {
+      toast.error("Não foi possível verificar o canal.");
+    } finally {
+      setWaChecking(false);
+    }
+  };
+
+  const handleConnectWhatsApp = async () => {
+    setWaConnecting(true);
+    setWaQr(null);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao iniciar a conexão.");
+        return;
+      }
+      if (data.qrCode) {
+        setWaQr(String(data.qrCode));
+        toast.info("Escaneie o QR Code no WhatsApp para conectar.");
+      } else if (data.pairCode) {
+        toast.info(`Código de pareamento: ${data.pairCode}`);
+      } else {
+        toast.warning("A instância não retornou QR Code nem código de pareamento.");
+      }
+    } catch {
+      toast.error("Erro ao iniciar a conexão.");
+    } finally {
+      setWaConnecting(false);
+    }
+  };
+
+  const handleSendWhatsAppTest = async () => {
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ number: waTestNumber, confirm: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Falha ao enviar o teste.");
+      } else if (data.success) {
+        toast.success(data.reason || "Mensagem de teste enviada.");
+      } else {
+        toast.error(data.reason || "A mensagem de teste não foi enviada.");
+      }
+      setWaTestDialog(false);
+      await loadWhatsAppConfig();
+    } catch {
+      toast.error("Falha ao enviar o teste.");
+    }
+  };
 
   // ── Branding handlers ──
   const handleSaveBranding = async () => {
@@ -628,6 +851,343 @@ export default function AdminSettings() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* ── WhatsApp (UazAPI) ── */}
+      <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.15s_both]">
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">
+                Lembretes por WhatsApp
+              </CardTitle>
+            </div>
+            {waLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            ) : (
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-sm border ${
+                  waConfig?.instance?.connected
+                    ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                    : "border-amber-500/30 text-amber-600 dark:text-amber-400"
+                }`}
+              >
+                {waConfig?.instance?.connected
+                  ? "conectada"
+                  : waConfig?.instance?.state || "sem status"}
+              </span>
+            )}
+          </div>
+          <CardDescription className="text-xs text-muted-foreground">
+            Integração via UazAPI. Os secrets <code className="font-mono">UAZAPI_BASE_URL</code> e{" "}
+            <code className="font-mono">UAZAPI_INSTANCE_TOKEN</code> têm prioridade sobre o que for
+            salvo aqui.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Estado atual — o que o backend realmente enxerga */}
+          <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+            <span className="px-2 py-0.5 rounded-sm border border-border">
+              credenciais: {waConfig?.origin ?? "—"}
+            </span>
+            <span className="px-2 py-0.5 rounded-sm border border-border">
+              token: {waConfig?.hasInstanceToken ? waConfig?.instanceTokenMasked : "não configurado"}
+            </span>
+            {waConfig?.limits ? (
+              <span className="px-2 py-0.5 rounded-sm border border-border">
+                novas conversas: {waConfig.limits.newChatUsed ?? "?"}/
+                {waConfig.limits.newChatTotal ?? "?"}
+                {waConfig.limits.newChatStatus ? ` (${waConfig.limits.newChatStatus})` : ""}
+              </span>
+            ) : null}
+            {waConfig?.pausedUntil ? (
+              <span className="px-2 py-0.5 rounded-sm border border-amber-500/30 text-amber-600 dark:text-amber-400">
+                pausado até {new Date(Number(waConfig.pausedUntil)).toLocaleDateString("pt-BR")}
+              </span>
+            ) : null}
+            {waConfig?.stats?.["whatsapp:sent"] ? (
+              <span className="px-2 py-0.5 rounded-sm border border-border">
+                enviados (7d): {waConfig.stats["whatsapp:sent"]}
+              </span>
+            ) : null}
+          </div>
+
+          {waError ? (
+            <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>{waError}</span>
+            </div>
+          ) : null}
+
+          <div className="space-y-2">
+            <Label htmlFor="wa-url" className="text-xs font-medium text-muted-foreground">
+              Server URL da UazAPI
+            </Label>
+            <Input
+              id="wa-url"
+              type="url"
+              placeholder="https://sua-instancia.uazapi.com"
+              value={waBaseUrl}
+              onChange={(e) => setWaBaseUrl(e.target.value)}
+              className="h-9 text-xs font-mono"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="wa-token" className="text-xs font-medium text-muted-foreground">
+                Token da instância
+              </Label>
+              <div className="relative">
+                <Input
+                  id="wa-token"
+                  type={waShowToken ? "text" : "password"}
+                  placeholder={waConfig?.hasInstanceToken ? "••••••••  (manter atual)" : "token da instância"}
+                  value={waInstanceToken}
+                  onChange={(e) => setWaInstanceToken(e.target.value)}
+                  className="h-9 text-xs font-mono pr-9"
+                />
+                <button
+                  type="button"
+                  onClick={() => setWaShowToken(!waShowToken)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {waShowToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="wa-admin" className="text-xs font-medium text-muted-foreground">
+                admintoken <span className="text-muted-foreground/50">(opcional)</span>
+              </Label>
+              <Input
+                id="wa-admin"
+                type="password"
+                placeholder={waConfig?.hasAdminToken ? "••••••••  (manter atual)" : "só para criar/listar instância"}
+                value={waAdminToken}
+                onChange={(e) => setWaAdminToken(e.target.value)}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-sm border border-border">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-foreground">Canal ativo</p>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Desligado, nenhuma mensagem sai — nem pelo botão de envio manual.
+              </p>
+            </div>
+            <Switch checked={waEnabled} onCheckedChange={setWaEnabled} className="cursor-pointer" />
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="space-y-2">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Novas conversas/dia
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={waCaps.dailyNewChatCap}
+                onChange={(e) => setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) })}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Avisos por cliente/dia
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                value={waCaps.perCustomerCap}
+                onChange={(e) => setWaCaps({ ...waCaps, perCustomerCap: Number(e.target.value) })}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Janela — início (h)
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                max={23}
+                value={waCaps.windowStart}
+                onChange={(e) => setWaCaps({ ...waCaps, windowStart: Number(e.target.value) })}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Janela — fim (h)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={24}
+                value={waCaps.windowEnd}
+                onChange={(e) => setWaCaps({ ...waCaps, windowEnd: Number(e.target.value) })}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              className="text-xs h-9 cursor-pointer"
+              onClick={handleSaveWhatsApp}
+              disabled={waSaving}
+            >
+              {waSaving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+              Salvar
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer"
+              onClick={handleCheckWhatsApp}
+              disabled={waChecking}
+            >
+              {waChecking ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <PlugZap className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Testar canal
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer"
+              onClick={handleConnectWhatsApp}
+              disabled={waConnecting}
+            >
+              {waConnecting ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <QrCode className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Conectar (QR)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              onClick={() => setWaSyncOpen(true)}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Sincronizar cobranças
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              onClick={() => setWaDispatchOpen(true)}
+            >
+              <Send className="h-3.5 w-3.5 mr-1.5" />
+              Disparar fila outbox
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-9 cursor-pointer text-muted-foreground"
+              onClick={() => navigate("/admin/simulator")}
+            >
+              <FlaskConical className="h-3.5 w-3.5 mr-1.5" />
+              Ver o que sairia
+            </Button>
+          </div>
+
+          <p className="text-[10px] text-muted-foreground">
+            Antes de ligar o canal ativo, rode o simulador: ele mostra quantos avisos sairiam,
+            quantos ficam presos na cota de novas conversas e quantos clientes ficam sem canal.
+          </p>
+
+          {waQr ? (
+            <div className="space-y-2">
+              <p className="text-[10px] text-muted-foreground">
+                Abra o WhatsApp → Aparelhos conectados → Conectar aparelho.
+              </p>
+              <img
+                src={waQr.startsWith("data:") ? waQr : `data:image/png;base64,${waQr}`}
+                alt="QR Code da instância UazAPI"
+                className="h-40 w-40 rounded-sm border border-border bg-white p-2"
+              />
+            </div>
+          ) : null}
+
+          <div className="space-y-2 pt-1">
+            <Label htmlFor="wa-test" className="text-xs font-medium text-muted-foreground">
+              Teste de envio
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="wa-test"
+                placeholder="DDD + celular (ex: 11 98765-4321)"
+                value={waTestNumber}
+                onChange={(e) => setWaTestNumber(e.target.value)}
+                className="h-9 text-xs font-mono"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-9 shrink-0 cursor-pointer"
+                onClick={() => setWaTestDialog(true)}
+                disabled={waTestNumber.replace(/\D/g, "").length < 10}
+              >
+                <Send className="h-3.5 w-3.5 mr-1.5" />
+                Enviar teste
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              O teste passa pela outbox e pelo mesmo adapter do lembrete — se ele chega, o
+              caminho de envio está inteiro.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <ConfirmDialog
+        open={waTestDialog}
+        onOpenChange={setWaTestDialog}
+        title="Enviar mensagem de teste?"
+        description="A mensagem será enviada de verdade para o número informado."
+        confirmLabel="Enviar teste"
+        onConfirm={handleSendWhatsAppTest}
+      >
+        <div className="space-y-2">
+          <p className="text-muted-foreground">
+            Destino: <span className="text-foreground font-mono">{waTestNumber}</span>
+          </p>
+          <p className="text-muted-foreground">
+            Uma mensagem de teste será enviada e aparecerá no histórico de notificações.
+          </p>
+        </div>
+      </ConfirmDialog>
+
+      <AdminSyncDialog
+        open={waSyncOpen}
+        onOpenChange={setWaSyncOpen}
+        onSyncCompleted={() => {
+          void loadWhatsAppConfig();
+        }}
+        onOpenDispatch={() => {
+          setWaDispatchOpen(true);
+        }}
+      />
+
+      <AdminDispatchDialog
+        open={waDispatchOpen}
+        onOpenChange={setWaDispatchOpen}
+        onDispatchCompleted={() => {
+          void loadWhatsAppConfig();
+        }}
+      />
     </div>
   );
 }

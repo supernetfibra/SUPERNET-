@@ -48,7 +48,12 @@ import {
   Bell,
   Home,
   ChevronRight,
+  MessageCircle,
 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AdminSyncDialog } from "@/components/AdminSyncDialog";
+import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { mapStatus } from "@/lib/billing-utils";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -214,6 +219,23 @@ const typeLabels: Record<string, { label: string; color: string }> = {
   pdf_viewed: { label: "Acessou PDF", color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 dark:text-violet-400" },
 };
 
+interface ReminderBilling {
+  id: string | number;
+  reference?: string;
+  due_day?: string;
+  value?: number | string;
+  situation_name?: string;
+}
+
+/** Resposta de `POST /api/admin/notifications/send-now`. */
+interface ReminderPreview {
+  status: "preview" | "sent" | "queued" | "already_sent" | "failed" | "blocked";
+  reason: string;
+  phoneMasked: string | null;
+  optIn: boolean;
+  preview: { title?: string; body: string } | null;
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
@@ -261,6 +283,10 @@ export default function AdminDashboard() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [revokingSession, setRevokingSession] = useState<string | null>(null);
+
+  // Sync dialog
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
 
   // Audit log CPF filter
   const [auditCpf, setAuditCpf] = useState("");
@@ -627,6 +653,90 @@ export default function AdminDashboard() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // WhatsApp — enviar lembrete de fatura (com prévia e confirmação)
+  // ---------------------------------------------------------------------------
+  const [reminderBilling, setReminderBilling] = useState<ReminderBilling | null>(null);
+  const [reminderPreview, setReminderPreview] = useState<ReminderPreview | null>(null);
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderForce, setReminderForce] = useState(false);
+  const [reminderSending, setReminderSending] = useState(false);
+
+  /** Abre a confirmação já com a mensagem que SERIA enviada (dryRun no backend). */
+  const openReminder = async (billing: ReminderBilling) => {
+    const cpf = lookupCpf.replace(/\D/g, "");
+    if (cpf.length !== 11) {
+      toast.error("Consulte o cliente pelo CPF antes de enviar.");
+      return;
+    }
+    setReminderBilling(billing);
+    setReminderPreview(null);
+    setReminderForce(false);
+    setReminderLoading(true);
+    try {
+      const res = await adminFetch("/api/admin/notifications/send-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cpf, billingId: String(billing.id), dryRun: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Não foi possível montar a prévia do lembrete.");
+        setReminderBilling(null);
+        return;
+      }
+      setReminderPreview(data);
+    } catch {
+      toast.error("Não foi possível montar a prévia do lembrete.");
+      setReminderBilling(null);
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const confirmReminder = async () => {
+    if (!reminderBilling) return;
+    setReminderSending(true);
+    try {
+      const res = await adminFetch("/api/admin/notifications/send-now", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cpf: lookupCpf.replace(/\D/g, ""),
+          billingId: String(reminderBilling.id),
+          force: reminderForce,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao enviar o lembrete.");
+        return;
+      }
+      if (data.status === "sent") {
+        toast.success(`Lembrete enviado para ${data.phoneMasked ?? "o cliente"}.`);
+      } else if (data.status === "already_sent") {
+        toast.info(data.reason || "Este lembrete já havia sido enviado.");
+      } else {
+        toast.warning(data.reason || "O lembrete não foi enviado.");
+      }
+      setReminderBilling(null);
+    } catch {
+      toast.error("Erro ao enviar o lembrete.");
+    } finally {
+      setReminderSending(false);
+    }
+  };
+
+  /** Bloqueio por falta de opt-in é o único que o admin pode assumir conscientemente. */
+  const reminderOptInBlocked =
+    reminderPreview?.status === "blocked" && String(reminderPreview?.reason || "").includes("opt-in");
+  const reminderCannotSend =
+    reminderLoading ||
+    !reminderPreview ||
+    reminderPreview.status === "already_sent" ||
+    (reminderPreview.status === "blocked" && !reminderOptInBlocked) ||
+    (reminderOptInBlocked && !reminderForce);
+
   const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
     try {
@@ -844,13 +954,44 @@ export default function AdminDashboard() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-medium tracking-tight text-foreground">
-          Administração
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure a integração com a API MikWeb e acompanhe o histórico de acessos.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-medium tracking-tight text-foreground">
+            Administração
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Configure a integração com a API MikWeb e acompanhe o histórico de acessos.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+            onClick={() => setSyncDialogOpen(true)}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Sincronizar cobranças
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+            onClick={() => setDispatchDialogOpen(true)}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Disparar fila outbox
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs h-9 gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+            onClick={() => navigate("/admin/outbox")}
+          >
+            <Activity className="h-3.5 w-3.5" />
+            Ver outbox ao vivo
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -1115,9 +1256,25 @@ export default function AdminDashboard() {
                             · {formatValue(b.value)}
                           </p>
                         </div>
-                        <span className={statusBadgeClass(b.situation_name)}>
-                          {b.situation_name || "—"}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={statusBadgeClass(b.situation_name)}>
+                            {b.situation_name || "—"}
+                          </span>
+                          {["pendente", "vencido"].includes(
+                            mapStatus(b.situation_name || "")
+                          ) ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-[10px] cursor-pointer"
+                              title="Enviar lembrete por WhatsApp"
+                              onClick={() => openReminder(b)}
+                            >
+                              <MessageCircle className="h-3 w-3 sm:mr-1" />
+                              <span className="hidden sm:inline">Lembrar</span>
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     ))
                   )}
@@ -1126,6 +1283,84 @@ export default function AdminDashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* Confirmação do lembrete por WhatsApp */}
+        <ConfirmDialog
+          open={Boolean(reminderBilling)}
+          onOpenChange={(open) => {
+            if (!open && !reminderSending) {
+              setReminderBilling(null);
+              setReminderPreview(null);
+            }
+          }}
+          title="Enviar lembrete por WhatsApp?"
+          description={
+            reminderBilling
+              ? `Fatura ${reminderBilling.reference} · vence ${
+                  reminderBilling.due_day ? formatDate(reminderBilling.due_day) : "—"
+                } · ${formatValue(reminderBilling.value ?? 0)}`
+              : undefined
+          }
+          confirmLabel="Enviar lembrete"
+          disabled={reminderCannotSend}
+          onConfirm={confirmReminder}
+        >
+          {reminderLoading ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              montando a prévia...
+            </div>
+          ) : reminderPreview ? (
+            <>
+              <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+                <span className="px-2 py-0.5 rounded-sm border border-border">
+                  destino: {reminderPreview.phoneMasked || "sem celular válido"}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-sm border ${
+                    reminderPreview.optIn
+                      ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                      : "border-amber-500/30 text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  opt-in: {reminderPreview.optIn ? "registrado" : "não registrado"}
+                </span>
+              </div>
+
+              {reminderPreview.status === "already_sent" || reminderPreview.status === "blocked" ? (
+                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>{reminderPreview.reason}</span>
+                </div>
+              ) : null}
+
+              {reminderPreview.preview?.body ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] font-medium text-muted-foreground">
+                    Mensagem que será enviada
+                  </p>
+                  <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed rounded-sm border border-border bg-muted/40 p-3 text-foreground max-h-56 overflow-y-auto">
+                    {reminderPreview.preview.body}
+                  </pre>
+                </div>
+              ) : null}
+
+              {reminderOptInBlocked ? (
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={reminderForce}
+                    onChange={(e) => setReminderForce(e.target.checked)}
+                    className="mt-0.5 h-3.5 w-3.5 accent-foreground cursor-pointer"
+                  />
+                  <span className="text-muted-foreground leading-relaxed">
+                    Enviar mesmo sem opt-in registrado. A decisão fica registrada na auditoria.
+                  </span>
+                </label>
+              ) : null}
+            </>
+          ) : null}
+        </ConfirmDialog>
 
         {/* Sessões Ativas */}
         <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.25s_both]">
@@ -1493,6 +1728,19 @@ export default function AdminDashboard() {
           </Card>
         </div>
       )}
+
+      <AdminSyncDialog
+        open={syncDialogOpen}
+        onOpenChange={setSyncDialogOpen}
+        onOpenDispatch={() => {
+          setDispatchDialogOpen(true);
+        }}
+      />
+
+      <AdminDispatchDialog
+        open={dispatchDialogOpen}
+        onOpenChange={setDispatchDialogOpen}
+      />
     </div>
   );
 }

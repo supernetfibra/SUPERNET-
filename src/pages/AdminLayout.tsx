@@ -24,6 +24,8 @@ import {
   Settings,
   Bell,
   Search,
+  FlaskConical,
+  Send,
 } from "lucide-react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
@@ -33,6 +35,8 @@ import { useTheme } from "@/lib/theme-provider";
 const adminNavigation = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Solicitações", href: "/admin/install-requests", icon: Home },
+  { name: "Outbox (Fila)", href: "/admin/outbox", icon: Send },
+  { name: "Simulador", href: "/admin/simulator", icon: FlaskConical },
   { name: "Configurações", href: "/admin/settings", icon: Settings },
 ];
 

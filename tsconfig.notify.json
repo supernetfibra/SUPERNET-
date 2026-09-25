@@ -1,0 +1,26 @@
+{
+  /* Núcleo puro dos lembretes + CLI do simulador.
+     Esses arquivos ficam fora de `tsconfig.app.json` (que cobre só `src/`) e fora
+     do bundle do Vite, mas compartilham código com a Edge Function — então
+     precisam de um typecheck próprio.
+
+     `erasableSyntaxOnly` não é decoração: é o que garante que os módulos possam ser
+     executados por `node scripts/simulate-reminders.ts` via type stripping nativo do
+     Node (que não aceita enum, namespace ou parameter properties). */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["supabase/functions/api/notify/**/*.ts", "scripts/simulate-reminders.ts"]
+}
