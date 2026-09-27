@@ -30,6 +30,7 @@ import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
 import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
 import { describeSync } from "./notify/sync.ts";
 import { runSimulation } from "./notify/simulate.ts";
+import { buildPayload } from "./notify/templates.ts";
 import { applyOverrides } from "./notify/settings-store.ts";
 import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
 import { maskToken } from "./notify/config.ts";
@@ -1795,15 +1796,66 @@ app.post("/admin/whatsapp/test", async (c) => {
     );
   }
 
+  // Régua de lembretes no teste: além da sonda do canal (`test`), o admin pode
+  // receber QUALQUER opção da régua, no formato exato que o cliente recebe — mesmo
+  // template salvo, mesmos campos, mesma contagem de dias. É o que torna o teste
+  // previsível: o que chega aqui é o que sairia para o cliente naquele evento.
+  const requestedEventKey = typeof body.eventKey === "string" ? body.eventKey : "test";
+  const isReminderTest = requestedEventKey !== "test";
+  let eventKey = requestedEventKey;
+  let ruleLabel: string | null = null;
+  if (isReminderTest) {
+    const { settings } = await runtime.getSettings();
+    const rule = settings.rules.find((candidate) => candidate.eventKey === requestedEventKey);
+    if (!rule) {
+      return jsonError("A régua em vigor não tem essa opção — recarregue a página.", 400);
+    }
+    ruleLabel = rule.label;
+  }
+
   try {
-    // `data_hora` no fuso do projeto (UTC-3), sem depender de ICU do runtime.
-    const localStamp = new Date(now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 16).replace("T", " ");
+    // Payload do teste. Na régua, é um payload REALISTA de fatura (referência,
+    // valor, vencimento coerente com o deslocamento da regra — o aviso de atraso
+    // exige vencimento no passado, senão o dispatcher reagenda/descarta o evento).
+    const today = civilToday(now());
+    const offsetDays = typeof body.offsetDays === "number" ? body.offsetDays : 0;
+    const dueDate = addDays(today, isReminderTest ? -Math.abs(Math.trunc(offsetDays)) : 0);
+    const reference = isReminderTest ? "Mensalidade de Acesso à Internet" : "Teste do canal";
+    const payload = isReminderTest
+      ? {
+          ...buildPayload(
+            {
+              customer: {
+                id: "teste",
+                full_name: "Cliente Teste",
+                cpf_cnpj: null,
+                status: "Ativo",
+                phone_number: null,
+                cell_phone_number_1: null,
+                cell_phone_number_2: null,
+                cell_phone_number_3: null,
+                cell_phone_number_4: null,
+              },
+              billing: { id: "teste", customer_id: "teste", value: 99.9, reference, due_day: dueDate, situation_name: "Em Aberto" },
+              dueDate,
+              reference,
+              referenceDate: today,
+              portalBaseUrl: "https://minhasupernet.com",
+              companyName: "MinhaSuperNet",
+            }
+          ),
+        }
+      : (() => {
+          const localStamp = new Date(now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 16).replace("T", " ");
+          return { data_hora: localStamp, nome: "Teste", primeiro_nome: "Teste" };
+        })();
+
     const enqueued = await runtime.outbox.enqueue({
-      eventKey: "test",
-      dedupeKey: `test:${phone.e164}:${now()}`,
+      eventKey,
+      dedupeKey: `test:${eventKey}:${phone.e164}:${now()}`,
       customerId: null,
       cpf: null,
-      payload: { data_hora: localStamp, nome: "Teste", primeiro_nome: "Teste" },
+      payload: { ...payload, __dueDate: dueDate } as Record<string, unknown>,
       priority: "transactional",
       channel: "whatsapp",
       target: phone.e164,
@@ -1822,7 +1874,13 @@ app.post("/admin/whatsapp/test", async (c) => {
     return json({
       success: ok,
       sent: summary.sent,
-      reason: ok ? "Mensagem de teste enviada." : summary.pauseReason ?? item?.reason ?? "Não foi possível enviar o teste.",
+      eventKey,
+      ruleLabel,
+      reason: ok
+        ? isReminderTest
+          ? `Teste da régua "${ruleLabel}" enviado — confira o formato como o cliente receberia.`
+          : "Mensagem de teste enviada."
+        : summary.pauseReason ?? item?.reason ?? "Não foi possível enviar o teste.",
       detail: summary,
     });
   } catch (error) {

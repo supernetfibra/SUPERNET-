@@ -36,6 +36,13 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
@@ -214,7 +221,11 @@ export default function AdminSettings() {
   const [waConnecting, setWaConnecting] = useState(false);
   const [waQr, setWaQr] = useState<string | null>(null);
   const [waTestNumber, setWaTestNumber] = useState("");
+  const [waTestEventKey, setWaTestEventKey] = useState("test");
+  const [waTestOffset, setWaTestOffset] = useState(0);
   const [waTestDialog, setWaTestDialog] = useState(false);
+  /** Régua em vigor — alimenta o seletor "Qual mensagem testar". */
+  const [waRules, setWaRules] = useState<Array<{ key: string; eventKey: string; active: boolean; offsetDays: number }>>([]);
   const [waSyncOpen, setWaSyncOpen] = useState(false);
   const [waDispatchOpen, setWaDispatchOpen] = useState(false);
   const [waChecking, setWaChecking] = useState(false);
@@ -249,6 +260,28 @@ export default function AdminSettings() {
       setWaLoading(false);
     }
   }, [applyWhatsAppConfig]);
+
+  /** Régua em vigor para o seletor do teste (fallback: eventos padrão). */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await adminFetch("/api/admin/notifications/settings");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(data?.rules)) return;
+        if (!cancelled) {
+          setWaRules(
+            data.rules.filter((rule: { active?: boolean }) => rule.active !== false)
+          );
+        }
+      } catch {
+        // seletor cai no fallback de eventos padrão
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     // IIFE assíncrona de propósito: os setState só acontecem DEPOIS do fetch, então
@@ -362,7 +395,12 @@ export default function AdminSettings() {
       const res = await adminFetch("/api/admin/whatsapp/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ number: waTestNumber, confirm: true }),
+        body: JSON.stringify({
+          number: waTestNumber,
+          confirm: true,
+          eventKey: waTestEventKey,
+          ...(waTestEventKey !== "test" ? { offsetDays: waTestOffset } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1210,9 +1248,68 @@ export default function AdminSettings() {
                 Enviar teste
               </Button>
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Qual mensagem testar
+              </Label>
+              <Select
+                value={waTestEventKey}
+                onValueChange={(value) => {
+                  setWaTestEventKey(value);
+                  // Auto-preenche o deslocamento com o da regra da régua (a mais
+                  // representativa, em ordem de prioridade).
+                  if (value !== "test") {
+                    const rule = [...(waRules ?? [])]
+                      .filter((r) => r.eventKey === value)
+                      .sort((a, b) => a.offsetDays - b.offsetDays)[0];
+                    if (rule) setWaTestOffset(Math.abs(rule.offsetDays) || 1);
+                  }
+                }}
+              >
+                <SelectTrigger className="h-8 w-full text-xs cursor-pointer">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="test" className="text-xs">
+                    Sonda do canal (mensagem de teste)
+                  </SelectItem>
+                  {(waRules?.length
+                    ? waRules.map((r) => ({ eventKey: r.eventKey, label: r.key }))
+                    : [
+                        { eventKey: "billing.due_soon", label: "fatura a vencer" },
+                        { eventKey: "billing.due_today", label: "vence hoje" },
+                        { eventKey: "billing.late", label: "em atraso" },
+                      ]
+                  ).map(({ eventKey, label }) => (
+                    <SelectItem key={eventKey} value={eventKey} className="text-xs">
+                      Régua: {label} ({eventKey})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {waTestEventKey !== "test" ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={60}
+                    value={waTestOffset}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      setWaTestOffset(Number.isFinite(value) ? value : 0);
+                    }}
+                    className="h-8 w-20 text-xs font-mono"
+                  />
+                  <span className="text-[10px] text-muted-foreground">
+                    dias de deslocamento (a mensagem mostra {waTestOffset} dia(s) de atraso)
+                  </span>
+                </div>
+              ) : null}
+            </div>
             <p className="text-[10px] text-muted-foreground leading-relaxed">
               O teste passa pela outbox e pelo mesmo adapter do lembrete — se ele chega, o
-              caminho de envio está inteiro.
+              caminho de envio está inteiro. Escolhendo uma opção da régua, você recebe a
+              mensagem no formato exato que o cliente receberia.
             </p>
           </div>
         </CardContent>

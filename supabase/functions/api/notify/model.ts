@@ -191,8 +191,11 @@ export function normalizeBrMobile(raw: unknown): PhoneResult {
   const local = digits.slice(4);
   if (local.length === 8) {
     // 8 dígitos começando em 9 é celular com um dígito faltando (erro de cadastro),
-    // não fixo. A distinção importa: o relatório usa isso para dizer ao admin se o
-    // problema é "cadastro sem celular" ou "número digitado errado".
+    // não fixo. NÃO completamos o 9º dígito automaticamente: números brasileiros têm
+    // 9 dígitos desde 2016, e um 8-dígitos-9 é cadastro errado — completar às cegas
+    // pode entregar para o número errado. A distinção importa: o relatório usa o
+    // motivo para dizer ao admin se o problema é "cadastro sem celular" ou "número
+    // digitado errado".
     return { ok: false, reason: local.startsWith("9") ? "invalid" : "landline" };
   }
   if (local.length !== 9 || !local.startsWith("9")) return { ok: false, reason: "invalid" };
