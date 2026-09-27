@@ -33,7 +33,7 @@
  */
 
 import { civilDayStartMs, civilHour, civilToday, diffDays, isCivilDate, type Channel } from "./model.ts";
-import { renderFor, EVENT_DUE_DATE, EVENT_URL, type ChannelTemplate, type TemplatePayload } from "./templates.ts";
+import { renderFor, EVENT_DUE_DATE, EVENT_URL, EVENT_ACTIONS, type ChannelTemplate, type TemplatePayload } from "./templates.ts";
 import type { ChannelRegistry, Rendered } from "./channel.ts";
 import type { ClaimedDelivery, OutboxApi, OutboxEvent } from "./outbox.ts";
 
@@ -190,10 +190,20 @@ export function renderAtSendTime(input: {
   const rendered = renderFor(input.channel, input.event.eventKey, payload, input.templates);
   if (!rendered.message) return null;
 
+  // Ações rápidas: do payload armazenado (`__actions`, gravado no enfileiramento)
+  // ou, eventos antigos sem a chave, derivadas do payload na hora.
+  const rawActions = raw[EVENT_ACTIONS];
+  const actions = Array.isArray(rawActions)
+    ? (rawActions as Array<{ label: string; copy?: string; url?: string }>).filter(
+        (action) => action && typeof action.label === "string" && (typeof action.copy === "string" || typeof action.url === "string")
+      )
+    : rendered.message.actions;
+
   return {
     title: rendered.message.title,
     body: rendered.message.body,
     url: typeof raw[EVENT_URL] === "string" ? (raw[EVENT_URL] as string) : undefined,
+    actions: actions?.length ? actions : undefined,
   };
 }
 
@@ -434,7 +444,7 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
     if (result.ok) {
       summary.sent++;
       push({ ok: true, status: "sent", reason: "enviado" });
-      await deps.outbox.markSent(delivery.id, result.providerId ?? null);
+      await deps.outbox.markSent(delivery.id, result.providerId ?? null, rendered.actions);
       await deps.outbox.updateContactOutcome({ customerId: delivery.customerId, target, error: null });
       continue;
     }

@@ -42,7 +42,7 @@ import {
 } from "../supabase/functions/api/notify/template-store.ts";
 import { eventKeyForRule, sendBillingReminder } from "../supabase/functions/api/notify/send-billing.ts";
 import { describeSync, planSync, runBillingSync, syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
-import { renderFor } from "../supabase/functions/api/notify/templates.ts";
+import { buildActions, buildPayload, renderFor, toStoredPayload } from "../supabase/functions/api/notify/templates.ts";
 import { resolveSimulationSettings, runSimulation } from "../supabase/functions/api/notify/simulate.ts";
 import { generateDemoBase } from "../supabase/functions/api/notify/demo-data.ts";
 import * as ui from "../src/lib/simulator-report.ts";
@@ -881,6 +881,60 @@ check(
     return message?.body === "SAVED ACME";
   })()
 );
+
+// ---------------------------------------------------------------------------
+// 13. Botões de ação rápida — copiar Pix / código de barras / abrir portal
+// ---------------------------------------------------------------------------
+
+section("13. Botões de ação rápida (Pix, código de barras, PDF)");
+
+const actionsInputBase = {
+  customer: { full_name: "Maria Souza" },
+  dueDate: "2026-09-25",
+  reference: "Mensalidade",
+  referenceDate: "2026-09-27",
+  portalBaseUrl: "https://portal.com",
+  companyName: "ACME",
+};
+const actionsFullPayload = buildPayload({
+  ...actionsInputBase,
+  billing: {
+    id: "b1",
+    value: 99.9,
+    reference: "Mensalidade",
+    due_day: "2026-09-25",
+    situation_name: "Em Aberto",
+    pix_copy_paste_base64: "PIX000",
+    digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901234",
+    integration_link: "https://boleto.exemplo.com/pdf/b1",
+  },
+});
+
+const acts = buildActions(actionsFullPayload);
+eq("Pix copiável é o primeiro botão", acts[0], { label: "Copiar código Pix", copy: "PIX000" });
+eq("código de barras sai só com dígitos (47)", acts[1].copy, "34191090123456789012345678901234512345678901234");
+eq("portal é o terceiro botão", acts[2], { label: "Abrir portal", url: "https://portal.com/faturas/b1" });
+check("nunca mais de 3 botões (limite do WhatsApp)", acts.length <= 3, acts.length);
+
+const actionsPdfPayload = buildPayload({
+  ...actionsInputBase,
+  billing: { id: "b1", value: 99.9, reference: "Mensalidade", due_day: "2026-09-25", situation_name: "Em Aberto", integration_link: "https://boleto.exemplo.com/pdf/b1" },
+});
+eq("boleto sem linha digitável vira botão de PDF (sem Pix, é o primeiro)", buildActions(actionsPdfPayload)[0], { label: "Baixar PDF da fatura", url: "https://boleto.exemplo.com/pdf/b1" });
+
+const actionsMinimalPayload = buildPayload({
+  ...actionsInputBase,
+  billing: { id: "b2", value: 99.9, reference: "Mensalidade", due_day: "2026-09-25", situation_name: "Em Aberto" },
+});
+eq("sem dados de cobrança, sobra só o portal", buildActions(actionsMinimalPayload), [{ label: "Abrir portal", url: "https://portal.com/faturas/b2" }]);
+
+// O payload armazenado carrega __actions: um reenvio do mesmo aviso reusa os
+// botões sem re-render (o texto do template pode ter mudado; os dados, não).
+const storedWithActions = toStoredPayload(actionsFullPayload, "2026-09-25");
+check("payload armazenado carrega __actions", Array.isArray(storedWithActions.__actions) && storedWithActions.__actions.length === 3, storedWithActions.__actions);
+eq("__dueDate continua viajando junto", storedWithActions.__dueDate, "2026-09-25");
+// Payload sem link/pix/boleto (aviso de teste do canal, por exemplo) não ganha chave vazia.
+eq("payload sem botões não ganha chave vazia", "__actions" in toStoredPayload({ nome: "x" }, "2026-09-25"), false);
 
 function addDaysT(date, days) {
   return new Date(new Date(`${date}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);

@@ -25,7 +25,7 @@ import { buildPushPayload, type PushSubscription as WebPushSubscription, type Pu
 
 // Núcleo puro dos lembretes de fatura (dry-run) — sem I/O, compartilhado com a CLI
 // `scripts/simulate-reminders.ts`. Ver `LEMBRETES-WHATSAPP.md`.
-import { addDays, civilToday, isCivilDate, normalizeBrMobile } from "./notify/model.ts";
+import { addDays, civilToday, isCivilDate, normalizeBrMobile, pickCustomerPhone, type PhoneFailure } from "./notify/model.ts";
 import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
 import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
 import { describeSync } from "./notify/sync.ts";
@@ -1771,6 +1771,135 @@ app.post("/admin/whatsapp/connect", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/admin/whatsapp/import-contacts — importa opt-ins da base MikWeb
+//
+// Cria/atualiza `whatsapp_contacts` a partir dos telefones celulares dos clientes
+// da MikWeb. POLÍTICA DE CONSENTIMENTO (importante):
+//   - o cliente precisa ter um celular válido no cadastro;
+//   - quem JÁ está na tabela NUNCA é reativado: `opt_out_at` vence — este endpoint
+//     só PREENCHE telefone/nome e só liga opt-in para quem ainda não tem registro;
+//   - `dryRun: true` devolve o plano completo (o que entraria, o que ficaria de
+//     fora e por quê) SEM gravar nada.
+// Opt-in é decisão do cliente: esta importação cadastra o MEIO de contato; a régua
+// de envio continua só alcançando quem explicitamente autorizou — usar a campanha
+// do portal (ou o opt-in automático no login) para coletar o consentimento.
+// ---------------------------------------------------------------------------
+app.post("/admin/whatsapp/import-contacts", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const dryRun = body.dryRun === true;
+  const maxPages = Math.min(Math.max(Number(body.maxPages ?? 30), 1), 100);
+
+  try {
+    // Varredura completa dos clientes da MikWeb (paginada).
+    const customers: MikWebCustomer[] = [];
+    let page = 1;
+    let totalPages = 1;
+    while (page <= totalPages && page <= maxPages) {
+      const { data, meta } = await mikwebApiGetFull<MikWebCustomer[]>(
+        page === 1 ? "/customers?per_page=100" : `/customers?per_page=100&page=${page}`
+      );
+      if (data?.length) customers.push(...data);
+      const next = meta?.pages?.total_pages;
+      if (!next || !Number.isFinite(next)) break;
+      totalPages = next;
+      page++;
+    }
+
+    const now = Date.now();
+    const contacts = new Map<string, Record<string, unknown>>();
+    const failures: Partial<Record<PhoneFailure, number>> = {};
+    let noPhone = 0;
+    let eligible = 0;
+
+    // Estados atuais, para não reativar quem pediu para sair e não duplicar telefone.
+    const existingRows = await db()
+      .from("whatsapp_contacts")
+      .select("customer_id, phone_e164, opt_in, opt_out_at")
+      .limit(10_000);
+    const existing = new Map<string, Record<string, unknown>>();
+    const existingByPhone = new Set<string>();
+    for (const row of existingRows.data ?? []) {
+      const record = row as Record<string, unknown>;
+      existing.set(String(record.customer_id), record);
+      if (typeof record.phone_e164 === "string" && record.phone_e164) existingByPhone.add(record.phone_e164);
+    }
+
+    for (const customer of customers) {
+      const customerId = String(customer.id ?? "");
+      if (!customerId) continue;
+      const phone = pickCustomerPhone(customer);
+      if (!phone.ok) {
+        if (phone.reason === "empty") noPhone++;
+        else failures[phone.reason] = (failures[phone.reason] ?? 0) + 1;
+        continue;
+      }
+      eligible++;
+      const current = existing.get(customerId);
+      const optedOut = current ? current.opt_out_at !== null && current.opt_out_at !== undefined : false;
+      contacts.set(customerId, {
+        customer_id: customerId,
+        cpf: typeof customer.cpf_cnpj === "string" ? customer.cpf_cnpj : null,
+        customer_name: customer.full_name ?? null,
+        phone_e164: phone.e164,
+        // Opt-in: só quem AINDA NÃO TEM registro entra como opt-in=true (o cliente
+        // autorizou receber pelo portal). Registro existente preserva o consentimento
+        // atual — e opt-out vence sempre.
+        opt_in: current ? current.opt_in === true && !optedOut : true,
+        opt_out_at: current ? (current.opt_out_at ?? null) : null,
+        source: "mikweb-import",
+        is_new: !current,
+        phone_changed: current ? current.phone_e164 !== phone.e164 : false,
+        _failure_reason: phone.reason === "landline" || phone.reason === "invalid" ? phone.reason : null,
+      });
+    }
+
+    const toInsert = [...contacts.values()].filter((row) => row.is_new);
+    const toUpdate = [...contacts.values()].filter((row) => !row.is_new && (row.phone_changed || row.opt_in === true));
+    const plan = {
+      scanned: customers.length,
+      eligible,
+      noPhone,
+      phoneFailures: failures,
+      newContacts: toInsert.length,
+      updates: toUpdate.length,
+      keptOptOut: [...contacts.values()].filter((row) => row.opt_out_at !== null && row.opt_out_at !== undefined).length,
+      phoneConflicts: [...contacts.values()].filter((row) => row.phone_e164 && existingByPhone.has(String(row.phone_e164)) && row.is_new).length,
+    };
+
+    if (dryRun) {
+      return json({ dryRun: true, plan, sample: [...contacts.values()].slice(0, 10) });
+    }
+
+    // Gravação em lotes: upsert preserva o registro (idempotente, reprocessar não duplica).
+    let inserted = 0;
+    let updated = 0;
+    const rows = [...contacts.values()].map((row) => {
+      const { is_new: _isNew, phone_changed: _phoneChanged, ...contact } = row;
+      return { ...contact, created_at: now, updated_at: now };
+    });
+    for (let index = 0; index < rows.length; index += 200) {
+      const batch = rows.slice(index, index + 200);
+      const { error } = await db()
+        .from("whatsapp_contacts")
+        .upsert(batch, { onConflict: "customer_id" });
+      if (error) return jsonError(`Erro ao gravar os contatos: ${error.message}`, 500);
+      inserted += batch.length;
+    }
+
+    await logEvent({
+      type: "whatsapp_opt_in",
+      metadata: { action: "import-contacts", scanned: plan.scanned, newContacts: plan.newContacts, updates: plan.updates },
+    });
+
+    return json({ success: true, plan: { ...plan, written: inserted }, updated });
+  } catch (error) {
+    console.error("[IMPORT_CONTACTS_ERROR]", error);
+    return jsonError(error instanceof Error ? error.message : "Erro ao importar os contatos.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/admin/whatsapp/test — testa o canal (sem número: só status)
 //
 // Com `number` + `confirm: true` a mensagem de teste entra pela outbox e é
@@ -1836,7 +1965,21 @@ app.post("/admin/whatsapp/test", async (c) => {
                 cell_phone_number_3: null,
                 cell_phone_number_4: null,
               },
-              billing: { id: "teste", customer_id: "teste", value: 99.9, reference, due_day: dueDate, situation_name: "Em Aberto" },
+              billing: {
+                id: "teste",
+                customer_id: "teste",
+                value: 99.9,
+                reference,
+                due_day: dueDate,
+                situation_name: "Em Aberto",
+                // Dados de cobrança realistas para o teste exercitar os BOTÕES de
+                // ação rápida (copiar Pix, copiar código de barras, abrir portal) —
+                // sem eles o teste sairia sem botões, mascarando o formato real.
+                pix_copy_paste_base64:
+                  "000201010212261060014br.gov.bcb.pix2558api.pix.com/v2/cobv/12345678901234567890123456785204000053039865406129.905802BR5913Cliente Teste6009Sao Paulo62070503***63041234",
+                digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901234",
+                integration_link: "https://minhasupernet.com/faturas/teste/boleto.pdf",
+              },
               dueDate,
               reference,
               referenceDate: today,

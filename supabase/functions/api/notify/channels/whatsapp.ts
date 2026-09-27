@@ -102,6 +102,10 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
           linkPreview: true,
           trackId: ctx.eventId,
           readChat: false,
+          // Botões de ação rápida (copiar Pix, código de barras, abrir PDF). O
+          // cliente UazAPI envia por /send/menu e degrada para texto se o recurso
+          // interativo recusar.
+          actions: rendered.actions,
         });
         return { ok: true, providerId: sent.providerId };
       } catch (error) {

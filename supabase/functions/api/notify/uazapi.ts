@@ -38,6 +38,11 @@ export interface SendTextInput {
   async?: boolean;
   trackId?: string;
   readChat?: boolean;
+  /**
+   * Botões de ação rápida (máx. 3 — limite do WhatsApp). `copy` vira botão
+   * nativo "copiar"; `url` abre o link. Usam `/send/menu` (type `button`).
+   */
+  actions?: Array<{ label: string; copy?: string; url?: string }>;
 }
 
 export interface SendTextResult {
@@ -248,6 +253,56 @@ export function createUazapiClient(options: UazapiOptions): UazapiClient {
       if (input.async !== undefined) body.async = input.async;
       if (input.trackId) body.track_id = input.trackId;
       if (input.readChat !== undefined) body.readchat = input.readChat;
+
+      // Botões de ação (máx. 3): saem por /send/menu, type `button`, com choices
+      // `texto|copy:código` / `texto|url`. Só botões de ação — misturar com botões
+      // de resposta quebra a exibição (doc da UazAPI).
+      const actionChoices = (input.actions ?? [])
+        .slice(0, 3)
+        .map((action) =>
+          action.copy
+            ? `${action.label}|copy:${action.copy}`
+            : action.url
+              ? `${action.label}|${action.url}`
+              : action.label
+        )
+        .filter((choice) => choice.trim().length > 0);
+
+      if (actionChoices.length > 0) {
+        const menuPayload = {
+          number: input.number,
+          type: "button" as const,
+          text: input.text,
+          choices: actionChoices,
+          ...(input.delay !== undefined ? { delay: input.delay } : {}),
+          ...(input.trackId ? { track_id: input.trackId } : {}),
+          ...(input.readChat !== undefined ? { readchat: input.readChat } : {}),
+        };
+        try {
+          const parsed = asRecord(await request("POST", "/send/menu", menuPayload));
+          return {
+            providerId: stringOrNull(parsed.messageid) ?? stringOrNull(parsed.id),
+            status: stringOrNull(parsed.status) ?? stringOrNull(asRecord(parsed.response).status),
+            raw: parsed,
+          };
+        } catch (error) {
+          // O recurso interativo pode não estar disponível (doc: "pode ser
+          // descontinuado a qualquer momento"). Fallback: reenvia como TEXTO puro
+          // com as ações em linhas — a mensagem chega de qualquer forma.
+          if (error instanceof UazapiError && (error.isBadRequest || error.status === 500)) {
+            const fallbackBody = `${input.text}\n\n${(input.actions ?? [])
+              .map((action) => (action.copy ? `📋 ${action.label}: ${action.copy}` : action.url ? `🔗 ${action.label}: ${action.url}` : action.label))
+              .join("\n")}`;
+            const fallback = asRecord(await request("POST", "/send/text", { ...body, text: fallbackBody }));
+            return {
+              providerId: stringOrNull(fallback.messageid) ?? stringOrNull(fallback.id),
+              status: stringOrNull(fallback.status) ?? stringOrNull(asRecord(fallback.response).status),
+              raw: fallback,
+            };
+          }
+          throw error;
+        }
+      }
 
       const parsed = asRecord(await request("POST", "/send/text", body));
       return {

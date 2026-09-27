@@ -229,6 +229,17 @@ export default function AdminSettings() {
   const [waSyncOpen, setWaSyncOpen] = useState(false);
   const [waDispatchOpen, setWaDispatchOpen] = useState(false);
   const [waChecking, setWaChecking] = useState(false);
+  const [waImportOpen, setWaImportOpen] = useState(false);
+  const [waImportPlan, setWaImportPlan] = useState<{
+    scanned: number;
+    eligible: number;
+    noPhone: number;
+    phoneFailures: Record<string, number>;
+    newContacts: number;
+    updates: number;
+    keptOptOut: number;
+  } | null>(null);
+  const [waImporting, setWaImporting] = useState(false);
 
   // ── WhatsApp handlers ──
   /** Aplica a resposta da API no estado da tela (usado pelo efeito e pelos handlers). */
@@ -387,6 +398,49 @@ export default function AdminSettings() {
       toast.error("Erro ao iniciar a conexão.");
     } finally {
       setWaConnecting(false);
+    }
+  };
+
+  /** Prévia da importação (dry-run: planeja, não grava). */
+  const previewImport = async () => {
+    setWaImporting(true);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/import-contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Erro ao planejar a importação.");
+      setWaImportPlan(data.plan ?? null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao planejar a importação.");
+    } finally {
+      setWaImporting(false);
+    }
+  };
+
+  /** Executa a importação de fato. */
+  const runImport = async () => {
+    setWaImporting(true);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/import-contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Erro ao importar os contatos.");
+      toast.success(
+        `Importação concluída: ${data.plan?.newContacts ?? 0} novos, ${data.plan?.updates ?? 0} atualizados.`
+      );
+      setWaImportOpen(false);
+      setWaImportPlan(null);
+      await loadWhatsAppConfig();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao importar os contatos.");
+    } finally {
+      setWaImporting(false);
     }
   };
 
@@ -1181,6 +1235,15 @@ export default function AdminSettings() {
             <Button
               variant="outline"
               size="sm"
+              className="text-xs h-9 cursor-pointer"
+              onClick={() => setWaImportOpen(true)}
+            >
+              <MessageCircle className="h-3.5 w-3.5 mr-1.5" />
+              Importar contatos
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
               onClick={() => setWaSyncOpen(true)}
             >
@@ -1314,6 +1377,43 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={waImportOpen}
+        onOpenChange={(open) => {
+          setWaImportOpen(open);
+          if (!open) setWaImportPlan(null);
+        }}
+        title="Importar contatos da MikWeb?"
+        description="Cria contatos de WhatsApp a partir dos celulares da base. Quem pediu PARA sair não é reativado."
+        confirmLabel={waImportPlan ? `Importar ${waImportPlan.newContacts} novos` : "Planejar importação"}
+        onConfirm={waImportPlan ? runImport : previewImport}
+      >
+        <div className="space-y-3">
+          {waImportPlan ? (
+            <div className="space-y-1 text-xs">
+              <p>
+                Clientes varridos: <span className="font-mono">{waImportPlan.scanned}</span> · elegíveis: <span className="font-mono">{waImportPlan.eligible}</span>
+              </p>
+              <p>
+                Novos contatos: <span className="font-medium text-emerald-600 dark:text-emerald-400">{waImportPlan.newContacts}</span> · atualizações: <span className="font-mono">{waImportPlan.updates}</span>
+              </p>
+              <p className="text-muted-foreground">
+                Sem celular: {waImportPlan.noPhone} · fixo/inválido: {Object.values(waImportPlan.phoneFailures).reduce((a, b) => a + b, 0)} · opt-out preservado: {waImportPlan.keptOptOut}
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Novos contatos entram com opt-in = autorização de receber pelo portal. Se não for
+                o caso, desative o canal antes de importar.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              A prévia varre a base da MikWeb e mostra o que seria importado, sem gravar nada.
+              Clique de novo para executar.
+            </p>
+          )}
+        </div>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={waTestDialog}

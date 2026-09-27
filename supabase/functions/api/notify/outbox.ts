@@ -149,8 +149,11 @@ export interface OutboxApi {
    * tentativa faria um cliente barrado pela cota esgotar as tentativas sem falha.
    */
   release(input: { deliveryId: string; scheduledFor: number; reason: string }): Promise<void>;
-  eventsByIds(ids: string[]): Promise<Map<string, OutboxEvent>>;
-  markSent(deliveryId: string, providerId: string | null): Promise<void>;
+  eventsByIds(ids: string[]): Promise<Map<string, OutboxEvent>>;    markSent(
+      deliveryId: string,
+      providerId: string | null,
+      actions?: Array<{ label: string; copy?: string; url?: string }>
+    ): Promise<void>;
   markFailed(input: {
     deliveryId: string;
     errorKey: string | null;
@@ -260,18 +263,22 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
       return out;
     },
 
-    async markSent(deliveryId, providerId) {
+    async markSent(deliveryId, providerId, actions) {
       const now = Date.now();
+      const patch: Record<string, unknown> = {
+        status: "sent",
+        provider_id: providerId,
+        sent_at: now,
+        status_at: now,
+        error_key: null,
+        error_message: null,
+      };
+      // Espelho dos botões enviados (migration 006) para consulta rápida na fila
+      // e no histórico do cliente, sem desserializar o evento.
+      if (actions?.length) patch.actions = actions;
       const { error } = await db()
         .from("notification_deliveries")
-        .update({
-          status: "sent",
-          provider_id: providerId,
-          sent_at: now,
-          status_at: now,
-          error_key: null,
-          error_message: null,
-        })
+        .update(patch)
         .eq("id", deliveryId);
       if (error) throw new Error(`markSent falhou: ${error.message ?? error}`);
     },

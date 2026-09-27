@@ -60,7 +60,6 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Ver no portal do cliente: {{link}}",
       "",
       "Se já pagou, desconsidere este aviso.",
-      "Para não receber mais avisos, responda PARAR.",
     ].join("\n"),
   },
   {
@@ -81,7 +80,6 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Ver no portal do cliente: {{link}}",
       "",
       "Pague hoje para evitar juros e bloqueio.",
-      "Para não receber mais avisos, responda PARAR.",
     ].join("\n"),
   },
   {
@@ -103,7 +101,6 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Ver no portal do cliente: {{link}}",
       "",
       "Se já pagou, desconsidere — a baixa pode levar até 1 dia útil.",
-      "Para não receber mais avisos, responda PARAR.",
     ].join("\n"),
   },
   {
@@ -199,6 +196,13 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
   if (pix) payload.pix = pix;
   if (boleto) payload.boleto = boleto;
 
+  // Linha digitável (código de barras) para o botão de cópia — a MikWeb fornece
+  // quando a cobrança é boleto registrado.
+  const digitable = typeof billing.digitable_line === "string" && billing.digitable_line.trim()
+    ? billing.digitable_line.trim()
+    : null;
+  if (digitable) payload.linha_digitavel = digitable;
+
   return payload;
 }
 
@@ -222,9 +226,21 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
 export const EVENT_DUE_DATE = "__dueDate";
 export const EVENT_URL = "__url";
 
-/** Payload do template + os metadados de evento que viajam com ele. */
+export const EVENT_ACTIONS = "__actions";
+
+/**
+ * Payload do template + os metadados de evento que viajam com ele.
+ * `__actions` carrega os botões de ação rápida: o dispatcher os passa ao adapter
+ * na hora do envio (reenvio do mesmo aviso reusa as ações sem re-render).
+ */
 export function toStoredPayload(payload: TemplatePayload, dueDate: string): Record<string, unknown> {
-  return { ...payload, [EVENT_DUE_DATE]: dueDate, [EVENT_URL]: payload.link };
+  const actions = buildActions(payload);
+  return {
+    ...payload,
+    [EVENT_DUE_DATE]: dueDate,
+    [EVENT_URL]: payload.link,
+    ...(actions.length ? { [EVENT_ACTIONS]: actions } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -236,8 +252,28 @@ export interface RenderedMessage {
   eventKey: string;
   title?: string;
   body: string;
+  /** Botões de ação rápida (copiar Pix, código de barras, abrir PDF). */
+  actions?: Array<{ label: string; copy?: string; url?: string }>;
   /** Placeholders usados no template que não existem no payload (erro de template). */
   missing: string[];
+}
+
+/**
+ * Ações rápidas derivadas do payload — a mesma fatura produz os mesmos botões
+ * em qualquer template. Máx. 3 (limite do WhatsApp): Pix copiável primeiro (o
+ * caminho de pagamento mais rápido), depois boleto (código de barras copiável
+ * quando existir; senão abre o PDF) e o link do portal.
+ */
+export function buildActions(payload: TemplatePayload): Array<{ label: string; copy?: string; url?: string }> {
+  const actions: Array<{ label: string; copy?: string; url?: string }> = [];
+  if (payload.pix) actions.push({ label: "Copiar código Pix", copy: payload.pix });
+  if (payload.boleto) {
+    const digitable = typeof payload.linha_digitavel === "string" ? payload.linha_digitavel.replace(/\D/g, "") : "";
+    if (digitable.length >= 44) actions.push({ label: "Copiar código de barras", copy: digitable });
+    else actions.push({ label: "Baixar PDF da fatura", url: payload.boleto });
+  }
+  if (payload.link && actions.length < 3) actions.push({ label: "Abrir portal", url: payload.link });
+  return actions.slice(0, 3);
 }
 
 const SECTION_RE = /\{\{#(\w+)\}\}\n?([\s\S]*?)\{\{\/\1\}\}/g;
@@ -312,8 +348,18 @@ export function renderFor(
     return { message: null, warnings: [`sem template ativo: ${channel}/${eventKey}`] };
   }
   const rendered = renderTemplate(template, payload);
+  // Ações rápidas só no WhatsApp (push não tem botões) e só quando o payload tem
+  // o que os botões precisam (Pix/boleto/portal).
+  const actions = channel === "whatsapp" && eventKey !== "test" ? buildActions(payload) : [];
   return {
-    message: { channel, eventKey, title: rendered.title, body: rendered.body, missing: rendered.missing },
+    message: {
+      channel,
+      eventKey,
+      title: rendered.title,
+      body: rendered.body,
+      ...(actions.length ? { actions } : {}),
+      missing: rendered.missing,
+    },
     warnings: rendered.missing.map((key) => `placeholder {{${key}}} não existe em ${channel}/${eventKey}`),
   };
 }

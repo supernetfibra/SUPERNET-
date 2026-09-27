@@ -19,6 +19,20 @@ export interface Rendered {
   title?: string;
   body: string;
   url?: string;
+  /**
+   * Botões de ação rápida (copiar Pix, código de barras, abrir PDF). O adapter
+   * decide como enviá-los — e TEM de degradar para texto puro se o provedor
+   * recusar o recurso interativo (a doc da UazAPI avisa que pode ser
+   * descontinuado a qualquer momento).
+   */
+  actions?: RenderedAction[];
+}
+
+/** Um botão de ação rápida. `copy` entra como botão nativo de cópia do WhatsApp. */
+export interface RenderedAction {
+  label: string;
+  copy?: string;
+  url?: string;
 }
 
 export interface DeliveryContext {
