@@ -335,7 +335,8 @@ export interface SyncDeps {
   /** Carrega a base real (só leitura). Injetado: as credenciais da MikWeb vivem no
    *  `index.ts`, e assim este módulo continua typecheckável fora do Deno. */
   loadBase: SyncBaseLoader;
-  templates?: ChannelTemplate[];
+  /** Templates fixos (teste) ou resolvidos por chamada (os salvos no painel). */
+  templates?: ChannelTemplate[] | (() => ChannelTemplate[] | undefined | Promise<ChannelTemplate[] | undefined>);
   now?: () => number;
   log?: (message: string, extra?: Record<string, unknown>) => void;
   /**
@@ -400,6 +401,10 @@ export async function runBillingSync(deps: SyncDeps, options: SyncOptions = {}):
 
   const dueWindow = syncDueWindow(settings.rules, from, days);
   const base = await deps.loadBase({ dueFrom: dueWindow.from, dueTo: dueWindow.to });
+  // Resolve templates uma vez por rodada (function ou array); o preview enfileirado
+  // sai do MESMO texto que o dispatcher vai usar.
+  const templates =
+    typeof deps.templates === "function" ? await deps.templates() : deps.templates;
 
   const plan = planSync({
     billings: base.billings,
@@ -408,7 +413,7 @@ export async function runBillingSync(deps: SyncDeps, options: SyncOptions = {}):
     pushCustomerIds: base.pushCustomerIds,
     alreadySent: base.alreadySent,
     settings,
-    templates: deps.templates,
+    templates,
     from,
     days,
     nowMs: now(),

@@ -19,7 +19,10 @@
 
 import type { SupabaseLike } from "./outbox.ts";
 import type { WhatsAppConfig } from "./config.ts";
+import { loadTemplates } from "./template-store.ts";
 import {
+  SETTINGS_TABLE,
+  SETTINGS_KEY,
   defaultDocument,
   defaultWhatsAppSettings,
   documentOf,
@@ -30,9 +33,6 @@ import {
   type SettingsDocument,
   type WhatsAppSettings,
 } from "./settings.ts";
-
-export const SETTINGS_TABLE = "notification_config";
-export const SETTINGS_KEY = "default";
 
 export interface SettingsStoreDeps {
   db: () => SupabaseLike;
@@ -108,6 +108,15 @@ export async function loadNotificationSettings(
   const normalized = normalizeDocument(hasStored ? stored : undefined, defaultDocument());
   notes.push(...normalized.notes);
 
+  // Templates da mesma linha: entram no fingerprint (pelos desvios do padrão) e no
+  // que o simulador renderiza. Falha de leitura degrada para o texto do código.
+  let templates;
+  try {
+    templates = (await loadTemplates({ db: deps.db, now: deps.now })).templates;
+  } catch {
+    templates = undefined;
+  }
+
   const origin: LoadedSettings["origin"] = hasStored ? "db" : "defaults";
   if (tableMissing) {
     notes.push(`${SETTINGS_TABLE} não pôde ser lida (migration 004 pendente?) — a régua padrão do código está em vigor`);
@@ -115,7 +124,7 @@ export async function loadNotificationSettings(
     notes.push("nenhuma configuração salva ainda — a régua padrão do código está em vigor; salve no painel para fixá-la");
   }
 
-  const settings = settingsFrom(normalized.document, whatsapp);
+  const settings = { ...settingsFrom(normalized.document, whatsapp), templates };
   return {
     settings,
     document: normalized.document,
@@ -152,12 +161,27 @@ export async function saveNotificationSettings(
   const now = deps.now?.() ?? Date.now();
 
   try {
+    // `documentOf` só conhece os campos da régua — e os TEMPLATES moram na mesma
+    // linha. Sem o merge abaixo, salvar a régua apagava em silêncio as mensagens
+    // editadas no painel (e vice-versa já é tratado no `saveTemplates`).
+    const { data: existingRow } = await deps
+      .db()
+      .from(SETTINGS_TABLE)
+      .select("settings")
+      .eq("key", SETTINGS_KEY)
+      .maybeSingle();
+    const existingDoc: Record<string, unknown> =
+      existingRow && typeof existingRow.settings === "object" && existingRow.settings !== null
+        ? (existingRow.settings as Record<string, unknown>)
+        : {};
+    const mergedDoc: Record<string, unknown> = { ...existingDoc, ...documentOf(settings) } as Record<string, unknown>;
+
     const { error } = await deps.db()
       .from(SETTINGS_TABLE)
       .upsert(
         {
           key: SETTINGS_KEY,
-          settings: documentOf(settings) as unknown as Record<string, unknown>,
+          settings: mergedDoc,
           updated_at: now,
           updated_by: options.updatedBy ?? "admin",
         },
@@ -225,5 +249,11 @@ export function applyOverrides(
   }
 
   const normalized = normalizeDocument(patch, base);
-  return { settings: settingsFrom(normalized.document, whatsapp), applied };
+  // Templates atravessam o override: a rodada de simulação usa o MESMO texto salvo,
+  // e o fingerprint continua cobrindo os desvios de mensagem após a sobreposição.
+  const settings = {
+    ...settingsFrom(normalized.document, whatsapp),
+    ...(base.templates ? { templates: base.templates } : {}),
+  };
+  return { settings, applied };
 }

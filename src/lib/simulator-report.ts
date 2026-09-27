@@ -70,6 +70,8 @@ export interface SimReportSettings {
   updatedBy: string | null;
   activeRuleKeys: string[];
   notes: string[];
+  /** Templates que regeram o preview da rodada (comparação com edições pendentes). */
+  templates?: Array<{ channel: string; eventKey: string; body: string; title?: string; active: boolean }>;
 }
 
 /** Resposta de `GET /api/admin/notifications/settings`. */
@@ -150,6 +152,11 @@ export interface SimReport {
   };
   assumptions: string[];
   templateWarnings: string[];
+  /**
+   * Mensagens cujo texto da rodada difere do salvo (comparação por evento, só
+   * WhatsApp). Populado pelo servidor; o painel transforma em aviso visível.
+ */
+  templateDiff?: Array<{ eventKey: string; saved: string; report: string }>;
   itemsTruncated: boolean;
   items: SimItem[];
   skippedSamples: Array<{ customerName: string; ruleKey: string; reason: string }>;
@@ -312,6 +319,110 @@ export function decisionTone(code: string): string {
   if (code.startsWith("defer"))
     return "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400";
   return "text-muted-foreground bg-secondary";
+}
+
+// ---------------------------------------------------------------------------
+// Editor de mensagens (templates) — espelha `template-store.ts`
+// ---------------------------------------------------------------------------
+
+export interface TemplateEntry {
+  body: string;
+  title?: string;
+  active: boolean;
+}
+
+/** Um template no editor: texto em vigor + render de exemplo do servidor. */
+export interface TemplateEditorItem {
+  key: string;
+  channel: "whatsapp" | "push";
+  eventKey: string;
+  body: string;
+  title?: string;
+  active: boolean;
+  /** Render com dados de exemplo completo (Pix + boleto). */
+  sampleFull: string;
+  /** Render sem Pix/boleto — mostra como as seções opcionais somem. */
+  sampleMinimal: string;
+  missing: string[];
+  edited: boolean;
+}
+
+/** Resposta de GET/POST `/api/admin/notifications/templates`. */
+export interface TemplatesState {
+  templates: TemplateEditorItem[];
+  defaults: Record<string, TemplateEntry>;
+  origin?: "db" | "defaults";
+  notes?: string[];
+  channels?: string[];
+  eventKeys?: string[];
+  placeholders?: string[];
+  limits?: { title: number; body: number };
+}
+
+const SECTION_RE = /\{\{#(\w+)\}\}\n?([\s\S]*?)\{\{\/\1\}\}/g;
+const PLACEHOLDER_RE = /\{\{\s*(\w+)\s*\}\}/g;
+
+/** Mesma semântica do `renderTemplate` do núcleo, para o preview acompanhar a digitação. */
+function expandSections(text: string, payload: Record<string, string>): string {
+  let out = text;
+  for (let pass = 0; pass < 5; pass++) {
+    const next = out.replace(SECTION_RE, (_m, key: string, inner: string) => (payload[key] ? inner : ""));
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+function substitute(text: string, payload: Record<string, string>): { body: string; missing: Set<string> } {
+  const missing = new Set<string>();
+  const body = text.replace(PLACEHOLDER_RE, (_m, key: string) => {
+    const value = payload[key];
+    if (value === undefined) {
+      missing.add(key);
+      return "";
+    }
+    return value;
+  });
+  return { body, missing };
+}
+
+function tidy(text: string): string {
+  return text
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\n+/, "")
+    .replace(/\n+$/, "");
+}
+
+/** Dados de exemplo — TODOS os placeholders preenchidos (espelha `sampleTemplatePayload`). */
+export const TEMPLATE_SAMPLE_PAYLOAD: Record<string, string> = {
+  nome: "Maria Souza",
+  primeiro_nome: "Maria",
+  referencia: "Mensalidade de Acesso à Internet",
+  valor: "R$ 99,90",
+  valor_atualizado: "R$ 102,35",
+  vencimento: "25/09/2026",
+  dias_atraso: "5",
+  dias_para_vencer: "3",
+  boleto: "https://exemplo.com/boleto.pdf",
+  pix: "00020126580014BR.GOV.BCB.PIX…",
+  link: "https://minhasupernet.com/faturas/123",
+  empresa: "MinhaSuperNet",
+  tem_encargos: "1",
+};
+
+export const TEMPLATE_MINIMAL_PAYLOAD: Record<string, string> = Object.fromEntries(
+  Object.entries(TEMPLATE_SAMPLE_PAYLOAD).filter(([key]) => !"boleto,pix,tem_encargos".split(",").includes(key))
+);
+
+/** Render client-side do template enquanto digita (whitespace idêntico ao servidor). */
+export function renderTemplatePreview(
+  body: string,
+  payload: Record<string, string> = TEMPLATE_SAMPLE_PAYLOAD
+): { body: string; missing: string[] } {
+  const withSections = expandSections(body, payload);
+  const { body: rendered, missing } = substitute(withSections, payload);
+  return { body: tidy(rendered), missing: [...missing] };
 }
 
 export function formatBRL(value: number): string {

@@ -90,6 +90,8 @@ export interface SimulationSettingsInput {
   updatedAt?: number | null;
   updatedBy?: string | null;
   notes?: string[];
+  /** Templates efetivos da rodada — entram no fingerprint pelos desvios do padrão. */
+  templates?: ChannelTemplate[];
 }
 
 /** A configuração efetiva da rodada, como ela aparece no relatório. */
@@ -102,6 +104,8 @@ export interface ReportSettings extends SettingsDocument {
   /** Chaves das regras que de fato geram avisos (as `active`). */
   activeRuleKeys: string[];
   notes: string[];
+  /** Templates que regeram o preview — o painel compara com edições pendentes. */
+  templates?: ChannelTemplate[];
 }
 
 export interface SimulationInput {
@@ -215,8 +219,15 @@ export function resolveSimulationSettings(input?: SimulationSettingsInput): {
 } {
   const normalized = normalizeDocument(input ?? {}, defaultDocument());
   const whatsapp: WhatsAppSettings = { ...defaultWhatsAppSettings(), ...(input?.whatsapp ?? {}) };
+  // Templates atravessam a resolução: `settingsFrom` não os conhece, mas o
+  // fingerprint (e o preview) precisam deles — é o que faz a edição de uma
+  // mensagem mudar a impressão digital da configuração.
+  const settings = {
+    ...settingsFrom(normalized.document, whatsapp),
+    ...(input?.templates?.length ? { templates: input.templates } : {}),
+  };
   return {
-    settings: settingsFrom(normalized.document, whatsapp),
+    settings,
     notes: [...(input?.notes ?? []), ...normalized.notes],
   };
 }

@@ -28,6 +28,13 @@ import {
   type WhatsAppConfig,
 } from "./config.ts";
 import { dispatchQueue, type DispatchOptions, type DispatchSummary } from "./dispatch.ts";
+import {
+  loadTemplates,
+  saveTemplates,
+  describeTemplates,
+  type LoadedTemplates,
+  type SaveTemplatesResult,
+} from "./template-store.ts";
 import { runBillingSync, type SyncBaseLoader, type SyncOptions, type SyncSummary } from "./sync.ts";
 import { sendBillingReminder, type BillingContact, type SendBillingInput, type SendBillingResult, type SaveContactInput } from "./send-billing.ts";
 import type { ChannelTemplate } from "./templates.ts";
@@ -53,6 +60,13 @@ export interface WhatsAppRuntime {
   saveSettings(input: unknown, options?: { updatedBy?: string }): Promise<SaveSettingsResult>;
   getContact(customerId: string): Promise<BillingContact | null>;
   saveContact(input: SaveContactInput): Promise<void>;
+  /** Templates efetivos (salvos sobrepõem o código) — é o que o simulador usa. */
+  getTemplates(): Promise<LoadedTemplates>;
+  saveTemplates(
+    patch: unknown,
+    options?: { updatedBy?: string }
+  ): Promise<SaveTemplatesResult>;
+  describeTemplates(): Promise<ReturnType<typeof describeTemplates>>;
   setStatus(status: string): Promise<void>;
   setPausedUntil(until: number | null): Promise<void>;
   outbox: OutboxApi;
@@ -75,6 +89,14 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
   const outbox = createOutbox(deps.db);
   const configDeps = { db: deps.db, getEnv: deps.getEnv, now: deps.now };
 
+  // Templates resolvidos POR CHAMADA: uma edição no painel vale na próxima mensagem,
+  // sem deploy e sem cache que fizesse o simulador mostrar um texto e a fila enviar outro.
+  const resolveTemplates = async (): Promise<ChannelTemplate[] | undefined> => {
+    if (deps.templates) return deps.templates; // fixado por código (testes)
+    const loaded = await loadTemplates({ db: deps.db, now: deps.now });
+    return loaded.templates;
+  };
+
   const getConfig = () => getWhatsAppConfig(configDeps);
 
   // O canal é lido pelo `getWhatsAppConfig` (um leitor por tabela) e a régua por
@@ -96,7 +118,7 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
       {
         outbox,
         registry,
-        templates: deps.templates,
+        templates: () => resolveTemplates(),
         now: deps.now,
         log: deps.log,
         perCustomerCap: async () => (await getSettings()).settings.whatsapp.perCustomerCapPerDay,
@@ -166,6 +188,12 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
     saveSettings: (input, options) => saveNotificationSettings(settingsDeps, input, options),
     getContact,
     saveContact,
+    getTemplates: () => loadTemplates({ db: deps.db, now: deps.now }),
+    saveTemplates: (patch, options) => saveTemplates({ db: deps.db, now: deps.now }, patch, options),
+    describeTemplates: async () => {
+      const loaded = await loadTemplates({ db: deps.db, now: deps.now });
+      return describeTemplates(loaded.stored);
+    },
     setStatus: (status) => setWhatsAppStatus(configDeps, status),
     setPausedUntil: (until) => setWhatsAppPausedUntil(configDeps, until),
     outbox,
@@ -176,14 +204,15 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
       // Uma leitura só: régua, marca e link do portal saem da MESMA configuração que
       // o simulador mostrou. `RuntimeDeps` continua podendo fixar marca por código
       // (útil em teste), mas o padrão é a configuração persistida.
-      const { settings } = await getSettings();
+      const [loaded, templates] = await Promise.all([getSettings(), resolveTemplates()]);
+      const settings = loaded.settings;
       return sendBillingReminder(
         {
           outbox,
           getContact,
           saveContact,
           dispatch,
-          templates: deps.templates,
+          templates,
           now: deps.now,
           portalBaseUrl: deps.portalBaseUrl ?? settings.portalBaseUrl,
           companyName: deps.companyName ?? settings.companyName,
@@ -198,7 +227,7 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
           outbox,
           getSettings,
           loadBase: options.loadBase,
-          templates: deps.templates,
+          templates: () => resolveTemplates(),
           now: deps.now,
           log: deps.log,
         },

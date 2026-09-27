@@ -24,6 +24,15 @@
  */
 
 import { DEFAULT_RULES, type ReminderRule } from "./rules.ts";
+import { DEFAULT_TEMPLATES, type ChannelTemplate } from "./templates.ts";
+
+// ---------------------------------------------------------------------------
+// Local da configuração (usado por settings-store e template-store)
+// ---------------------------------------------------------------------------
+
+/** Linha única dos dois documentos (régua e templates) em `notification_config`. */
+export const SETTINGS_TABLE = "notification_config";
+export const SETTINGS_KEY = "default";
 
 // ---------------------------------------------------------------------------
 // Limites de sanidade (config errada não pode virar disparo errado)
@@ -80,6 +89,13 @@ export interface SettingsDocument {
 
 export interface NotificationSettings extends SettingsDocument {
   whatsapp: WhatsAppSettings;
+  /**
+   * Templates efetivos (salvos sobrepõem o código), anexados na leitura do store.
+   * Opcional: a CLI e os testes que constroem settings à mão não precisam lê-los —
+   * e o fingerprint só considera os DESVIOS do texto padrão (ver abaixo), então
+   * "sem templates" e "templates iguais ao padrão" produzem o MESMO número.
+   */
+  templates?: ChannelTemplate[];
 }
 
 /**
@@ -390,6 +406,33 @@ export function settingsFingerprint(settings: NotificationSettings): string {
       settings.whatsapp.perCustomerCapPerDay,
     ].join(",")
   );
+
+  // Templates entram apenas pelos DESVIOS do texto padrão: editar uma mensagem muda
+  // a impressão digital (o simulador e o dispatcher deixam de “concordar” com quem
+  // não sabe da edição), mas a configuração intocada — com ou sem a leitura de
+  // templates — mantém o número de antes.
+  if (settings.templates?.length) {
+    const deviations = settings.templates
+      .filter((template) => {
+        const base = DEFAULT_TEMPLATES.find(
+          (candidate) => candidate.channel === template.channel && candidate.eventKey === template.eventKey
+        );
+        if (!base) return true;
+        return base.body !== template.body || (base.title ?? "") !== (template.title ?? "") || base.active !== template.active;
+      })
+      .sort((a, b) => {
+        const ka = `${a.channel}:${a.eventKey}`;
+        const kb = `${b.channel}:${b.eventKey}`;
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+    if (deviations.length) {
+      parts.push(
+        deviations
+          .map((template) => [template.channel, template.eventKey, template.active ? 1 : 0, template.title ?? "", template.body].join(":"))
+          .join("|")
+      );
+    }
+  }
 
   let hash = 2166136261;
   const canonical = parts.join("~");

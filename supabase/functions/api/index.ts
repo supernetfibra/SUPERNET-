@@ -33,6 +33,7 @@ import { runSimulation } from "./notify/simulate.ts";
 import { applyOverrides } from "./notify/settings-store.ts";
 import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
 import { maskToken } from "./notify/config.ts";
+import type { ChannelTemplate } from "./notify/templates.ts";
 import { createUazapiClient } from "./notify/uazapi.ts";
 import { createWhatsAppRuntime } from "./notify/runtime.ts";
 import { handleUazapiWebhook } from "./notify/webhook.ts";
@@ -1437,6 +1438,14 @@ app.get("/admin/notifications/simulate", async (c) => {
       );
     }
 
+    // UMA leitura só: os templates salvos regem o preview E entram nas settings do
+    // relatório (fingerprint pelos desvios do padrão). O painel compara o que a
+    // rodada usou com as edições não salvas do editor para avisar divergência.
+    const savedTemplates = await whatsappRuntime()
+      .getTemplates()
+      .then((loadedT) => loadedT.templates)
+      .catch(() => undefined);
+
     const report = runSimulation({
       customers: base.customers,
       billings: base.billings,
@@ -1453,7 +1462,9 @@ app.get("/admin/notifications/simulate", async (c) => {
         updatedAt: loaded.updatedAt,
         updatedBy: loaded.updatedBy,
         notes: loaded.notes,
+        templates: savedTemplates,
       },
+      templates: savedTemplates,
       overrides: applied,
       today,
       revealPhones: param("reveal") === "1",
@@ -1471,6 +1482,69 @@ app.get("/admin/notifications/simulate", async (c) => {
     if (error instanceof MikWebNotConfigured) return jsonError(error.message, 400);
     console.error("[SIMULATE_LEMBRETES_ERROR]", error);
     return jsonError("Erro ao simular os lembretes.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET|POST /api/admin/notifications/templates — mensagens por evento/canal
+//
+// O editor vive no simulador: cada opção da régua tem seu texto, e o preview com
+// dados de exemplo mostra exatamente como a mensagem chega ao cliente. Salvar grava
+// overrides parciais sobre os templates do código — o que sai na fila é o que o
+// simulador mostrou.
+// ---------------------------------------------------------------------------
+app.get("/admin/notifications/templates", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const state = await whatsappRuntime().describeTemplates();
+    const loaded = await whatsappRuntime().getTemplates();
+    return json({
+      templates: state.templates,
+      defaults: state.defaults,
+      origin: loaded.origin,
+      updatedAt: loaded.updatedAt,
+      updatedBy: loaded.updatedBy,
+      channels: ["whatsapp", "push"],
+      eventKeys: [...RULE_EVENT_KEYS],
+      limits: { title: 120, body: 4096 },
+      placeholders: [
+        "nome", "primeiro_nome", "referencia", "valor", "valor_atualizado", "vencimento",
+        "dias_atraso", "dias_para_vencer", "boleto", "pix", "link", "empresa", "tem_encargos",
+      ],
+    });
+  } catch (error) {
+    console.error("[TEMPLATES_READ_ERROR]", error);
+    return jsonError("Erro ao ler os templates.", 500);
+  }
+});
+
+app.post("/admin/notifications/templates", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  if (body.templates === undefined || body.templates === null || typeof body.templates !== "object" || Array.isArray(body.templates)) {
+    return jsonError("`templates` deve ser um objeto (chave `canal:evento` → { body, title?, active }).", 400);
+  }
+  try {
+    const result = await whatsappRuntime().saveTemplates(body.templates, { updatedBy: "admin" });
+    if (!result.ok) {
+      console.error("[TEMPLATES_SAVE_ERROR]", result.error);
+      return jsonError(result.error, 500);
+    }
+    await logEvent({
+      type: "notification_config",
+      metadata: { action: "templates", keys: Object.keys(body.templates).slice(0, 20) },
+    });
+    const state = await whatsappRuntime().describeTemplates();
+    return json({
+      success: true,
+      origin: result.loaded.origin,
+      notes: result.notes ?? [],
+      templates: state.templates,
+      defaults: state.defaults,
+    });
+  } catch (error) {
+    console.error("[TEMPLATES_SAVE_ERROR]", error);
+    return jsonError("Erro ao salvar os templates.", 500);
   }
 });
 

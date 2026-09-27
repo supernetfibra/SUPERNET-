@@ -40,7 +40,11 @@ import type { ClaimedDelivery, OutboxApi, OutboxEvent } from "./outbox.ts";
 export interface DispatchDeps {
   outbox: OutboxApi;
   registry: ChannelRegistry;
-  templates?: ChannelTemplate[];
+  /**
+   * Templates fixos (testes) ou resolvidos por chamada — os salvos no painel entram
+   * por aqui sem rebuild do runtime.
+   */
+  templates?: ChannelTemplate[] | (() => ChannelTemplate[] | undefined | Promise<ChannelTemplate[] | undefined>);
   now?: () => number;
   /** Tentativas máximas antes de desistir (falha permanente). */
   maxAttempts?: number;
@@ -223,6 +227,10 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
   const policy = options.policy ?? "automated";
   const maxAttempts = deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const log = deps.log ?? (() => {});
+  // Templates podem chegar fixos (teste) ou resolvidos por chamada (painel). A leitura
+  // acontece uma vez por rodada: um lote inteiro sai com o MESMO texto.
+  const templatesForRun = (): Promise<ChannelTemplate[] | undefined> | ChannelTemplate[] | undefined =>
+    typeof deps.templates === "function" ? deps.templates() : deps.templates;
 
   const summary: DispatchSummary = {
     claimed: 0,
@@ -354,7 +362,7 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
       continue;
     }
 
-    const rendered = renderAtSendTime({ event, channel, sendDate: todayIso, templates: deps.templates });
+    const rendered = renderAtSendTime({ event, channel, sendDate: todayIso, templates: await templatesForRun() });
     if (!rendered) {
       summary.skipped++;
       push({ ok: false, status: "skipped", reason: `sem template ativo para ${channel}/${event.eventKey}` });

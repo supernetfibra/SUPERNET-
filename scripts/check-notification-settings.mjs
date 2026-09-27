@@ -34,8 +34,15 @@ import {
 } from "../supabase/functions/api/notify/settings.ts";
 import { toMikwebDate } from "../supabase/functions/api/notify/model.ts";
 import { dispatchQueue } from "../supabase/functions/api/notify/dispatch.ts";
+import {
+  effectiveTemplates,
+  sanitizeTemplates,
+  describeTemplates,
+  templatesDocKey,
+} from "../supabase/functions/api/notify/template-store.ts";
 import { eventKeyForRule, sendBillingReminder } from "../supabase/functions/api/notify/send-billing.ts";
 import { describeSync, planSync, runBillingSync, syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
+import { renderFor } from "../supabase/functions/api/notify/templates.ts";
 import { resolveSimulationSettings, runSimulation } from "../supabase/functions/api/notify/simulate.ts";
 import { generateDemoBase } from "../supabase/functions/api/notify/demo-data.ts";
 import * as ui from "../src/lib/simulator-report.ts";
@@ -777,6 +784,103 @@ eq(
 );
 eq("data de um dígito vai com zero à esquerda", toMikwebDate("2026-01-05"), "05-01-2026");
 eq("round-trip estável", toMikwebDate(addDaysT("2026-12-31", 1)), "01-01-2027");
+
+// ---------------------------------------------------------------------------
+// 12. Templates editáveis — o que o painel salva é o que a fila envia
+// ---------------------------------------------------------------------------
+
+section("12. Templates de mensagem (editor do simulador)");
+
+const tNotes = [];
+const bad = sanitizeTemplates(
+  {
+    "whatsapp:billing.late": { body: "Olá {{primeiro_nome}}, fatura em atraso." },
+    "whatsapp:evento.falso": { body: "x" },
+    "canal.falso:billing.late": { body: "x" },
+    "push:billing.due_today": { body: "   " },
+    "whatsapp:billing.due_soon": "não é objeto",
+  },
+  tNotes,
+  "teste"
+);
+eq("template válido entra, desconhecido/vazio é descartado", Object.keys(bad.doc), ["whatsapp:billing.late"]);
+check("cada descarte declara o motivo", tNotes.length >= 3, tNotes);
+eq("título só entra quando informado", bad.doc["whatsapp:billing.late"].title, undefined);
+
+const eff = effectiveTemplates({
+  "whatsapp:billing.late": { body: "TEXTO SALVO {{primeiro_nome}}", active: true },
+});
+eq(
+  "salvo sobrepõe o código um a um",
+  eff.find((t) => t.channel === "whatsapp" && t.eventKey === "billing.late").body,
+  "TEXTO SALVO {{primeiro_nome}}"
+);
+eq("pares não salvos continuam no padrão", eff.find((t) => t.channel === "whatsapp" && t.eventKey === "billing.due_today").body.length > 50, true);
+const off = effectiveTemplates({ "push:billing.late": { body: "x", active: false } });
+const offPair = off.find((t) => t.channel === "push" && t.eventKey === "billing.late");
+check("active: false fica na lista mas sem renderizar (renderFor filtra)", offPair?.active === false, offPair);
+check(
+  "e o renderFor devolve null para o par desligado",
+  (() => {
+    const { message } = renderFor("push", "billing.late", { empresa: "ACME" }, off);
+    return message === null;
+  })()
+);
+check("template de teste nunca é editável", !eff.some((t) => t.eventKey === "test" && t.body.includes("EDITADO")), null);
+
+const described = describeTemplates({});
+eq("o editor lista 3 eventos × 2 canais", described.templates.length, 6);
+check("todo item vem com render de exemplo", described.templates.every((t) => t.sampleFull.length > 0));
+check("nenhum placeholder quebra o render padrão", described.templates.every((t) => t.missing.length === 0), described.templates.filter((t) => t.missing.length));
+const late = described.templates.find((t) => t.key === "whatsapp:billing.late");
+check("seção opcional some sem Pix (preview mínimo)", late.sampleMinimal.includes("Pix") === false, late.sampleMinimal);
+eq("sem override, edited é falso", described.templates.every((t) => t.edited === false), true);
+eq("chave canônica é canal:evento", templatesDocKey("whatsapp", "billing.late"), "whatsapp:billing.late");
+
+// O fingerprint da configuração cobre as MENSAGENS: editar o texto muda a impressão
+// digital — sem isso, "o que foi simulado" e "o que será enviado" voltariam a poder
+// divergir em silêncio quando o texto muda.
+const baseSettings = {
+  rules: [],
+  horizonDays: 7,
+  runAtHour: 10,
+  skipInactiveCustomers: true,
+  portalBaseUrl: "https://x.com",
+  companyName: "X",
+  whatsapp: { enabled: false, windowStart: 9, windowEnd: 20, newChatCapPerDay: 20, perCustomerCapPerDay: 1, pausedUntilMs: null },
+};
+const fpNoTemplates = settingsFingerprint(baseSettings);
+const fpDefaultTemplates = settingsFingerprint({
+  ...baseSettings,
+  templates: effectiveTemplates({}),
+});
+eq("sem templates = templates iguais ao padrão (mesmo fingerprint)", fpNoTemplates, fpDefaultTemplates);
+const fpEdited = settingsFingerprint({
+  ...baseSettings,
+  templates: effectiveTemplates({ "whatsapp:billing.late": { body: "TEXTO DIFERENTE", active: true } }),
+});
+check("editar uma mensagem muda o fingerprint", fpEdited !== fpNoTemplates, { fpEdited, fpNoTemplates });
+const fpDisabled = settingsFingerprint({
+  ...baseSettings,
+  templates: effectiveTemplates({ "push:billing.late": { body: "x", active: false } }),
+});
+check("desligar uma mensagem também muda o fingerprint", fpDisabled !== fpNoTemplates, { fpDisabled, fpNoTemplates });
+eq(
+  "reverter ao texto padrão devolve o fingerprint",
+  settingsFingerprint({ ...baseSettings, templates: effectiveTemplates({ "whatsapp:billing.late": { body: described.templates.find((t) => t.key === "whatsapp:billing.late").body, active: true } }) }),
+  fpNoTemplates
+);
+
+// O dispatcher/sync/simulador recebem a lista efetiva pelo mesmo contrato
+// (renderFor): um template salvo com {{empresa}} sai com o valor do payload.
+check(
+  "renderFor aceita a lista efetiva (contrato comum)",
+  (() => {
+    const list = effectiveTemplates({ "whatsapp:billing.late": { body: "SAVED {{empresa}}", active: true } });
+    const { message } = renderFor("whatsapp", "billing.late", { empresa: "ACME" }, list);
+    return message?.body === "SAVED ACME";
+  })()
+);
 
 function addDaysT(date, days) {
   return new Date(new Date(`${date}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
