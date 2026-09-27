@@ -136,8 +136,33 @@ function timestampOrNull(value: unknown): number | null {
   return null;
 }
 
-function parseNormalizedState(raw: unknown): InstanceState {
-  const value = String(typeof raw === "string" ? raw : (asRecord(raw).status ?? asRecord(raw).state ?? "")).toLowerCase();
+/**
+ * Estado normalizado a partir de qualquer formato que a UazAPI devolva. Formatos
+ * observados em produção (resposta de `/instance/status`):
+ *   `{"status":{"connected":true,"loggedIn":true,…}, "instance":{"status":"connected",…}}`
+ * ou `{"status":"connected"}` — o `status` da raiz pode ser OBJETO, e tratá-lo como
+ * string devolvia `unknown` para uma instância conectada, bloqueando o canal.
+ */
+function candidateState(value: unknown): string {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  if ("connected" in record || "loggedIn" in record) {
+    if (record.connected === false) return "disconnected";
+    return record.connected === true || record.loggedIn === true ? "connected" : "";
+  }
+  return "";
+}
+
+export function parseNormalizedState(raw: unknown): InstanceState {
+  const root = asRecord(raw);
+  const nested = asRecord(root.instance);
+  const value = (
+    candidateState(root.status) ||
+    candidateState(root.state) ||
+    candidateState(nested.status) ||
+    candidateState(nested.state) ||
+    (typeof raw === "string" ? raw : "")
+  ).toLowerCase();
   if (value.includes("connected") && !value.includes("disconnect")) return "connected";
   if (value.includes("connecting") || value.includes("qrcode") || value.includes("pairing")) return "connecting";
   if (value.includes("hibernat") || value.includes("paused")) return "hibernated";
