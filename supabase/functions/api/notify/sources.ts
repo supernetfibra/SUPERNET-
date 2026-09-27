@@ -14,6 +14,9 @@
  */
 
 import type { RawBilling, RawCustomer } from "./model.ts";
+import { addDays, toMikwebDate } from "./model.ts";
+import { syncDueWindow } from "./sync.ts";
+import type { ReminderRule } from "./rules.ts";
 import type { SimulationContact, SimulationSourceInfo } from "./simulate.ts";
 import type { SupabaseLike } from "./outbox.ts";
 
@@ -33,6 +36,13 @@ export interface LoadOptions {
   maxPages: number;
   assumeOptIn: "table" | "all" | "none";
   assumePush: "table" | "all" | "none";
+  /**
+   * Régua em vigor. Presente, a janela de VENCIMENTO varrida passa a ser
+   * `syncDueWindow(rules, from, …)` — cobre regras de atraso (ex.: "5 dias de
+   * atraso" precisa de faturas com vencimento 5 dias antes de hoje), que a
+   * janela plana `[from, to]` deixava de fora. Ausente, vale `[from, to]`.
+   */
+  rules?: ReminderRule[];
 }
 
 export interface LoadedBase {
@@ -147,11 +157,19 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
   let note: string | undefined;
 
   // --- estratégia 1: varredura por janela de vencimento ---------------------
+  // Filtros de data da MikWeb: `type_date=due_day` + `start_date`/`end_date` em
+  // dd-MM-yyyy (docs oficiais, "Listando Cobranças"). Os antigos `date_from`/
+  // `date_to` (ISO) NÃO existem na API — eram ignorados silenciosamente e a
+  // varredura trazia o histórico inteiro, cortado antes das faturas em aberto.
+  // `situation_id=2` (Em Atraso) reduz o volume varrido; o núcleo descarta pago/cancelado.
   try {
+    const windowFrom = options.rules?.length ? syncDueWindow(options.rules, options.from, 1).from : options.from;
+    const windowTo = options.rules?.length ? syncDueWindow(options.rules, options.to, 1).to : options.to;
+    const dateQuery = `type_date=due_day&start_date=${toMikwebDate(windowFrom)}&end_date=${toMikwebDate(windowTo)}`;
     let page = 1;
     let totalPages = 1;
     while (page <= totalPages && page <= options.maxPages) {
-      const path = `/billings?date_from=${options.from}&date_to=${options.to}&per_page=100${page > 1 ? `&page=${page}` : ""}`;
+      const path = `/billings?${dateQuery}&situation_id=2&per_page=100${page > 1 ? `&page=${page}` : ""}`;
       const result = await deps.apiGetFull<RawBilling[]>(path);
       const batch = result.data ?? [];
       if (!batch.length) break;
@@ -183,7 +201,9 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
         if (!id) continue;
         customers.push(customer);
         try {
-          const result = await deps.apiGetFull<RawBilling[]>(`/billings?customer_id=${id}&per_page=50`);
+          const result = await deps.apiGetFull<RawBilling[]>(
+            `/billings?customer_id=${id}&type_date=due_day&start_date=${toMikwebDate(addDays(options.from, -60))}&end_date=${toMikwebDate(options.to)}&per_page=50`
+          );
           for (const billing of result.data ?? []) billings.push(billing);
         } catch {
           // cliente sem faturas acessíveis — segue

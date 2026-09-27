@@ -30,6 +30,7 @@ import {
   Send,
   MessageCircle,
   QrCode,
+  Copy,
   PlugZap,
   FlaskConical,
   RefreshCw,
@@ -152,6 +153,10 @@ interface WhatsAppConfigView {
   } | null;
   instanceError: string | null;
   stats: Record<string, number>;
+  /** URL do webhook (com secret) montada pelo servidor, pronta para colar na UazAPI. */
+  webhookUrl: string | null;
+  webhookSecretConfigured: boolean;
+  cronSecretConfigured: boolean;
 }
 
 export default function AdminSettings() {
@@ -192,6 +197,8 @@ export default function AdminSettings() {
   const [waConfig, setWaConfig] = useState<WhatsAppConfigView | null>(null);
   const [waLoading, setWaLoading] = useState(true);
   const [waError, setWaError] = useState<string | null>(null);
+  const [waWebhookUrl, setWaWebhookUrl] = useState<string | null>(null);
+  const [waCopied, setWaCopied] = useState(false);
   const [waBaseUrl, setWaBaseUrl] = useState("");
   const [waInstanceToken, setWaInstanceToken] = useState("");
   const [waAdminToken, setWaAdminToken] = useState("");
@@ -225,6 +232,7 @@ export default function AdminSettings() {
       windowEnd: Number(data.windowEnd ?? 20),
     });
     setWaError(data.instanceError || null);
+    setWaWebhookUrl(data.webhookUrl ?? null);
   }, []);
 
   const loadWhatsAppConfig = useCallback(async () => {
@@ -368,6 +376,22 @@ export default function AdminSettings() {
       await loadWhatsAppConfig();
     } catch {
       toast.error("Falha ao enviar o teste.");
+    }
+  };
+
+  /** Copia a URL do webhook (com secret) para a área de transferência. */
+  const handleCopyWebhookUrl = async () => {
+    if (!waWebhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(waWebhookUrl);
+      setWaCopied(true);
+      toast.success("URL do webhook copiada!");
+      setTimeout(() => setWaCopied(false), 2500);
+    } catch {
+      // Clipboard API pode estar bloqueada (permissão/HTTP): seleciona o texto
+      // para o admin copiar com Ctrl+C sem caçar o campo na tela.
+      (document.getElementById("wa-webhook") as HTMLInputElement | null)?.select();
+      toast.info("Selecione o texto e copie manualmente (Ctrl+C).");
     }
   };
 
@@ -916,6 +940,48 @@ export default function AdminSettings() {
             <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <span>{waError}</span>
+            </div>
+          ) : null}
+
+          {/* URL do webhook — montada no servidor com o secret, pronta para colar na UazAPI */}
+          {waWebhookUrl ? (
+            <div className="space-y-2">
+              <Label htmlFor="wa-webhook" className="text-xs font-medium text-muted-foreground">
+                URL do webhook{" "}
+                <span className="text-muted-foreground/50">(colar na UazAPI → Webhook)</span>
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="wa-webhook"
+                  readOnly
+                  value={waWebhookUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-9 text-[11px] font-mono text-muted-foreground"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-9 shrink-0 cursor-pointer"
+                  onClick={handleCopyWebhookUrl}
+                >
+                  {waCopied ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  {waCopied ? "Copiada!" : "Copiar"}
+                </Button>
+              </div>
+              {!waConfig?.webhookSecretConfigured ? (
+                <p className="flex items-start gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>
+                    Sem o secret <code className="font-mono">UAZAPI_WEBHOOK_SECRET</code> configurado,
+                    esta URL aceita chamadas de qualquer origem. Configure o secret para proteger o
+                    webhook.
+                  </span>
+                </p>
+              ) : null}
             </div>
           ) : null}
 

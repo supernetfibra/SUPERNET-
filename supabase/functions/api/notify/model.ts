@@ -85,6 +85,12 @@ export function isCivilDate(value: unknown): value is string {
   return parsed.toISOString().slice(0, 10) === value;
 }
 
+/** ISO `YYYY-MM-DD` → `dd-MM-yyyy`: o formato que a MikWeb aceita nos filtros de data. */
+export function toMikwebDate(date: string): string {
+  const [year, month, day] = date.split("-");
+  return `${day}-${month}-${year}`;
+}
+
 export function addDays(date: string, days: number): string {
   const parsed = new Date(`${date}T00:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + days);

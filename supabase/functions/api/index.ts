@@ -1425,6 +1425,10 @@ app.get("/admin/notifications/simulate", async (c) => {
           from: today,
           // Horizonte da configuração (ou do override) define a janela varrida.
           to: addDays(today, settings.horizonDays - 1),
+          // A régua vira janela de VENCIMENTO (syncDueWindow): regras de atraso
+          // exigem varrer faturas vencidas antes de hoje, que a janela plana
+          // [hoje, hoje+horizonte] deixava de fora.
+          rules: settings.rules,
           limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
           maxPages: Math.min(Math.max(int("max-pages", 10), 1), 50),
           assumeOptIn: optInParam === "auto" ? "table" : (optInParam as "all" | "none"),
@@ -1614,8 +1618,34 @@ app.get("/admin/whatsapp/config", async (c) => {
     stats,
     webhookSecretConfigured: !!env("UAZAPI_WEBHOOK_SECRET"),
     cronSecretConfigured: !!env("CRON_SECRET"),
+    // URL completa (com `?secret=`) para colar na UazAPI. Montada aqui no
+    // servidor — o secret nunca vive no bundle do frontend. Sem secret
+    // configurado, devolve a URL nua: o webhook ainda aceita (com aviso no
+    // log), e o painel mostra o campo para você ver o endereço.
+    webhookUrl: buildWebhookUrl(c.req.raw),
   });
 });
+
+/**
+ * URL pública do webhook da UazAPI, com o secret pronto para colar.
+ * Derivada da própria request (o painel já fala com a função pela URL certa),
+ * então não há nada para configurar separadamente. Sem secret configurado,
+ * devolve a URL sem query — o painel indica que falta proteger o webhook.
+ *
+ * O esquema NÃO vem de `request.url`: o proxy do Supabase encaminha a chamada
+ * internamente via HTTP e a função enxergaria `http://` em produção (verificado
+ * ao vivo). Vale `x-forwarded-proto` quando presente, `https` como padrão fora
+ * do localhost — e o esquema original só sobrevive no desenvolvimento local.
+ */
+function buildWebhookUrl(request: Request): string {
+  const url = new URL(request.url);
+  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const scheme = isLocal ? url.protocol.replace(/:$/, "") : forwardedProto || "https";
+  const base = `${scheme}://${url.host}/functions/v1/api/webhooks/uazapi`;
+  const webhookSecret = env("UAZAPI_WEBHOOK_SECRET");
+  return webhookSecret ? `${base}?secret=${encodeURIComponent(webhookSecret)}` : base;
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/whatsapp/config — salvar (token vazio não apaga o existente)

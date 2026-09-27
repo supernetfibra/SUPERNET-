@@ -24,7 +24,8 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { civilToday, formatBRL, type RawBilling, type RawCustomer } from "../supabase/functions/api/notify/model.ts";
+import { addDays, civilToday, formatBRL, toMikwebDate, type RawBilling, type RawCustomer } from "../supabase/functions/api/notify/model.ts";
+import { syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
 import { generateDemoBase, parseSnapshot, type DemoScenario } from "../supabase/functions/api/notify/demo-data.ts";
 import {
   defaultDocument,
@@ -36,6 +37,7 @@ import {
   type WhatsAppSettings,
 } from "../supabase/functions/api/notify/settings.ts";
 import { applyOverrides } from "../supabase/functions/api/notify/settings-store.ts";
+import type { ReminderRule } from "../supabase/functions/api/notify/rules.ts";
 import {
   labelOf,
   runSimulation,
@@ -206,7 +208,8 @@ function looksLikePlaceholder(url: string, token: string): string | null {
 async function loadFromMikWeb(
   today: string,
   horizon: number,
-  limitCustomers: number
+  limitCustomers: number,
+  rules: ReminderRule[]
 ): Promise<{ base: ReturnType<typeof generateDemoBase>; source: SimulationSourceInfo }> {
   const envFile = readEnvFiles();
   const baseUrl = (process.env.MIKWEB_API_URL || envFile.MIKWEB_API_URL || "").replace(/\/+$/, "");
@@ -215,8 +218,12 @@ async function loadFromMikWeb(
   if (problem) throw new Error(problem);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-  const from = today;
-  const to = new Date(new Date(`${today}T00:00:00Z`).getTime() + horizon * 86_400_000).toISOString().slice(0, 10);
+  // Janela de VENCIMENTO pela régua (syncDueWindow): regras de atraso pedem
+  // faturas vencidas antes de hoje, que a janela plana [hoje, hoje+horizonte]
+  // deixava de fora.
+  const dueWindow = syncDueWindow(rules, today, horizon);
+  const from = dueWindow.from;
+  const to = dueWindow.to;
 
   const get = async (path: string): Promise<{ data: unknown; totalPages: number }> => {
     const response = await fetch(`${baseUrl}${path}`, { headers });
@@ -228,8 +235,11 @@ async function loadFromMikWeb(
   };
 
   // Caminho barato: faturas por janela de vencimento, sem varrer cliente por cliente.
+  // Filtro oficial da MikWeb: type_date + start_date/end_date em dd-MM-yyyy — os
+  // antigos date_from/date_to (ISO) não existem na API e eram ignorados.
   try {
-    const page = await get(`/billings?date_from=${from}&date_to=${to}&per_page=100`);
+    const dateQuery = `type_date=due_day&start_date=${toMikwebDate(from)}&end_date=${toMikwebDate(to)}`;
+    const page = await get(`/billings?${dateQuery}&situation_id=2&per_page=100`);
     const billings = Array.isArray(page.data) ? (page.data as RawBilling[]) : [];
     if (billings.length > 0) {
       const customers = await loadCustomers(get, billings, limitCustomers);
@@ -253,9 +263,9 @@ async function loadFromMikWeb(
   const { data: rawCustomers } = await get(`/customers?per_page=${limitCustomers}`);
   const customers = Array.isArray(rawCustomers) ? (rawCustomers as RawCustomer[]) : [];
   const billings: RawBilling[] = [];
-  for (const customer of customers) {
-    try {
-      const page = await get(`/billings?customer_id=${customer.id}&per_page=50`);
+  for (const customer of customers) {        try {
+          const dateQuery = `type_date=due_day&start_date=${toMikwebDate(addDays(from, -60))}&end_date=${toMikwebDate(to)}`;
+          const page = await get(`/billings?customer_id=${customer.id}&${dateQuery}&per_page=50`);
       if (Array.isArray(page.data)) billings.push(...(page.data as RawBilling[]));
     } catch {
       // cliente sem fatura acessível — segue
@@ -466,7 +476,7 @@ async function main(): Promise<void> {
       note: path,
     };
   } else if (args.mikweb) {
-    const loaded = await loadFromMikWeb(today, settings.horizonDays, args.customers ?? 50);
+    const loaded = await loadFromMikWeb(today, settings.horizonDays, args.customers ?? 50, settings.rules);
     customers = loaded.base.customers;
     billings = loaded.base.billings;
     pushCustomerIds = loaded.base.pushCustomerIds;

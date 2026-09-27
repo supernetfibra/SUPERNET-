@@ -32,6 +32,7 @@ import {
   settingsFingerprint,
   settingsFrom,
 } from "../supabase/functions/api/notify/settings.ts";
+import { toMikwebDate } from "../supabase/functions/api/notify/model.ts";
 import { dispatchQueue } from "../supabase/functions/api/notify/dispatch.ts";
 import { eventKeyForRule, sendBillingReminder } from "../supabase/functions/api/notify/send-billing.ts";
 import { describeSync, planSync, runBillingSync, syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
@@ -758,6 +759,28 @@ check(
   syncRun.items.filter((i) => i.outcome === "enqueue").every((i) => i.payload?.__dueDate === i.dueDate && !!i.preview?.body),
   syncRun.items.find((i) => i.outcome === "enqueue" && !i.preview?.body) ?? null
 );
+
+// ---------------------------------------------------------------------------
+// 11. Filtro de data da MikWeb — a consulta que alimenta a varredura
+// ---------------------------------------------------------------------------
+// A API aceita datas por `type_date` + `start_date`/`end_date` em dd-MM-yyyy
+// (docs oficiais, "Listando Cobranças"). `date_from`/`date_to` ISO NÃO existem:
+// a API os ignora e a varredura trazia o histórico inteiro, cortado pelo teto
+// de páginas antes de chegar às faturas em aberto — relatório com zero avisos.
+
+section("11. Filtro de data da MikWeb (bug do zero falso)");
+
+eq(
+  "converte ISO para o formato dd-MM-yyyy que a MikWeb aceita",
+  toMikwebDate("2026-09-25"),
+  "25-09-2026"
+);
+eq("data de um dígito vai com zero à esquerda", toMikwebDate("2026-01-05"), "05-01-2026");
+eq("round-trip estável", toMikwebDate(addDaysT("2026-12-31", 1)), "01-01-2027");
+
+function addDaysT(date, days) {
+  return new Date(new Date(`${date}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+}
 
 // ---------------------------------------------------------------------------
 
