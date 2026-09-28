@@ -4,19 +4,27 @@
  * Simplificação deliberada: o operador não precisa saber o que é UazAPI, outbox
  * ou capping — precisa saber "onde estou, o que falta, qual botão apertar".
  * Cada passo tem UMA ação primária (as avançadas continuam no card abaixo).
+ *
+ * Tour de primeira configuração: com o fluxo incompleto, o primeiro passo
+ * pendente pulsa e um painel guia o operador. O avanço é DERIVADO do status —
+ * quando o auto-refresh (60s) traz o passo atual como ✓, o guia passa para o
+ * próximo pendente no próximo render, sem efeito nenhum. Mostra uma vez por
+ * navegador (localStorage); "Fazer depois" encerra.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   AlertTriangle,
   Check,
   CircleAlert,
+  Compass,
   FlaskConical,
   Loader2,
   RefreshCw,
   Send,
+  X,
 } from "lucide-react";
 import {
   Card,
@@ -65,6 +73,88 @@ interface FlowStatus {
 
 type StepState = "ok" | "todo" | "warn";
 
+interface FlowStep {
+  n: number;
+  title: string;
+  detail: string;
+  state: StepState;
+  action?: { label: string; onClick: () => void; icon?: typeof Send };
+}
+
+/** Chave do localStorage: o tour mostra só uma vez por navegador. */
+const TOUR_SEEN_KEY = "mikweb_flow_tour_done";
+
+function tourSeen(): boolean {
+  try {
+    return localStorage.getItem(TOUR_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markTourSeen(): void {
+  try {
+    localStorage.setItem(TOUR_SEEN_KEY, "1");
+  } catch {
+    // localStorage indisponível: o tour só reaparece na próxima sessão, sem erro.
+  }
+}
+
+/** Os 5 passos do fluxo, derivados do diagnóstico — puro, sem hooks. */
+function buildSteps(status: FlowStatus, dispatch: () => void, dispatching: boolean): FlowStep[] {
+  return [
+    {
+      n: 1,
+      title: "Conectar o WhatsApp",
+      detail: status.credentials.ok
+        ? status.connected.ok
+          ? "Instância conectada e pronta para enviar."
+          : `Instância ${status.connected.state ?? "desconhecida"} — reconecte pelo QR no card abaixo.`
+        : "Informe a URL e o token da UazAPI nos campos abaixo.",
+      state: status.credentials.ok && status.connected.ok ? "ok" : "todo",
+    },
+    {
+      n: 2,
+      title: "Ligar o canal",
+      detail: status.enabled.ok
+        ? "Canal ativo — a régua pode disparar."
+        : "Ligue o interruptor \"Canal ativo\" abaixo para o envio começar.",
+      state: status.enabled.ok ? "ok" : "todo",
+    },
+    {
+      n: 3,
+      title: "Escolher quem recebe",
+      detail:
+        (status.rules.active ?? 0) > 0
+          ? `${status.rules.active} de ${status.rules.total} regras da régua ativas.`
+          : "Nenhuma regra da régua ativa — ligue pelo menos uma em \"Régua de lembretes\".",
+      state: (status.rules.active ?? 0) > 0 ? "ok" : "todo",
+    },
+    {
+      n: 4,
+      title: "Clientes alcançáveis",
+      detail:
+        (status.contacts.optIn ?? 0) > 0
+          ? `${status.contacts.optIn} contatos com opt-in na lista de envio.`
+          : "Nenhum contato com opt-in — use \"Importar contatos\" abaixo.",
+      state: (status.contacts.optIn ?? 0) > 0 ? "ok" : "todo",
+    },
+    {
+      n: 5,
+      title: "Avisos na fila",
+      detail: `${status.queue.ready} prontos para sair agora · ${status.queue.scheduled} agendados${
+        status.queue.failed ? ` · ${status.queue.failed} falharam (reenviar na Fila)` : ""
+      }`,
+      state: status.queue.failed > 0 ? "warn" : status.queue.ready > 0 ? "todo" : "ok",
+      action:
+        status.queue.ready > 0 || status.queue.failed > 0
+          ? { label: "Enviar agora", onClick: dispatch, icon: Send }
+          : undefined,
+      ...(dispatching ? {} : {}),
+    },
+  ];
+}
+
 export function SendFlowCard() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<FlowStatus | null>(null);
@@ -72,6 +162,21 @@ export function SendFlowCard() {
   const [dispatching, setDispatching] = useState(false);
   /** Indicador do auto-refresh: quando o card atualizou pela última vez. */
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
+  // ── Tour ──
+  /** O operador clicou em "Configurar passo a passo" nesta sessão. */
+  const [tourStarted, setTourStarted] = useState(false);
+  /** Visto/dispensado (localStorage) — o tour não volta depois de dispensado. */
+  const [tourDismissed, setTourDismissed] = useState(tourSeen);
+  /** Retângulo do passo guiado + viewport, medidos pós-render (o painel os consome). */
+  const [spotlight, setSpotlight] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    viewportWidth: number;
+    viewportHeight: number;
+  } | null>(null);
+  const stepRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const load = useCallback(async () => {
     try {
@@ -134,6 +239,56 @@ export function SendFlowCard() {
     }
   };
 
+  // ── Tour (derivado — sem efeitos de avanço) ────────────────────────────────
+  // Hooks SEMPRE na mesma ordem: este bloco vem antes dos early-returns.
+  // Ativo só depois do clique inicial e enquanto não for dispensado. O passo
+  // guiado é SEMPRE o primeiro pendente: quando o auto-refresh o marca ✓, o
+  // próximo render já aponta para o seguinte. Nada restando, o painel some.
+  const steps = status ? buildSteps(status, () => void handleDispatch(), dispatching) : [];
+  const tourActive = tourStarted && !tourDismissed;
+  const tourGuided = tourActive ? (steps.find((s) => s.state !== "ok") ?? null) : null;
+  const tourOffered = !tourDismissed && !tourStarted && steps.length > 0 && steps.some((s) => s.state !== "ok");
+
+  // Posição do destaque: medida APÓS o render (ref não se lê no render), via
+  // rAF (setState fora do corpo síncrono do efeito) e re-medida em scroll/resize
+  // para o painel acompanhar.
+  useLayoutEffect(() => {
+    const el = tourGuided ? stepRefs.current[tourGuided.n] : null;
+    if (!el) {
+      const clear = requestAnimationFrame(() => setSpotlight(null));
+      return () => cancelAnimationFrame(clear);
+    }
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setSpotlight({
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      });
+    };
+    const raf = requestAnimationFrame(update);
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [tourGuided]);
+
+  const startTour = () => {
+    setTourStarted(true);
+    markTourSeen();
+  };
+
+  const dismissTour = () => {
+    setTourDismissed(true);
+    markTourSeen();
+  };
+
   if (loading) {
     return (
       <Card className="border-border shadow-none">
@@ -161,78 +316,13 @@ export function SendFlowCard() {
   const paused = status.pausedUntil ? Number(status.pausedUntil) > status.nowAt : false;
   const timeLocked = status.timeLock ? Number(status.timeLock) > status.nowAt : false;
 
-  const steps: {
-    n: number;
-    title: string;
-    detail: string;
-    state: StepState;
-    action?: { label: string; onClick: () => void; icon?: typeof Send };
-  }[] = [
-    {
-      n: 1,
-      title: "Conectar o WhatsApp",
-      detail: status.credentials.ok
-        ? status.connected.ok
-          ? "Instância conectada e pronta para enviar."
-          : `Instância ${status.connected.state ?? "desconhecida"} — reconecte pelo QR.`
-        : "Informe a URL e o token da UazAPI nos campos abaixo.",
-      state: status.credentials.ok && status.connected.ok ? "ok" : "todo",
-      action:
-        status.credentials.ok && !status.connected.ok
-          ? undefined /* o QR fica no card principal, logo abaixo */
-          : undefined,
-    },
-    {
-      n: 2,
-      title: "Ligar o canal",
-      detail: status.enabled.ok
-        ? "Canal ativo — a régua pode disparar."
-        : "Ligue o interruptor \"Canal ativo\" abaixo para o envio começar.",
-      state: status.enabled.ok ? "ok" : "todo",
-    },
-    {
-      n: 3,
-      title: "Escolher quem recebe",
-      detail:
-        (status.rules.active ?? 0) > 0
-          ? `${status.rules.active} de ${status.rules.total} regras da régua ativas.`
-          : "Nenhuma regra da régua ativa — ligue pelo menos uma em \"Régua de lembretes\".",
-      state: (status.rules.active ?? 0) > 0 ? "ok" : "todo",
-    },
-    {
-      n: 4,
-      title: "Clientes alcançáveis",
-      detail:
-        (status.contacts.optIn ?? 0) > 0
-          ? `${status.contacts.optIn} contatos com opt-in na lista de envio.`
-          : "Nenhum contato com opt-in — use \"Importar contatos\" abaixo.",
-      state: (status.contacts.optIn ?? 0) > 0 ? "ok" : "todo",
-    },
-    {
-      n: 5,
-      title: "Avisos na fila",
-      detail: `${status.queue.ready} prontos para sair agora · ${status.queue.scheduled} agendados${
-        status.queue.failed ? ` · ${status.queue.failed} falharam (reenviar na Fila)` : ""
-      }`,
-      state: status.queue.failed > 0 ? "warn" : status.queue.ready > 0 ? "todo" : "ok",
-      action:
-        status.queue.ready > 0 || status.queue.failed > 0
-          ? {
-              label: "Enviar agora",
-              onClick: handleDispatch,
-              icon: Send,
-            }
-          : undefined,
-    },
-  ];
+  const doneCount = steps.filter((s) => s.state === "ok").length;
 
   const blockers: string[] = [];
   if (timeLocked) blockers.push("WhatsApp impôs pausa (time-lock) — o canal retoma automaticamente quando liberar.");
   else if (paused) blockers.push(`Envio pausado até ${new Date(Number(status.pausedUntil)).toLocaleString("pt-BR")}.`);
   if (!status.window.inWindow && status.enabled.ok)
     blockers.push(`Fora da janela de envio (${status.window.start}h–${status.window.end}h) — a fila anda sozinha quando abrir.`);
-
-  const doneCount = steps.filter((s) => s.state === "ok").length;
 
   return (
     <Card className="border-border shadow-none">
@@ -267,7 +357,14 @@ export function SendFlowCard() {
         {steps.map((step) => (
           <div
             key={step.n}
-            className="flex items-start gap-3 rounded-md border border-transparent px-2 py-2 hover:border-border transition-colors"
+            ref={(el) => {
+              stepRefs.current[step.n] = el;
+            }}
+            className={`flex items-start gap-3 rounded-md border px-2 py-2 transition-colors ${
+              tourGuided?.n === step.n
+                ? "border-primary/60 bg-primary/5 animate-pulse"
+                : "border-transparent hover:border-border"
+            }`}
           >
             <span className="mt-0.5 shrink-0">
               {step.state === "ok" ? (
@@ -320,6 +417,17 @@ export function SendFlowCard() {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-3 pt-2">
+          {tourOffered ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs cursor-pointer border-primary/40"
+              onClick={startTour}
+            >
+              <Compass className="h-3.5 w-3.5 mr-1.5" />
+              Configurar passo a passo
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="sm"
@@ -336,6 +444,41 @@ export function SendFlowCard() {
           </span>
         </div>
       </CardContent>
+
+      {/* Painel flutuante do tour: ancorado no passo pulsante, segue scroll/resize.
+          A posição já vem clampada do efeito (spotlight), então o render é puro. */}
+      {tourGuided !== null && spotlight ? (
+        <div
+          className="fixed z-50 w-72 rounded-md border border-primary/40 bg-popover text-popover-foreground shadow-lg"
+          style={{
+            top: Math.min(spotlight.top + spotlight.height + 8, spotlight.viewportHeight - 170),
+            left: Math.max(12, Math.min(spotlight.left, spotlight.viewportWidth - 300)),
+          }}
+        >
+          <div className="flex items-start justify-between gap-2 px-3 pt-2.5">
+            <p className="text-xs font-medium">
+              Passo {tourGuided.n} de {steps.length} — {tourGuided.title}
+            </p>
+            <button
+              type="button"
+              onClick={dismissTour}
+              aria-label="Encerrar o tour"
+              className="text-muted-foreground cursor-pointer hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <p className="px-3 pb-2.5 pt-1 text-[11px] text-muted-foreground">{tourGuided.detail}</p>
+          <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+            <span className="text-[10px] text-muted-foreground">
+              Avança sozinho quando o passo ficar ✓
+            </span>
+            <Button size="sm" variant="ghost" className="h-7 text-xs cursor-pointer" onClick={dismissTour}>
+              Fazer depois
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }
