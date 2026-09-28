@@ -26,14 +26,7 @@ import {
   AlertTriangle,
   Info,
   Search,
-  Save,
   RotateCcw,
-  Plus,
-  Trash2,
-  Settings2,
-  RefreshCw,
-  Send,
-  MessageSquareText,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -63,9 +56,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiUrl } from "@/lib/api-config";
-import { Textarea } from "@/components/ui/textarea";
-import { AdminSyncDialog } from "@/components/AdminSyncDialog";
-import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
 import {
   buildDecisionChips,
   buildMetrics,
@@ -79,18 +69,10 @@ import {
   formatDateBR,
   paramsFromSettings,
   previewFallbackNote,
-  renderTemplatePreview,
-  validateRules,
-  TEMPLATE_SAMPLE_PAYLOAD,
-  TEMPLATE_MINIMAL_PAYLOAD,
   type SimItem,
   type SimParams,
   type SimReport,
-  type SimRule,
   type SimSettings,
-  type TemplateEditorItem,
-  type TemplateEntry,
-  type TemplatesState,
 } from "@/lib/simulator-report";
 
 // ---------------------------------------------------------------------------
@@ -116,14 +98,6 @@ function withAdminToken(url: string): string {
 
 function adminFetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
-
-/** Rótulo curto do evento para o seletor do editor de mensagens. */
-function templateEventLabel(eventKey: string): string {
-  if (eventKey === "billing.due_soon") return "fatura a vencer";
-  if (eventKey === "billing.due_today") return "vence hoje";
-  if (eventKey === "billing.late") return "em atraso";
-  return eventKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,31 +182,16 @@ export default function AdminSimulator() {
   const [report, setReport] = useState<SimReport | null>(null);
   const [reference, setReference] = useState<{ report: SimReport; params: SimParams } | null>(null);
   const [loading, setLoading] = useState(true);
-  /** Edição técnica da régua (chave/evento/prioridade) recolhida: o simples é ligar/desligar. */
-  const [showAdvancedRules, setShowAdvancedRules] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Configuração persistida: é dela que os campos nascem e contra ela que se mede
-  // "alterei algo nesta rodada?".
+  // "alterei algo nesta rodada?". O simulador é LEITURA — editar/salvar vive em Configurações.
   const [baseline, setBaseline] = useState<SimSettings | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [settingsNotes, setSettingsNotes] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
 
   const [decisionFilter, setDecisionFilter] = useState<string[]>([]);
   const [ruleFilter, setRuleFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [syncOpen, setSyncOpen] = useState(false);
-  const [dispatchOpen, setDispatchOpen] = useState(false);
-
-  // ── Editor de mensagens (templates) ──
-  const [templatesState, setTemplatesState] = useState<TemplatesState | null>(null);
-  const [templatesError, setTemplatesError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Record<string, TemplateEntry>>({});
-  const [selectedTemplate, setSelectedTemplate] = useState<string>("whatsapp:billing.late");
-  const [templatesSaving, setTemplatesSaving] = useState(false);
-  const [showMinimalSample, setShowMinimalSample] = useState(false);
 
   // Carrega uma vez: primeiro a configuração, depois a simulação com ela — é a
   // pergunta mais provável do admin ("o que sairia hoje, como está configurado?").
@@ -242,12 +201,9 @@ export default function AdminSimulator() {
       let loaded: SimSettings | null = null;
       try {
         loaded = await fetchSettings();
-      } catch (err) {
-        if (!cancelled) {
-          setSettingsError(
-            err instanceof Error ? err.message : "Erro ao ler a configuração de notificações."
-          );
-        }
+      } catch {
+        // Configuração indisponível: a rodada segue com placeholder e o fetchReport
+        // reporta a falha pelo mesmo caminho de erro da simulação.
       }
       if (cancelled) return;
       setBaseline(loaded);
@@ -292,217 +248,10 @@ export default function AdminSimulator() {
     }
   }, [params, baseline]);
 
-  /**
-   * Salva a régua e a agenda. Depois de salvar, o campo de régua passa a valer como
-   * configuração persistida — as próximas rodadas não são mais override.
-   */
-  const saveRules = useCallback(async () => {
-    setSaving(true);
-    setSettingsNotes([]);
-    try {
-      const res = await adminFetch("/api/admin/notifications/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rules: params.rules,
-          horizonDays: params.horizon,
-          runAtHour: params.at,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          typeof data?.error === "string" ? data.error : "Não foi possível salvar a configuração."
-        );
-      }
-      setSettingsNotes(Array.isArray(data?.notes) ? (data.notes as string[]) : []);
-      const fresh = await fetchSettings();
-      setBaseline(fresh);
-      // Re-semeia a régua do servidor: se a validação limitou algo, o formulário mostra
-      // o que ficou gravado, não o que foi digitado.
-      setParams((current) => ({ ...current, rules: fresh.rules.map((rule) => ({ ...rule })) }));
-      toast.success(`Configuração salva (${fresh.fingerprint}).`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao salvar a configuração.");
-    } finally {
-      setSaving(false);
-    }
-  }, [params.rules, params.horizon, params.at]);
-
-  const ruleProblems = useMemo(
-    () => validateRules(params.rules, baseline?.maxRules ?? 12),
-    [params.rules, baseline?.maxRules]
-  );
-
-  // ── Editor de mensagens: carregar e derivar estado ──
-  const loadTemplatesState = useCallback(async () => {
-    try {
-      const res = await adminFetch("/api/admin/notifications/templates");
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Erro ao ler os templates.");
-      setTemplatesState(data as TemplatesState);
-      setTemplatesError(null);
-      setEditing({});
-    } catch (err) {
-      setTemplatesError(err instanceof Error ? err.message : "Erro ao ler os templates.");
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadTemplatesState();
-  }, [loadTemplatesState]);
-
-  const templateItems: TemplateEditorItem[] = templatesState?.templates ?? [];
-
-  /** Lista na ordem WhatsApp primeiro, eventos na ordem da régua (a vencer → hoje → atraso). */
-  const orderedTemplates = useMemo(() => {
-    const order = ["whatsapp", "push"];
-    const eventOrder = ["billing.due_soon", "billing.due_today", "billing.late"];
-    return [...templateItems].sort(
-      (a, b) =>
-        order.indexOf(a.channel) - order.indexOf(b.channel) ||
-        eventOrder.indexOf(a.eventKey) - eventOrder.indexOf(b.eventKey)
-    );
-  }, [templateItems]);
-
-  const currentTemplate = orderedTemplates.find((t) => t.key === selectedTemplate) ?? orderedTemplates[0] ?? null;
-
-  /** O que está no editor agora: original do servidor ou versão em edição. */
-  const editingTemplate = currentTemplate
-    ? editing[currentTemplate.key] ?? { body: currentTemplate.body, ...(currentTemplate.title ? { title: currentTemplate.title } : {}), active: currentTemplate.active }
-    : null;
-
-  const previewPayload = showMinimalSample ? TEMPLATE_MINIMAL_PAYLOAD : TEMPLATE_SAMPLE_PAYLOAD;
-  const livePreview = editingTemplate ? renderTemplatePreview(editingTemplate.body, previewPayload) : null;
-  const liveTitle = editingTemplate?.title ? renderTemplatePreview(editingTemplate.title, previewPayload) : null;
-
-  const updateEditing = (key: string, patch: Partial<TemplateEntry>) =>
-    setEditing((current) => {
-      const base = current[key] ?? { body: "", active: true };
-      return { ...current, [key]: { ...base, ...patch } };
-    });
-
-  /**
-   * Preenche o editor com o texto PADRÃO do código para este template. Não salva:
-   * ao clicar em "Salvar mensagens", o servidor detecta a igualdade com o baseline e
-   * REMOVE o override — daí o estado volta a ser "texto padrão" de verdade.
-   */
-  const resetTemplateToDefault = (key: string) => {
-    const fallback = templatesState?.defaults?.[key];
-    if (!fallback) return;
-    updateEditing(key, {
-      body: fallback.body,
-      ...(fallback.title !== undefined ? { title: fallback.title } : {}),
-      active: fallback.active,
-    });
-    toast.info("Texto padrão carregado — salve para aplicá-lo.");
-  };
-
-  /** O template atual diverge do padrão do código (editado no servidor ou no editor)? */
-  const currentTemplateDiffersFromDefault = (() => {
-    if (!currentTemplate || !editingTemplate) return false;
-    const fallback = templatesState?.defaults?.[currentTemplate.key];
-    if (!fallback) return false;
-    return (
-      editingTemplate.body !== fallback.body ||
-      (editingTemplate.title ?? "") !== (fallback.title ?? "") ||
-      editingTemplate.active !== fallback.active
-    );
-  })();
-
-  const templatesDirty = Object.keys(editing).length > 0;
-
-  /**
-   * Divergência entre o texto que a rodada usou (salvo) e as edições não salvas do
-   * editor. É o aviso "o preview acima não é o que a fila vai enviar até você salvar".
-   */
-  const pendingDiff = useMemo(() => {
-    if (!report || !templatesState || !Object.keys(editing).length) return [];
-    const savedByEvent = new Map(
-      (report.settings.templates ?? [])
-        .filter((t) => t.channel === "whatsapp")
-        .map((t) => [t.eventKey, t.body])
-    );
-    return Object.entries(editing)
-      .filter(([key, entry]) => {
-        if (!key.startsWith("whatsapp:")) return false;
-        const savedBody = savedByEvent.get(key.split(":")[1] ?? "");
-        return savedBody !== undefined && savedBody !== entry.body;
-      })
-      .map(([key, entry]) => ({
-        key,
-        eventKey: key.split(":")[1] ?? key,
-        saved: savedByEvent.get(key.split(":")[1] ?? "") ?? "",
-        edited: entry.body,
-      }));
-  }, [report, templatesState, editing]);
-
-  const saveTemplatesNow = useCallback(async () => {
-    if (!Object.keys(editing).length) return;
-    setTemplatesSaving(true);
-    try {
-      const res = await adminFetch("/api/admin/notifications/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templates: editing }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Erro ao salvar os templates.");
-      setTemplatesState((current) => (current ? { ...current, ...(data as Partial<TemplatesState>) } : (data as TemplatesState)));
-      setEditing({});
-      toast.success("Mensagens salvas — o próximo envio já sai com o novo texto.");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao salvar os templates.");
-    } finally {
-      setTemplatesSaving(false);
-    }
-  }, [editing]);
   const overrides = useMemo(
     () => describeSettingsOverrides(params, baseline),
     [params, baseline]
   );
-  const rulesDirty = overrides.some((item) => item.includes("régua"));
-
-  const updateRule = (index: number, patch: Partial<SimRule>) =>
-    setParams((current) => ({
-      ...current,
-      rules: current.rules.map((rule, position) => (position === index ? { ...rule, ...patch } : rule)),
-    }));
-
-  const addRule = () =>
-    setParams((current) => {
-      let suffix = current.rules.length + 1;
-      while (current.rules.some((rule) => rule.key === `aviso_${suffix}`)) suffix++;
-      return {
-        ...current,
-        rules: [
-          ...current.rules,
-          {
-            key: `aviso_${suffix}`,
-            eventKey: "billing.late",
-            offsetDays: 15,
-            active: false,
-            sortOrder: (current.rules.length + 1) * 10,
-            label: "novo aviso",
-          },
-        ],
-      };
-    });
-
-  const removeRule = (index: number) =>
-    setParams((current) => ({ ...current, rules: current.rules.filter((_, position) => position !== index) }));
-
-  /** Volta ao documento padrão do código (sem salvar) — a comparação mostra o efeito. */
-  const resetToDefaults = () => {
-    if (!baseline) return;
-    setParams((current) => ({
-      ...current,
-      rules: baseline.defaults.rules.map((rule) => ({ ...rule })),
-      horizon: baseline.defaults.horizonDays,
-      at: baseline.defaults.runAtHour,
-    }));
-    toast.info("Régua padrão carregada no formulário — rode a simulação e salve se quiser fixá-la.");
-  };
 
   /** Descarta os overrides e volta ao que está salvo (é o que será enviado). */
   const resetToSaved = () => {
@@ -853,26 +602,6 @@ export default function AdminSimulator() {
               Baixar JSON
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-              onClick={() => setSyncOpen(true)}
-            >
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-              Sincronizar agora
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-              onClick={() => setDispatchOpen(true)}
-            >
-              <Send className="h-3.5 w-3.5 mr-1.5" />
-              Disparar fila outbox
-            </Button>
-
             {overrides.length ? (
               <Button
                 variant="ghost"
@@ -929,395 +658,7 @@ export default function AdminSimulator() {
         </CardContent>
       </Card>
 
-      {/* ── Régua de lembretes: a configuração que a simulação e o envio usam ── */}
-      <Card className="border-border shadow-none">
-        <CardHeader className="pb-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Settings2 className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium tracking-tight">
-                  Régua de lembretes
-                </CardTitle>
-              </div>
-              <CardDescription className="text-xs text-muted-foreground">
-                {baseline ? (
-                  <>
-                    {baseline.origin === "db"
-                      ? "Configuração salva no painel"
-                      : "Régua padrão do código (nada salvo ainda)"}{" "}
-                    · <span className="font-mono">{baseline.fingerprint}</span>
-                    {baseline.updatedAt
-                      ? ` · salva em ${new Date(baseline.updatedAt).toLocaleString("pt-BR")}${baseline.updatedBy ? ` por ${baseline.updatedBy}` : ""}`
-                      : ""}
-                  </>
-                ) : (
-                  "Lendo a configuração…"
-                )}
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-xs h-8 cursor-pointer"
-                disabled={!baseline || saving}
-                onClick={resetToDefaults}
-              >
-                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                Régua padrão
-              </Button>
-              <Button
-                size="sm"
-                className="text-xs h-8 cursor-pointer"
-                disabled={!baseline || saving || !rulesDirty || ruleProblems.length > 0}
-                onClick={saveRules}
-              >
-                {saving ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Salvar régua
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {settingsError ? (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400">
-              {settingsError} Os campos abaixo continuam no padrão do formulário, e a rodada sai
-              marcada como override — o que está salvo não pôde ser lido.
-            </p>
-          ) : null}          <p className="text-[10px] text-muted-foreground">
-            Ligue ou desligue cada aviso da régua. A régua salva é a que o envio automático usará.
-          </p>
 
-          {/* Visão SIMPLES: um cartão por regra, com toggle e descrição em português.
-              A edição técnica (chave/evento/prioridade/rótulo) fica no modo avançado. */}
-          <div className="space-y-2">
-            {params.rules.map((rule, index) => {
-              const offsetLabel =
-                rule.offsetDays === 0
-                  ? "no dia do vencimento"
-                  : rule.offsetDays > 0
-                    ? `${rule.offsetDays} dia${rule.offsetDays > 1 ? "s" : ""} após o vencimento`
-                    : `${Math.abs(rule.offsetDays)} dia${Math.abs(rule.offsetDays) > 1 ? "s" : ""} antes do vencimento`;
-              const eventLabel =
-                rule.eventKey === "billing.due_soon"
-                  ? "Aviso de aproximação"
-                  : rule.eventKey === "billing.due_today"
-                    ? "Lembrete do dia"
-                    : rule.eventKey === "billing.late"
-                      ? "Aviso de atraso"
-                      : rule.eventKey;
-              return (
-                <div
-                  key={`${rule.key}-${index}`}
-                  className={`flex items-center justify-between gap-3 rounded-sm border px-3 py-2.5 transition-colors ${
-                    rule.active ? "border-border bg-background" : "border-border/50 bg-muted/30"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className={`text-xs font-medium ${rule.active ? "text-foreground" : "text-muted-foreground"}`}>
-                      {rule.label || eventLabel}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {eventLabel} · {offsetLabel}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={rule.active}
-                    onCheckedChange={(checked) => updateRule(index, { active: checked })}
-                    className="cursor-pointer shrink-0"
-                  />
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowAdvancedRules((v) => !v)}
-            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-          >
-            <ChevronDown className={`h-3 w-3 transition-transform ${showAdvancedRules ? "" : "-rotate-90"}`} />
-            Editar avançado (chave, evento, prioridade, rótulo)
-          </button>
-          {showAdvancedRules && (
-            <div className="space-y-2">
-              {params.rules.map((rule, index) => (
-                <div key={`adv-${rule.key}-${index}`} className="flex flex-wrap items-center gap-2">
-                  <Input
-                    value={rule.key}
-                    onChange={(event) =>
-                      updateRule(index, { key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })
-                    }
-                    className="h-8 w-28 text-xs font-mono"
-                    placeholder="chave"
-                  />
-                  <Select
-                    value={rule.eventKey}
-                    onValueChange={(value) => updateRule(index, { eventKey: value })}
-                  >
-                    <SelectTrigger className="h-8 w-40 text-xs cursor-pointer">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(baseline?.eventKeys ?? [rule.eventKey]).map((eventKey) => (
-                        <SelectItem key={eventKey} value={eventKey} className="text-xs">
-                          {eventKey}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="number"
-                      min={-60}
-                      max={60}
-                      value={rule.offsetDays}
-                      onChange={(event) => updateRule(index, { offsetDays: Number(event.target.value) })}
-                      className="h-8 w-16 text-xs font-mono"
-                    />
-                    <span className="text-[10px] text-muted-foreground">d</span>
-                  </div>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={999}
-                    value={rule.sortOrder}
-                    onChange={(event) => updateRule(index, { sortOrder: Number(event.target.value) })}
-                    className="h-8 w-16 text-xs font-mono"
-                    title="Prioridade na fila (menor primeiro)"
-                  />
-                  <Input
-                    value={rule.label}
-                    onChange={(event) => updateRule(index, { label: event.target.value })}
-                    className="h-8 flex-1 min-w-40 text-xs"
-                    placeholder="rótulo para o painel"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-red-600"
-                    onClick={() => removeRule(index)}
-                    title="Remover regra"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ))}
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-8 cursor-pointer"
-                disabled={!baseline || params.rules.length >= (baseline?.maxRules ?? 12)}
-                onClick={addRule}
-              >
-                <Plus className="h-3.5 w-3.5 mr-1.5" />
-                Adicionar regra
-              </Button>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-8 cursor-pointer"
-              disabled={!baseline || params.rules.length >= (baseline?.maxRules ?? 12)}
-              onClick={addRule}
-            >
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              Adicionar regra
-            </Button>
-            {!params.rules.some((rule) => rule.active) ? (
-              <span className="text-[10px] text-amber-600 dark:text-amber-400">
-                Nenhuma regra ligada: o pipeline não geraria nenhum aviso.
-              </span>
-            ) : null}
-          </div>
-
-          {ruleProblems.length ? (
-            <ul className="space-y-0.5 text-[10px] text-red-600 dark:text-red-400">
-              {ruleProblems.map((problem) => (
-                <li key={problem}>• {problem}</li>
-              ))}
-            </ul>
-          ) : null}
-
-          {settingsNotes.length ? (
-            <ul className="space-y-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-              {settingsNotes.map((note) => (
-                <li key={note}>• salvo com ajuste: {note}</li>
-              ))}
-            </ul>
-          ) : null}
-
-          <p className="text-[10px] text-muted-foreground">
-            Cota de novas conversas, janela de envio e canal ligado/desligado são do canal e vivem em{" "}
-            <span className="font-medium">Configurações › WhatsApp</span> — aqui elas aparecem apenas
-            como override de cenário.
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* ── Mensagens: preview + edição por opção da régua ── */}
-      <Card className="border-border shadow-none">
-        <CardHeader className="pb-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <MessageSquareText className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium tracking-tight">Mensagens</CardTitle>
-              </div>
-              <CardDescription className="text-xs text-muted-foreground">
-                {templatesState?.origin === "db"
-                  ? "Textos salvos no painel"
-                  : "Textos padrão do código (nada salvo ainda)"}{" "}
-                · prévia com dados de exemplo · o que salvar aqui é o que a fila envia
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              {templatesDirty ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs h-8 cursor-pointer"
-                  onClick={() => setEditing({})}
-                >
-                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                  Descartar
-                </Button>
-              ) : null}
-              <Button
-                size="sm"
-                className="text-xs h-8 cursor-pointer"
-                disabled={!templatesDirty || templatesSaving}
-                onClick={saveTemplatesNow}
-              >
-                {templatesSaving ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <Save className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Salvar mensagens
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {templatesError ? (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400">
-              {templatesError} O simulador continua funcionando com os textos padrão do código.
-            </p>
-          ) : null}
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
-              <SelectTrigger className="h-8 w-64 text-xs cursor-pointer">
-                <SelectValue placeholder="escolha a mensagem" />
-              </SelectTrigger>
-              <SelectContent>
-                {orderedTemplates.map((template) => (
-                  <SelectItem key={template.key} value={template.key} className="text-xs">
-                    {template.channel === "whatsapp" ? "WhatsApp" : "Push"} · {templateEventLabel(template.eventKey)}
-                    {template.edited || editing[template.key] ? " •" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {currentTemplate ? (
-              <Switch
-                checked={editingTemplate?.active ?? currentTemplate.active}
-                onCheckedChange={(checked) => updateEditing(currentTemplate.key, { active: checked })}
-                className="cursor-pointer"
-              />
-            ) : null}
-            <span className="text-[10px] text-muted-foreground">
-              {currentTemplate?.edited || (currentTemplate && editing[currentTemplate.key]) ? "editado" : "texto padrão"}
-            </span>
-            {currentTemplateDiffersFromDefault ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-8 cursor-pointer"
-                onClick={() => resetTemplateToDefault(currentTemplate.key)}
-              >
-                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-                Voltar ao padrão
-              </Button>
-            ) : null}
-          </div>
-
-          {currentTemplate && editingTemplate ? (
-            <>
-              <div className="space-y-2">
-                <Label className="text-[10px] font-medium text-muted-foreground">
-                  Corpo da mensagem — {"{{campo}}"} substitui, {"{{#campo}}…{{/campo}}"} é opcional
-                </Label>
-                <Textarea
-                  value={editingTemplate.body}
-                  onChange={(event) => updateEditing(currentTemplate.key, { body: event.target.value })}
-                  className="min-h-44 text-xs font-mono"
-                  spellCheck={false}
-                />
-                {currentTemplate.channel === "push" ? (
-                  <div className="space-y-1.5">
-                    <Label className="text-[10px] font-medium text-muted-foreground">Título do push</Label>
-                    <Input
-                      value={editingTemplate.title ?? ""}
-                      onChange={(event) => updateEditing(currentTemplate.key, { title: event.target.value })}
-                      className="h-8 text-xs font-mono"
-                    />
-                  </div>
-                ) : null}
-                {livePreview?.missing.length ? (
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                    Campo desconhecido: {livePreview.missing.map((key) => `{{${key}}}`).join(", ")} — será enviado vazio.
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <Label className="text-[10px] font-medium text-muted-foreground">Prévia (como o cliente recebe)</Label>
-                  <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={showMinimalSample}
-                      onChange={(event) => setShowMinimalSample(event.target.checked)}
-                      className="accent-foreground"
-                    />
-                    simular fatura sem Pix/boleto
-                  </label>
-                </div>
-                <div className="rounded-sm border border-border bg-muted/30 p-3 whitespace-pre-wrap text-xs leading-relaxed">
-                  {currentTemplate.channel === "push" && liveTitle?.body ? (
-                    <p className="font-medium mb-1">{liveTitle.body}</p>
-                  ) : null}
-                  {livePreview?.body}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(TEMPLATE_SAMPLE_PAYLOAD).map(([key, value]) => (
-                  <span
-                    key={key}
-                    title={value}
-                    className="px-1.5 py-0.5 rounded-sm border border-border text-[10px] font-mono text-muted-foreground"
-                  >
-                    {key}
-                  </span>
-                  ))}
-              </div>
-            </>
-          ) : (
-            <p className="text-[10px] text-muted-foreground">Carregando mensagens…</p>
-          )}
-        </CardContent>
-      </Card>
 
       {error ? (
         <Card className="border-border shadow-none">
@@ -1553,41 +894,6 @@ export default function AdminSimulator() {
                       <li key={warning}>• {warning}</li>
                     ))}
                   </ul>
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {pendingDiff.length ? (
-            <Card className="border-amber-500/40 shadow-none">
-              <CardContent className="flex items-start gap-2 py-4 text-xs text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                <div className="space-y-1.5">
-                  <p className="font-medium">
-                    O preview usa o texto SALVO, mas há edições não salvas para:{" "}
-                    {pendingDiff.map((entry) => templateEventLabel(entry.eventKey)).join(", ")}
-                  </p>
-                  <p className="text-muted-foreground">
-                    A fila envia o texto salvo — salve no card "Mensagens" para o novo texto valer
-                    no envio (e no fingerprint da configuração).
-                  </p>
-                  {pendingDiff.map((entry) => (
-                    <details key={entry.key} className="rounded-sm border border-border">
-                      <summary className="cursor-pointer px-2 py-1 text-[11px] font-medium">
-                        {templateEventLabel(entry.eventKey)} — ver textos
-                      </summary>
-                      <div className="grid gap-2 p-2 text-[10px]">
-                        <div>
-                          <p className="font-medium text-muted-foreground">Salvo (o que a fila envia):</p>
-                          <pre className="mt-1 whitespace-pre-wrap rounded-sm bg-muted/40 p-2 font-mono">{entry.saved}</pre>
-                        </div>
-                        <div>
-                          <p className="font-medium text-muted-foreground">Sua edição (não salva):</p>
-                          <pre className="mt-1 whitespace-pre-wrap rounded-sm bg-muted/40 p-2 font-mono">{entry.edited}</pre>
-                        </div>
-                      </div>
-                    </details>
-                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -1840,19 +1146,6 @@ export default function AdminSimulator() {
           </p>
         </>
       ) : null}
-
-      <AdminSyncDialog
-        open={syncOpen}
-        onOpenChange={setSyncOpen}
-        onOpenDispatch={() => {
-          setDispatchOpen(true);
-        }}
-      />
-
-      <AdminDispatchDialog
-        open={dispatchOpen}
-        onOpenChange={setDispatchOpen}
-      />
     </div>
   );
 }

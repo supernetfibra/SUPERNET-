@@ -51,6 +51,8 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { ReminderRulesCard } from "@/components/ReminderRulesCard";
+import { ReminderMessagesCard } from "@/components/ReminderMessagesCard";
 import { ChevronDown } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNavigate } from "react-router";
@@ -242,6 +244,7 @@ export default function AdminSettings() {
   const [waRules, setWaRules] = useState<Array<{ key: string; eventKey: string; active: boolean; offsetDays: number }>>([]);
   const [waSyncOpen, setWaSyncOpen] = useState(false);
   const [waDispatchOpen, setWaDispatchOpen] = useState(false);
+
   const [waChecking, setWaChecking] = useState(false);
   const [waImportOpen, setWaImportOpen] = useState(false);
   const [waImportPlan, setWaImportPlan] = useState<{
@@ -1594,6 +1597,28 @@ export default function AdminSettings() {
               mensagem no formato exato que o cliente receberia.
             </p>
           </div>
+
+          {/* Operação da fila — o que define produção fica aqui, não no simulador */}
+          <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              onClick={() => setWaSyncOpen(true)}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Sincronizar agora (prévia → enfileirar)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+              onClick={() => setWaDispatchOpen(true)}
+            >
+              <Send className="h-3.5 w-3.5 mr-1.5" />
+              Disparar fila outbox
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -1651,6 +1676,10 @@ export default function AdminSettings() {
           </p>
         </div>
       </ConfirmDialog>
+
+      {/* Régua e Mensagens: configuração de produção do pipeline de lembretes */}
+      <ReminderRulesCard />
+      <ReminderMessagesCard />
 
       <AdminSyncDialog
         open={waSyncOpen}
