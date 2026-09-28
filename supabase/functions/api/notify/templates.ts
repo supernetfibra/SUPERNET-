@@ -11,6 +11,13 @@
  *
  * A seção condicional existe por um motivo concreto: sem ela, uma fatura sem Pix
  * geraria a linha "Pix copia e cola: " pendurada na mensagem.
+ *
+ * O CÓDIGO Pix e a linha digitável NÃO vão no texto dos templates: com os botões
+ * de ação rápida (`buildActions`), repetir o código no corpo é redundante e ocupa
+ * ~80 caracteres ilegíveis. O texto só APONTA para o botão. Segurança disso: o
+ * fallback de texto puro do cliente UazAPI (`uazapi.ts`) anexa os códigos em
+ * linhas `📋` quando o menu interativo é recusado — então tirar do texto não tira
+ * o caminho de pagamento em nenhum cenário.
  */
 
 import {
@@ -54,8 +61,7 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Boleto (PDF): {{boleto}}",
       "{{/boleto}}",
       "{{#pix}}",
-      "Pix copia e cola:",
-      "{{pix}}",
+      "Pague com o Pix copiável no botão abaixo. 👇",
       "{{/pix}}",
       "Ver no portal do cliente: {{link}}",
       "",
@@ -74,8 +80,7 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Boleto (PDF): {{boleto}}",
       "{{/boleto}}",
       "{{#pix}}",
-      "Pix copia e cola:",
-      "{{pix}}",
+      "Pague com o Pix copiável no botão abaixo. 👇",
       "{{/pix}}",
       "Ver no portal do cliente: {{link}}",
       "",
@@ -95,8 +100,7 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
       "Boleto (PDF): {{boleto}}",
       "{{/boleto}}",
       "{{#pix}}",
-      "Pix copia e cola:",
-      "{{pix}}",
+      "Pague com o Pix copiável no botão abaixo. 👇",
       "{{/pix}}",
       "Ver no portal do cliente: {{link}}",
       "",

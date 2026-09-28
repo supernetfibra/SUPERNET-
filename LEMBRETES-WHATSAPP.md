@@ -219,11 +219,16 @@ placeholders resolvidos no backend:
 Olá, {{nome}}! 👋
 Sua fatura de {{referencia}} no valor de R$ {{valor}} vence em {{vencimento}}.
 Pague pelo link: {{link}}
-Pix copia e cola: {{pix}}
+Pague com o Pix copiável no botão abaixo. 👇
 
 Qualquer dúvida, é só responder esta mensagem.
 Para não receber mais lembretes, responda PARAR.
 ```
+
+O CÓDIGO Pix e a linha digitável NÃO vão no texto: saem como BOTÕES de ação rápida
+(§15b — `Copiar código Pix`, `Copiar código de barras`), e o texto só aponta para
+eles. Se o menu interativo for recusado, o fallback de texto puro anexa os códigos
+em linhas `📋` — o caminho de pagamento nunca se perde.
 
 `{{link}}` = página de detalhe da fatura no portal (`/faturas/:id` — rota real do app;
 exige login) e `{{boleto}}` = `url_boleto`/`integration_link`, que é o caminho de

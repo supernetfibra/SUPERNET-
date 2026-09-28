@@ -918,6 +918,37 @@ eq("código de barras sai só com dígitos (47)", acts[1].copy, "341910901234567
 eq("portal é o terceiro botão", acts[2], { label: "Abrir portal", url: "https://portal.com/faturas/b1" });
 check("nunca mais de 3 botões (limite do WhatsApp)", acts.length <= 3, acts.length);
 
+// Com botões de cópia, o CÓDIGO não pode aparecer no corpo da mensagem (é ilegível
+// e redundante). O texto só APONTA para o botão — o fallback de texto puro do
+// cliente UazAPI é quem anexa os códigos em linhas 📋 quando o menu é recusado.
+const renderedWithButtons = renderFor("whatsapp", "billing.due_soon", actionsFullPayload).message;
+check(
+  "corpo do WhatsApp não repete o código Pix (fica só no botão)",
+  !renderedWithButtons.body.includes("PIX000"),
+  renderedWithButtons.body
+);
+check(
+  "corpo do WhatsApp não repete a linha digitável",
+  !renderedWithButtons.body.includes("34191090123456789012345678901234512345678901234"),
+  renderedWithButtons.body
+);
+check(
+  "corpo ainda aponta para o botão quando há Pix",
+  renderedWithButtons.body.includes("Pix copiável no botão"),
+  renderedWithButtons.body
+);
+// Fatura SEM Pix: a linha apontando para o botão não pode sobrar pendurada.
+const noPixPayload = buildPayload({
+  ...actionsInputBase,
+  billing: { id: "b3", value: 99.9, reference: "Mensalidade", due_day: "2026-09-25", situation_name: "Em Aberto", integration_link: "https://boleto.exemplo.com/pdf/b3" },
+});
+const renderedNoPix = renderFor("whatsapp", "billing.due_soon", noPixPayload).message;
+check(
+  "sem Pix, texto não menciona botão de Pix",
+  !renderedNoPix.body.includes("Pix copiável"),
+  renderedNoPix.body
+);
+
 const actionsPdfPayload = buildPayload({
   ...actionsInputBase,
   billing: { id: "b1", value: 99.9, reference: "Mensalidade", due_day: "2026-09-25", situation_name: "Em Aberto", integration_link: "https://boleto.exemplo.com/pdf/b1" },
