@@ -108,6 +108,21 @@ async function tryRead(deps: SourcesDeps, table: string, columns: string, limit 
   }
 }
 
+/** Busca o cadastro individual por ID (`/customers/{id}`, a rota do login/admin). */
+async function fetchCustomerById(deps: SourcesDeps, id: string): Promise<RawCustomer | null> {
+  try {
+    const result = await deps.apiGetFull<RawCustomer | RawCustomer[]>(`/customers/${id}`);
+    const data = result.data;
+    if (Array.isArray(data)) {
+      // Algumas instalações devolvem lista mesmo para ID único.
+      return data.find((customer) => String(customer?.id ?? "") === id) ?? data[0] ?? null;
+    }
+    return data && String((data as RawCustomer).id ?? "") === id ? data : null;
+  } catch {
+    return null; // rota indisponível → o fallback de paginação cobre
+  }
+}
+
 async function readCustomers(
   deps: SourcesDeps,
   ids: Set<string>,
@@ -115,6 +130,30 @@ async function readCustomers(
 ): Promise<RawCustomer[]> {
   const found: RawCustomer[] = [];
   const seen = new Set<string>();
+  const add = (customer: RawCustomer | null) => {
+    if (!customer) return;
+    const id = String(customer.id ?? "");
+    if (id && ids.has(id) && !seen.has(id)) {
+      seen.add(id);
+      found.push(customer);
+    }
+  };
+
+  // 1) Busca individual por ID (lotes de 5 em paralelo): precisa do cadastro EXATO
+  //    de quem tem fatura na janela. A listagem paginada só cobre as primeiras
+  //    páginas — a MikWeb limita o per_page efetivo e os clientes-alvo podem estar
+  //    além do alcance, deixando o sync com `no_customer` em silêncio (peguei ao
+  //    vivo: 32 de 38 avisos sem cadastro com 6 clientes carregados).
+  const wanted = [...ids].slice(0, 100);
+  const BATCH = 5;
+  for (let index = 0; index < wanted.length; index += BATCH) {
+    const batch = wanted.slice(index, index + BATCH);
+    const results = await Promise.all(batch.map((id) => fetchCustomerById(deps, id)));
+    for (const customer of results) add(customer);
+  }
+  if (seen.size >= ids.size) return found;
+
+  // 2) Fallback: folheia a listagem (comportamento antigo).
   for (let page = 1; page <= maxPages && seen.size < ids.size; page++) {
     let batch: RawCustomer[] = [];
     try {
@@ -124,13 +163,7 @@ async function readCustomers(
     } catch {
       break;
     }
-    for (const customer of batch) {
-      const id = String(customer?.id ?? "");
-      if (ids.has(id) && !seen.has(id)) {
-        seen.add(id);
-        found.push(customer);
-      }
-    }
+    for (const customer of batch) add(customer);
   }
   return found;
 }

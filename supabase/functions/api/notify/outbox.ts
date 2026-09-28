@@ -101,6 +101,8 @@ export interface DeliveryRow {
   cpf: string | null;
   target: string;
   rendered: Record<string, unknown> | null;
+  /** Botões de ação enviados com a mensagem (migration 006). Nulo = sem botões ou envio anterior ao recurso. */
+  actions: Array<{ label: string; copy?: string; url?: string }> | null;
   status: DeliveryStatus;
   attempts: number;
   scheduledFor: number;
@@ -132,6 +134,7 @@ function toDeliveryRow(row: Record<string, unknown>): DeliveryRow {
   return {
     ...claimed,
     rendered: (row.rendered ?? null) as Record<string, unknown> | null,
+    actions: (row.actions ?? null) as Array<{ label: string; copy?: string; url?: string }> | null,
     providerId: row.provider_id === null || row.provider_id === undefined ? null : String(row.provider_id),
     errorKey: row.error_key === null || row.error_key === undefined ? null : String(row.error_key),
     errorMessage: row.error_message === null || row.error_message === undefined ? null : String(row.error_message),

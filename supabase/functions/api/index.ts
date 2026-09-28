@@ -38,6 +38,7 @@ import type { ChannelTemplate } from "./notify/templates.ts";
 import { createUazapiClient } from "./notify/uazapi.ts";
 import { createWhatsAppRuntime } from "./notify/runtime.ts";
 import { handleUazapiWebhook } from "./notify/webhook.ts";
+import { aggregateFunnel, buildFunnelWeeks, funnelTotals, weekStartToMs } from "./notify/engagement.ts";
 
 // ---------------------------------------------------------------------------
 // Env helpers
@@ -1430,10 +1431,13 @@ app.get("/admin/notifications/simulate", async (c) => {
           // A régua vira janela de VENCIMENTO (syncDueWindow): regras de atraso
           // exigem varrer faturas vencidas antes de hoje, que a janela plana
           // [hoje, hoje+horizonte] deixava de fora.
-          rules: settings.rules,
-          limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
-          maxPages: Math.min(Math.max(int("max-pages", 10), 1), 50),
-          assumeOptIn: optInParam === "auto" ? "table" : (optInParam as "all" | "none"),
+          rules: settings.rules,            limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
+            // 50 páginas: o `readCustomers` folheia /customers até achar os cadastros
+            // das faturas, e a MikWeb limita o per_page efetivo — com o default antigo
+            // (10), 32 de 38 avisos caíam em `no_customer` (o cadastro não fora
+            // carregado). O loop tem early-exit ao encontrar todos os IDs.
+            maxPages: Math.min(Math.max(int("max-pages", 50), 1), 50),
+            assumeOptIn: optInParam === "auto" ? "table" : (optInParam as "all" | "none"),
           assumePush: pushParam === "auto" ? "table" : (pushParam as "all" | "none"),
         }
       );
@@ -1641,6 +1645,104 @@ app.post("/admin/notifications/settings", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/admin/whatsapp/button-stats — uso real dos botões de ação (30 dias)
+//
+// Agrega a view `whatsapp_button_click_stats` (migration 007): cliques por
+// rótulo, telefones únicos e quantos cliques casaram com a entrega exata. É a
+// resposta para "quantos clientes usam o Pix copiável?".
+// ---------------------------------------------------------------------------
+app.get("/admin/whatsapp/button-stats", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const { data, error } = await db()
+      .from("whatsapp_button_click_stats")
+      .select("*")
+      .limit(20);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Record<string, unknown>[];
+    return json({
+      success: true,
+      stats: rows.map((row) => ({
+        label: String(row.button_label ?? "—"),
+        clicks: Number(row.clicks ?? 0),
+        uniquePhones: Number(row.unique_phones ?? 0),
+        matched: Number(row.matched ?? 0),
+        unmatched: Number(row.unmatched ?? 0),
+        lastClickAt: row.last_click_at ? new Date(String(row.last_click_at)).getTime() : null,
+      })),
+    });
+  } catch (error) {
+    // Migration 007 pendente: devolve vazio, não 500.
+    return json({ success: true, stats: [], pending: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/whatsapp/engagement-funnel — funil de engajamento por semana
+//
+// enviado → entregue → lido → clicou no Pix, agregado por semana (seg–dom, fuso
+// do projeto). A agregação vive em `notify/engagement.ts` (módulo puro): aqui só
+// buscam-se as linhas de `notification_deliveries` e `whatsapp_button_clicks` e
+// injeta-se nelas. Sem as duas tabelas (migrations 003/007 pendentes) devolve
+// vazio com flag `pending` — o painel oculta a seção, não estoura 500.
+// ---------------------------------------------------------------------------
+app.get("/admin/whatsapp/engagement-funnel", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+
+  const weeksWanted = Math.min(Math.max(Number(c.req.query("weeks") ?? "8") || 8, 1), 12);
+  const nowMs = Date.now();
+  const weeks = buildFunnelWeeks({ now: nowMs, weeks: weeksWanted });
+  // Consulta começa na segunda-feira da semana mais antiga (meia-noite local).
+  const sinceMs = weekStartToMs(weeks[0]!.weekStart);
+  // Esqueleto vazio já é resposta válida (migration pendente, erro de leitura):
+  // o painel mostra semanas zeradas com a nota, nunca um 500.
+  let funnel = weeks;
+
+  try {
+    // Colunas mínimas para a agregação — a tabela pode ter muitas linhas.
+    const { data: deliveryRows, error: deliveryError } = await db()
+      .from("notification_deliveries")
+      .select("status, sent_at, created_at")
+      .gte("created_at", sinceMs)
+      .limit(10000);
+    if (deliveryError) throw new Error(deliveryError.message);
+
+    let clicks: Array<{ created_at: number; button_label: string | null }> = [];
+    const { data: clickRows, error: clickError } = await db()
+      .from("whatsapp_button_clicks")
+      .select("created_at, button_label")
+      .gte("created_at", sinceMs)
+      .limit(10000);
+    if (!clickError) {
+      clicks = (clickRows ?? []) as Array<{ created_at: number; button_label: string | null }>;
+    }
+    // Erro na tabela de cliques (ex.: migration 007 pendente) NÃO derruba o funil:
+    // as etapas de envio continuam válidas, só os cliques ficam zerados.
+
+    funnel = aggregateFunnel({
+      weeks,
+      deliveries: (deliveryRows ?? []) as Array<{ status: string; sent_at: number | null; created_at: number }>,
+      clicks,
+    });
+
+    return json({
+      success: true,
+      weeks: funnel,
+      totals: funnelTotals(funnel),
+      pending: clickError ? "whatsapp_button_clicks indisponível" : undefined,
+    });
+  } catch (error) {
+    // Migration 003 pendente (ou erro de leitura): devolve vazio, não 500.
+    return json({
+      success: true,
+      weeks: funnel,
+      totals: funnelTotals(funnel),
+      pending: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/admin/whatsapp/config — config + status da instância + limites + números
 // ---------------------------------------------------------------------------
 app.get("/admin/whatsapp/config", async (c) => {
@@ -1784,6 +1886,114 @@ app.post("/admin/whatsapp/connect", async (c) => {
 // de envio continua só alcançando quem explicitamente autorizou — usar a campanha
 // do portal (ou o opt-in automático no login) para coletar o consentimento.
 // ---------------------------------------------------------------------------
+/**
+ * Núcleo da importação de opt-ins, compartilhado pelo endpoint do admin e pelo
+ * cron diário (`/cron/whatsapp-import-contacts`). Mesma política nos dois: opt-out
+ * vence, registro existente preserva o consentimento, upsert idempotente.
+ */
+async function importMikwebContacts(options: {
+  dryRun: boolean;
+  maxPages: number;
+}): Promise<Record<string, unknown>> {
+  // Varredura completa dos clientes da MikWeb (paginada).
+  const customers: MikWebCustomer[] = [];
+  let page = 1;
+  let totalPages = 1;
+  while (page <= totalPages && page <= options.maxPages) {
+    const { data, meta } = await mikwebApiGetFull<MikWebCustomer[]>(
+      page === 1 ? "/customers?per_page=100" : `/customers?per_page=100&page=${page}`
+    );
+    if (data?.length) customers.push(...data);
+    const next = meta?.pages?.total_pages;
+    if (!next || !Number.isFinite(next)) break;
+    totalPages = next;
+    page++;
+  }
+
+  const ts = Date.now();
+  const contacts = new Map<string, Record<string, unknown>>();
+  const failures: Partial<Record<PhoneFailure, number>> = {};
+  let noPhone = 0;
+  let eligible = 0;
+
+  // Estados atuais, para não reativar quem pediu para sair e não duplicar telefone.
+  const existingRows = await db()
+    .from("whatsapp_contacts")
+    .select("customer_id, phone_e164, opt_in, opt_out_at")
+    .limit(10_000);
+  const existing = new Map<string, Record<string, unknown>>();
+  const existingByPhone = new Set<string>();
+  for (const row of existingRows.data ?? []) {
+    const record = row as Record<string, unknown>;
+    existing.set(String(record.customer_id), record);
+    if (typeof record.phone_e164 === "string" && record.phone_e164) existingByPhone.add(record.phone_e164);
+  }
+
+  for (const customer of customers) {
+    const customerId = String(customer.id ?? "");
+    if (!customerId) continue;
+    const phone = pickCustomerPhone(customer);
+    if (!phone.ok) {
+      if (phone.reason === "empty") noPhone++;
+      else failures[phone.reason] = (failures[phone.reason] ?? 0) + 1;
+      continue;
+    }
+    eligible++;
+    const current = existing.get(customerId);
+    const optedOut = current ? current.opt_out_at !== null && current.opt_out_at !== undefined : false;
+    contacts.set(customerId, {
+      customer_id: customerId,
+      cpf: typeof customer.cpf_cnpj === "string" ? customer.cpf_cnpj : null,
+      customer_name: customer.full_name ?? null,
+      phone_e164: phone.e164,
+      // Opt-in: só quem AINDA NÃO TEM registro entra como opt-in=true (o cliente
+      // autorizou receber pelo portal). Registro existente preserva o consentimento
+      // atual — e opt-out vence sempre.
+      opt_in: current ? current.opt_in === true && !optedOut : true,
+      opt_out_at: current ? (current.opt_out_at ?? null) : null,
+      source: "mikweb-import",
+      is_new: !current,
+      phone_changed: current ? current.phone_e164 !== phone.e164 : false,
+      _failure_reason: phone.reason === "landline" || phone.reason === "invalid" ? phone.reason : null,
+    });
+  }
+
+  const toInsert = [...contacts.values()].filter((row) => row.is_new);
+  const toUpdate = [...contacts.values()].filter((row) => !row.is_new && (row.phone_changed || row.opt_in === true));
+  const plan = {
+    scanned: customers.length,
+    eligible,
+    noPhone,
+    phoneFailures: failures,
+    newContacts: toInsert.length,
+    updates: toUpdate.length,
+    keptOptOut: [...contacts.values()].filter((row) => row.opt_out_at !== null && row.opt_out_at !== undefined).length,
+    phoneConflicts: [...contacts.values()].filter((row) => row.phone_e164 && existingByPhone.has(String(row.phone_e164)) && row.is_new).length,
+  };
+
+  if (options.dryRun) {
+    return { dryRun: true, plan, sample: [...contacts.values()].slice(0, 10) };
+  }
+
+  // Gravação em lotes: upsert preserva o registro (idempotente, reprocessar não duplica).
+  const rows = [...contacts.values()].map((row) => {
+    // Chaves de planejamento (`is_new`, `phone_changed`) e o diagnóstico
+    // `_failure_reason` NÃO são colunas da tabela — ir ao upsert com elas é
+    // PGRST204 na cara (peguei ao vivo no primeiro run do cron).
+    const { is_new: _isNew, phone_changed: _phoneChanged, _failure_reason: _failureReason, ...contact } = row;
+    return { ...contact, created_at: ts, updated_at: ts };
+  });
+  for (let index = 0; index < rows.length; index += 200) {
+    const batch = rows.slice(index, index + 200);
+    const { error } = await db()
+      .from("whatsapp_contacts")
+      .upsert(batch, { onConflict: "customer_id" });
+    if (error) throw new Error(`Erro ao gravar os contatos: ${error.message}`);
+  }
+
+  return { dryRun: false, plan: { ...plan, written: rows.length }, updated: toUpdate.length };
+}
+
 app.post("/admin/whatsapp/import-contacts", async (c) => {
   if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
   const body = await c.req.json().catch(() => ({}));
@@ -1791,108 +2001,15 @@ app.post("/admin/whatsapp/import-contacts", async (c) => {
   const maxPages = Math.min(Math.max(Number(body.maxPages ?? 30), 1), 100);
 
   try {
-    // Varredura completa dos clientes da MikWeb (paginada).
-    const customers: MikWebCustomer[] = [];
-    let page = 1;
-    let totalPages = 1;
-    while (page <= totalPages && page <= maxPages) {
-      const { data, meta } = await mikwebApiGetFull<MikWebCustomer[]>(
-        page === 1 ? "/customers?per_page=100" : `/customers?per_page=100&page=${page}`
-      );
-      if (data?.length) customers.push(...data);
-      const next = meta?.pages?.total_pages;
-      if (!next || !Number.isFinite(next)) break;
-      totalPages = next;
-      page++;
-    }
-
-    const now = Date.now();
-    const contacts = new Map<string, Record<string, unknown>>();
-    const failures: Partial<Record<PhoneFailure, number>> = {};
-    let noPhone = 0;
-    let eligible = 0;
-
-    // Estados atuais, para não reativar quem pediu para sair e não duplicar telefone.
-    const existingRows = await db()
-      .from("whatsapp_contacts")
-      .select("customer_id, phone_e164, opt_in, opt_out_at")
-      .limit(10_000);
-    const existing = new Map<string, Record<string, unknown>>();
-    const existingByPhone = new Set<string>();
-    for (const row of existingRows.data ?? []) {
-      const record = row as Record<string, unknown>;
-      existing.set(String(record.customer_id), record);
-      if (typeof record.phone_e164 === "string" && record.phone_e164) existingByPhone.add(record.phone_e164);
-    }
-
-    for (const customer of customers) {
-      const customerId = String(customer.id ?? "");
-      if (!customerId) continue;
-      const phone = pickCustomerPhone(customer);
-      if (!phone.ok) {
-        if (phone.reason === "empty") noPhone++;
-        else failures[phone.reason] = (failures[phone.reason] ?? 0) + 1;
-        continue;
-      }
-      eligible++;
-      const current = existing.get(customerId);
-      const optedOut = current ? current.opt_out_at !== null && current.opt_out_at !== undefined : false;
-      contacts.set(customerId, {
-        customer_id: customerId,
-        cpf: typeof customer.cpf_cnpj === "string" ? customer.cpf_cnpj : null,
-        customer_name: customer.full_name ?? null,
-        phone_e164: phone.e164,
-        // Opt-in: só quem AINDA NÃO TEM registro entra como opt-in=true (o cliente
-        // autorizou receber pelo portal). Registro existente preserva o consentimento
-        // atual — e opt-out vence sempre.
-        opt_in: current ? current.opt_in === true && !optedOut : true,
-        opt_out_at: current ? (current.opt_out_at ?? null) : null,
-        source: "mikweb-import",
-        is_new: !current,
-        phone_changed: current ? current.phone_e164 !== phone.e164 : false,
-        _failure_reason: phone.reason === "landline" || phone.reason === "invalid" ? phone.reason : null,
+    const result = await importMikwebContacts({ dryRun, maxPages });
+    const plan = result.plan as { scanned: number; newContacts: number; updates: number };
+    if (!dryRun) {
+      await logEvent({
+        type: "whatsapp_opt_in",
+        metadata: { action: "import-contacts", scanned: plan.scanned, newContacts: plan.newContacts, updates: plan.updates },
       });
     }
-
-    const toInsert = [...contacts.values()].filter((row) => row.is_new);
-    const toUpdate = [...contacts.values()].filter((row) => !row.is_new && (row.phone_changed || row.opt_in === true));
-    const plan = {
-      scanned: customers.length,
-      eligible,
-      noPhone,
-      phoneFailures: failures,
-      newContacts: toInsert.length,
-      updates: toUpdate.length,
-      keptOptOut: [...contacts.values()].filter((row) => row.opt_out_at !== null && row.opt_out_at !== undefined).length,
-      phoneConflicts: [...contacts.values()].filter((row) => row.phone_e164 && existingByPhone.has(String(row.phone_e164)) && row.is_new).length,
-    };
-
-    if (dryRun) {
-      return json({ dryRun: true, plan, sample: [...contacts.values()].slice(0, 10) });
-    }
-
-    // Gravação em lotes: upsert preserva o registro (idempotente, reprocessar não duplica).
-    let inserted = 0;
-    let updated = 0;
-    const rows = [...contacts.values()].map((row) => {
-      const { is_new: _isNew, phone_changed: _phoneChanged, ...contact } = row;
-      return { ...contact, created_at: now, updated_at: now };
-    });
-    for (let index = 0; index < rows.length; index += 200) {
-      const batch = rows.slice(index, index + 200);
-      const { error } = await db()
-        .from("whatsapp_contacts")
-        .upsert(batch, { onConflict: "customer_id" });
-      if (error) return jsonError(`Erro ao gravar os contatos: ${error.message}`, 500);
-      inserted += batch.length;
-    }
-
-    await logEvent({
-      type: "whatsapp_opt_in",
-      metadata: { action: "import-contacts", scanned: plan.scanned, newContacts: plan.newContacts, updates: plan.updates },
-    });
-
-    return json({ success: true, plan: { ...plan, written: inserted }, updated });
+    return json({ success: true, ...result });
   } catch (error) {
     console.error("[IMPORT_CONTACTS_ERROR]", error);
     return jsonError(error instanceof Error ? error.message : "Erro ao importar os contatos.", 500);
@@ -2324,7 +2441,9 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
             dueFrom: window.dueFrom,
             dueTo: window.dueTo,
             limitCustomers: Math.min(Math.max(int("limit-customers", 25), 1), 200),
-            maxPages: Math.min(Math.max(int("max-pages", 10), 1), 50),
+            // Mesmo default do simulador: a MikWeb limita o per_page de /customers e
+            // 10 páginas não cobriam a base — os avisos caíam em `no_customer`.
+            maxPages: Math.min(Math.max(int("max-pages", 50), 1), 50),
           }
         ),
     });
@@ -2362,6 +2481,42 @@ app.on(["GET", "POST"], "/cron/notify-dispatch", async (c) => {
   } catch (error) {
     console.error("[NOTIFY_DISPATCH_ERROR]", error);
     return jsonError("Erro ao processar a fila de notificações.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/cron/whatsapp-import-contacts — reimporta opt-ins da MikWeb (diário)
+//
+// Mantém `whatsapp_contacts` em dia com a base: clientes novos entram, telefone
+// alterado é atualizado. Política idêntica ao botão do painel (mesmo núcleo,
+// `importMikwebContacts`): opt-out vence sempre e registro existente NUNCA é
+// reativado — este job não transforma não-consentido em consentido.
+//
+// Agendar UMA vez por dia (antes do notify-sync, para o alcance do dia já ver os
+// contatos novos): `x-cron-secret` no header. Idempotente: rodar duas vezes não
+// duplica nem desfaz nada.
+// ---------------------------------------------------------------------------
+app.on(["GET", "POST"], "/cron/whatsapp-import-contacts", async (c) => {
+  if (!(await requireCron(c.req.raw))) return jsonError("Não autorizado.", 401);
+
+  const url = new URL(c.req.raw.url);
+  const body = c.req.method === "POST" ? await c.req.json().catch(() => ({})) : {};
+  const raw = (name: string) => body[name] ?? url.searchParams.get(name);
+  const maxPages = Math.min(Math.max(Number(raw("max-pages") ?? 30) || 30, 1), 100);
+
+  try {
+    const result = await importMikwebContacts({ dryRun: false, maxPages });
+    const plan = result.plan as { scanned: number; newContacts: number; updates: number };
+    await logEvent({
+      type: "whatsapp_opt_in",
+      metadata: { action: "cron-import-contacts", scanned: plan.scanned, newContacts: plan.newContacts, updates: plan.updates },
+    });
+    console.log(`[WHATSAPP_IMPORT_CRON] scanned=${plan.scanned} new=${plan.newContacts} updates=${plan.updates}`);
+    return json({ success: true, ...result });
+  } catch (error) {
+    if (error instanceof MikWebNotConfigured) return jsonError(error.message, 400);
+    console.error("[WHATSAPP_IMPORT_CRON_ERROR]", error);
+    return jsonError("Erro ao reimportar os contatos da MikWeb.", 500);
   }
 });
 

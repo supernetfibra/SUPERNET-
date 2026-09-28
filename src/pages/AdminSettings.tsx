@@ -13,8 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Settings,
+import {  Settings,
   Image,
   Wifi,
   Upload,
@@ -31,9 +30,15 @@ import {
   MessageCircle,
   QrCode,
   Copy,
+  MousePointerClick,
   PlugZap,
   FlaskConical,
   RefreshCw,
+  Filter,
+  BarChart3,
+  MailCheck,
+  MailOpen,
+
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -50,6 +55,7 @@ import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { apiUrl } from "@/lib/api-config";
+import type { FunnelTotalsView, FunnelWeekView } from "@/lib/engagement-types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -240,6 +246,10 @@ export default function AdminSettings() {
     keptOptOut: number;
   } | null>(null);
   const [waImporting, setWaImporting] = useState(false);
+  /** Uso real dos botões (cliques reportados pelo webhook, 30 dias). */
+  const [waButtonStats, setWaButtonStats] = useState<Array<{ label: string; clicks: number; uniquePhones: number; matched: number; lastClickAt: number | null }> | null>(null);
+  /** Funil de engajamento semanal (enviado → entregue → lido → Pix). */
+  const [waFunnel, setWaFunnel] = useState<{ weeks: FunnelWeekView[]; totals: FunnelTotalsView; pending?: string } | null>(null);
 
   // ── WhatsApp handlers ──
   /** Aplica a resposta da API no estado da tela (usado pelo efeito e pelos handlers). */
@@ -317,6 +327,45 @@ export default function AdminSettings() {
       cancelled = true;
     };
   }, [applyWhatsAppConfig]);
+
+  useEffect(() => {
+    // Métricas de cliques nos botões (migration 007). Falha silenciosa: se a view
+    // ainda não existe, o endpoint devolve vazio e a seção simplesmente não aparece.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await adminFetch("/api/admin/whatsapp/button-stats");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && Array.isArray(data?.stats)) setWaButtonStats(data.stats);
+      } catch {
+        // seção fica oculta
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    // Funil de engajamento por semana (enviado → entregue → lido → Pix). Se as
+    // migrations ainda não estão aplicadas, o endpoint devolve semanas zeradas
+    // com `pending` — a seção aparece com zeros e uma nota discreta.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await adminFetch("/api/admin/whatsapp/engagement-funnel?weeks=8");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && Array.isArray(data?.weeks)) {
+          setWaFunnel({ weeks: data.weeks, totals: data.totals, pending: data.pending });
+        }
+      } catch {
+        // seção fica oculta
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSaveWhatsApp = async () => {
     setWaSaving(true);
@@ -1032,6 +1081,103 @@ export default function AdminSettings() {
             <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <span>{waError}</span>
+            </div>
+          ) : null}
+
+          {/* Uso real dos botões de ação (webhook, últimos 30 dias) */}
+          {waButtonStats && waButtonStats.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                <MousePointerClick className="h-3.5 w-3.5 text-emerald-600" />
+                Cliques nos botões (30 dias)
+              </div>
+              <div className="grid gap-1.5">
+                {waButtonStats.map((stat) => (
+                  <div
+                    key={stat.label}
+                    className="flex items-center justify-between gap-2 rounded-sm border border-border px-2.5 py-1.5 text-[11px]"
+                  >
+                    <span className="font-medium text-foreground truncate" title={stat.label}>
+                      {stat.label}
+                    </span>
+                    <span className="flex items-center gap-2 shrink-0 text-muted-foreground">
+                      <span className="font-mono text-foreground">{stat.clicks}</span>
+                      <span>cliques</span>
+                      <span className="text-border">·</span>
+                      <span className="font-mono">{stat.uniquePhones}</span>
+                      <span>clientes</span>
+                      {stat.lastClickAt ? (
+                        <span
+                          className="text-[10px]"
+                          title={new Date(stat.lastClickAt).toLocaleString("pt-BR")}
+                        >
+                          últ. {new Date(stat.lastClickAt).toLocaleDateString("pt-BR")}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Funil de engajamento por semana — enviado → entregue → lido → Pix */}
+          {waFunnel ? (
+            <div className="space-y-2 border-t border-border pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <Filter className="h-3.5 w-3.5 text-emerald-600" />
+                  Funil de engajamento (por semana)
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1"><BarChart3 className="h-3 w-3" /> enviados</span>
+                  <span className="flex items-center gap-1"><MailCheck className="h-3 w-3" /> entregues</span>
+                  <span className="flex items-center gap-1"><MailOpen className="h-3 w-3" /> lidos</span>
+                  <span className="flex items-center gap-1"><MousePointerClick className="h-3 w-3" /> Pix</span>
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                {waFunnel.weeks.map((week) => {
+                  const max = Math.max(week.sent, 1);
+                  return (
+                    <div key={week.weekStart} className="rounded-sm border border-border px-2.5 py-1.5">
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-medium text-foreground">{week.label}</span>
+                        {week.failed > 0 ? (
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400" title="Falhas reportadas pelo WhatsApp na semana">
+                            {week.failed} falha{week.failed > 1 ? "s" : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {([
+                          ["sent", week.sent, "bg-sky-500/70"],
+                          ["delivered", week.delivered, "bg-emerald-500/70"],
+                          ["read", week.read, "bg-violet-500/70"],
+                          ["pixClicks", week.pixClicks, "bg-amber-500/70"],
+                        ] as const).map(([key, value, barClass]) => (
+                          <div key={key} className="flex items-center gap-1.5">
+                            <div className="h-1.5 flex-1 overflow-hidden rounded-sm bg-muted">
+                              <div className={`h-full rounded-sm ${barClass}`} style={{ width: `${(value / max) * 100}%` }} />
+                            </div>
+                            <span className="w-8 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                <span>
+                  total (8 sem.):{" "}
+                  <span className="font-mono text-foreground">{waFunnel.totals.sent}</span> enviados ·{" "}
+                  <span className="font-mono text-foreground">{waFunnel.totals.delivered}</span> entregues ·{" "}
+                  <span className="font-mono text-foreground">{waFunnel.totals.read}</span> lidos ·{" "}
+                  <span className="font-mono text-foreground">{waFunnel.totals.pixClicks}</span> clicaram no Pix
+                </span>
+                {waFunnel.pending ? <span className="text-amber-600 dark:text-amber-400">({waFunnel.pending})</span> : null}
+              </div>
             </div>
           ) : null}
 

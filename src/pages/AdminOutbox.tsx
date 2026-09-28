@@ -25,7 +25,9 @@ import {
   Ban,
   CheckCircle2,
   Clock,
+  Copy,
   ExternalLink,
+  MousePointerClick,
   Eye,
   Filter,
   Layers,
@@ -120,6 +122,8 @@ export interface OutboxDelivery {
   cpf: string | null;
   target: string;
   rendered: { title?: string; body?: string; url?: string } | null;
+  /** Botões de ação enviados com a mensagem (copiar Pix, código de barras, abrir portal/PDF). */
+  actions: Array<{ label: string; copy?: string; url?: string }> | null;
   status: DeliveryStatus;
   attempts: number;
   scheduledFor: number;
@@ -842,9 +846,20 @@ export default function AdminOutbox() {
 
                         {/* Canal */}
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
-                            {item.channel}
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
+                              {item.channel}
+                            </Badge>
+                            {item.actions && item.actions.length > 0 && (
+                              <span
+                                className="inline-flex items-center gap-0.5 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1 py-0.5"
+                                title={item.actions.map((a) => a.label).join(" · ")}
+                              >
+                                <MousePointerClick className="h-3 w-3" />
+                                {item.actions.length}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Tentativas */}
@@ -1019,6 +1034,36 @@ export default function AdminOutbox() {
                       >
                         Abrir link da fatura <ExternalLink className="h-3 w-3" />
                       </a>
+                    )}
+                    {/* Botões de ação enviados (copiar Pix, código de barras, abrir portal/PDF) */}
+                    {selectedDelivery.actions && selectedDelivery.actions.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-border/60 space-y-1.5">
+                        <span className="text-[10px] font-medium text-muted-foreground">
+                          Botões enviados com a mensagem:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedDelivery.actions.map((action, index) => (
+                            <span
+                              key={`${action.label}-${index}`}
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1"
+                              title={
+                                action.copy
+                                  ? `Botão de cópia: ${action.copy}`
+                                  : action.url
+                                    ? `Botão de link: ${action.url}`
+                                    : action.label
+                              }
+                            >
+                              {action.copy ? (
+                                <Copy className="h-3 w-3" />
+                              ) : action.url ? (
+                                <ExternalLink className="h-3 w-3" />
+                              ) : null}
+                              {action.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : (

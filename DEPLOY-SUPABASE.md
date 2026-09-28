@@ -92,6 +92,13 @@ curl -X POST https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/mikweb/lo
       dia**, antes da janela abrir — ex.: 8h para a janela 9h–20h). Sem ele não existe envio
       automático: quem enfileira é o painel. Conferir primeiro com `?dryRun=1`, que planeja e
       responde o que seria enfileirado, sem gravar nada
+- [ ] Cron chamando `POST .../api/cron/whatsapp-import-contacts` com o header `x-cron-secret`
+      (**uma vez por dia**, ~30 min antes do notify-sync): reimporta os opt-ins da base MikWeb
+      para `whatsapp_contacts` — clientes novos entram, telefone alterado é atualizado, opt-out
+      vence sempre. O secret de cron precisa existir em DOIS lugares sincronizados: nos secrets
+      da Edge Function (`supabase secrets set CRON_SECRET=…`) e no Vault do banco
+      (`SELECT vault.create_secret('<mesmo-valor>', 'cron_secret', '…')`) — os jobs pg_cron
+      leem o Vault, não os secrets da função, e a cópia sumir produz 401 silencioso
 - [ ] Edge Function deployada (passo 4)
 - [ ] `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` disponíveis na Vercel (integração)
 - [ ] `VITE_SUPABASE_URL` deve apontar para o projeto real: `https://ssvwlbwsprjpfmevdnvb.supabase.co`

@@ -43,6 +43,8 @@ import {
 import { eventKeyForRule, sendBillingReminder } from "../supabase/functions/api/notify/send-billing.ts";
 import { describeSync, planSync, runBillingSync, syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
 import { buildActions, buildPayload, renderFor, toStoredPayload } from "../supabase/functions/api/notify/templates.ts";
+import { handleUazapiWebhook, parseWebhookPayload } from "../supabase/functions/api/notify/webhook.ts";
+import { aggregateFunnel, buildFunnelWeeks, formatWeekLabel, funnelTotals, weekStartOf, weekStartToMs } from "../supabase/functions/api/notify/engagement.ts";
 import { resolveSimulationSettings, runSimulation } from "../supabase/functions/api/notify/simulate.ts";
 import { generateDemoBase } from "../supabase/functions/api/notify/demo-data.ts";
 import * as ui from "../src/lib/simulator-report.ts";
@@ -936,9 +938,197 @@ eq("__dueDate continua viajando junto", storedWithActions.__dueDate, "2026-09-25
 // Payload sem link/pix/boleto (aviso de teste do canal, por exemplo) não ganha chave vazia.
 eq("payload sem botões não ganha chave vazia", "__actions" in toStoredPayload({ nome: "x" }, "2026-09-25"), false);
 
+// ---------------------------------------------------------------------------
+// 14. Cliques em botões (webhook UazAPI → métricas de uso)
+// ---------------------------------------------------------------------------
+
+section("14. Cliques em botões de ação (webhook)");
+
+const buttonEventBody = {
+  EventType: "messages",
+  message: {
+    id: "wamid.CLIQUE1",
+    messageid: "wamid.CLIQUE1",
+    chatid: "5598999990001@s.whatsapp.net",
+    fromMe: false,
+    isGroup: false,
+    messageType: "buttonsResponseMessage",
+    text: "Copiar código Pix",
+    buttons_response_message: { selectedDisplayText: "Copiar código Pix" },
+    contextInfo: { stanzaId: "MSG-PIX-1" },
+  },
+};
+
+const parsedClick = parseWebhookPayload(buttonEventBody);
+eq("resposta de botão é reconhecida no parse", parsedClick.events.length, 1);
+eq("rótulo do botão é extraído", parsedClick.events[0].buttonReply?.label, "Copiar código Pix");
+eq("stanzaId (ID da mensagem original) é extraído", parsedClick.events[0].stanzaId, "MSG-PIX-1");
+
+const parsedText = parseWebhookPayload({
+  EventType: "messages",
+  message: { messageid: "wamid.TXT", chatid: "5598999990001@s.whatsapp.net", fromMe: false, messageType: "Conversation", text: "PARAR" },
+});
+eq("mensagem de texto não vira clique de botão", parsedText.events[0].buttonReply, null);
+
+function makeWebhookDb() {
+  const clicks = [];
+  const deliveries = [
+    { id: "d-pix", provider_id: "MSG-PIX-1", target: "5598999990001", status: "sent", actions: [{ label: "Copiar código Pix", copy: "PIX1" }, { label: "Abrir portal", url: "https://x" }] },
+    { id: "d-outro", provider_id: "MSG-OUTRO", target: "5598999990002", status: "sent", actions: [{ label: "Abrir portal", url: "https://y" }] },
+  ];
+  const optOutPhones = [];
+  const db = () => ({
+    from(table) {
+      const state = { table, filters: [] };
+      const api = {
+        select: () => api,
+        eq: (col, val) => (state.filters.push([col, val]), api),
+        contains: (col, val) => (state.filters.push(["contains", col, val]), api),
+        order: () => api,
+        limit: async (n) => {
+          let rows = state.table === "notification_deliveries" ? deliveries : [];
+          for (const [kind, col, val] of state.filters) {
+            rows =
+              kind === "contains"
+                ? rows.filter((r) => JSON.stringify(r[col] ?? []).includes(JSON.stringify(val[0] ?? val)))
+                : rows.filter((r) => r[col] === val);
+          }
+          return { data: rows.slice(0, n), error: null };
+        },
+        insert: async (row) => {
+          if (state.table === "whatsapp_button_clicks") clicks.push(row);
+          return { error: null };
+        },
+        update: () => api,
+      };
+      return api;
+    },
+  });
+  return { db, clicks, deliveries, optOutPhones };
+}
+
+// Clique com stanzaId casa com a entrega exata pelo provider_id.
+const wb1 = makeWebhookDb();
+const summaryClick = await handleUazapiWebhook(
+  { db: wb1.db, outbox: { async markStatusByProviderId() { return 0; } }, log: () => {} },
+  buttonEventBody
+);
+eq("clique é contabilizado", summaryClick.buttonClicks, 1);
+// O clique de botão casa com a entrega exata pelo provider_id (stanzaId).
+eq("clique casa com a entrega pelo stanzaId", wb1.clicks[0]?.delivery_id, "d-pix");
+eq("telefone é gravado (de message.chatid)", wb1.clicks[0]?.phone_e164, "5598999990001");
+eq("clique não incrementa opt-outs", summaryClick.optOuts, 0);
+
+// Sem stanzaId: casa pela última entrega enviada ao telefone que incluiu o rótulo.
+const wb2 = makeWebhookDb();
+const bodyNoStanza = structuredClone(buttonEventBody);
+delete bodyNoStanza.message.contextInfo;
+bodyNoStanza.message.chatid = "5598999990002@s.whatsapp.net";
+await handleUazapiWebhook({ db: wb2.db, outbox: { async markStatusByProviderId() { return 0; } }, log: () => {} }, bodyNoStanza);
+eq("fallback casa pela entrega com o mesmo rótulo", wb2.clicks[0]?.delivery_id, null);
+
+// Clique de botão não deve se perder como ignorado nem virar update de status.
+check("clique não é contado como ignorado", summaryClick.ignored === 0, summaryClick);
+
+// Fluxos antigos continuam: opt-out por texto e status de entrega.
+const wb3 = makeWebhookDb();
+const summaryText = await handleUazapiWebhook(
+  { db: wb3.db, outbox: { async markStatusByProviderId() { return 0; } }, log: () => {} },
+  { EventType: "messages", message: { messageid: "wamid.TXT", chatid: "5598999990001@s.whatsapp.net", fromMe: false, messageType: "Conversation", text: "PARAR" } }
+);
+eq("opt-out por texto segue funcionando", summaryText.optOuts, 1);
+const summaryStatus = await handleUazapiWebhook(
+  { db: wb3.db, outbox: { async markStatusByProviderId() { return 1; } }, log: () => {} },
+  { EventType: "messages_update", message: { messageid: "MSG-PIX-1", fromMe: true }, status: "read" }
+);
+eq("status de entrega segue funcionando", summaryStatus.statusUpdated, 1);
+
 function addDaysT(date, days) {
   return new Date(new Date(`${date}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10);
 }
+
+// ---------------------------------------------------------------------------
+// 15. Funil de engajamento (enviado → entregue → lido → clicou no Pix)
+// ---------------------------------------------------------------------------
+
+section("15. Funil de engajamento semanal");
+
+// Determinismo: o funil é puro — mesma entrada, mesma saída, sem `Date.now()`
+// escondido. O instante "agora" é uma quarta-feira qualquer do fim de setembro/2026.
+const FUNNEL_NOW = Date.parse("2026-09-23T15:00:00Z"); // qua
+
+// weekStartOf: sempre devolve uma SEGUNDA-FEIRA, inclusive na virada de mês/ano.
+eq("weekStartOf de uma quarta é a segunda da mesma semana", weekStartOf(FUNNEL_NOW), "2026-09-21");
+eq("weekStartOf de um domingo volta para a segunda", weekStartOf(Date.parse("2026-09-27T23:00:00Z")), "2026-09-21");
+eq("weekStartOf na virada de ano cai na segunda anterior", weekStartOf(Date.parse("2026-01-01T12:00:00Z")), "2025-12-29");
+eq("weekStartToMs é o inverso (meia-noite local)", weekStartToMs("2026-09-21"), Date.parse("2026-09-21T03:00:00Z"));
+
+const skeleton = buildFunnelWeeks({ now: FUNNEL_NOW, weeks: 4 });
+eq("esqueleto tem 4 semanas", skeleton.length, 4);
+eq("esqueleto termina na semana corrente", skeleton[3]?.weekStart, "2026-09-21");
+eq("esqueleto começa 3 semanas antes", skeleton[0]?.weekStart, "2026-08-31");
+eq("rótulo da semana no mesmo mês", skeleton[3]?.label, "21–27 set");
+
+// Rótulo na troca de mês e de ano.
+eq("rótulo trocando o mês", formatWeekLabel("2026-09-28", "2026-10-04"), "28 set – 4 out");
+eq("rótulo trocando o ano", formatWeekLabel("2025-12-29", "2026-01-04"), "29 dez 25 – 4 jan 26");
+
+// Agregação: uma coorte de entregas e cliques espalhada por duas semanas.
+// Semana 1 (31 ago–6 set): 4 enviados, 3 entregues, 2 lidos, 1 clique Pix,
+// 1 falha. Semana 4 (21–27 set): 2 enviados, 1 entregue, 0 lidos, 1 clique Pix.
+const funnelDeliveries = [
+  // Semana de 31/08 — coorte completa (status finais).
+  { status: "read", sent_at: Date.parse("2026-09-01T12:00:00Z"), created_at: Date.parse("2026-08-31T12:00:00Z") },
+  { status: "read", sent_at: Date.parse("2026-09-02T12:00:00Z"), created_at: Date.parse("2026-09-01T12:00:00Z") },
+  { status: "delivered", sent_at: Date.parse("2026-09-03T12:00:00Z"), created_at: Date.parse("2026-09-02T12:00:00Z"), },
+  { status: "sent", sent_at: Date.parse("2026-09-04T12:00:00Z"), created_at: Date.parse("2026-09-03T12:00:00Z") },
+  { status: "failed", sent_at: null, created_at: Date.parse("2026-09-05T12:00:00Z") },
+  // Semana de 21/09 — coorte recente.
+  { status: "delivered", sent_at: Date.parse("2026-09-22T12:00:00Z"), created_at: Date.parse("2026-09-22T11:00:00Z") },
+  { status: "sent", sent_at: Date.parse("2026-09-23T12:00:00Z"), created_at: Date.parse("2026-09-23T11:00:00Z") },
+  // Linha antiga sem sent_at: cai no created_at (cinto de segurança).
+  { status: "sent", sent_at: null, created_at: Date.parse("2026-09-02T12:00:00Z") },
+  // Enviada na semana 1, LIDA na semana 3: conta tudo na semana 1 (coorte por
+  // sent_at) — senão a leitura atrasada inflaria a semana 3.
+  { status: "read", sent_at: Date.parse("2026-09-01T12:00:00Z"), created_at: Date.parse("2026-09-01T12:00:00Z") },
+  // Fora da janela do esqueleto: ignorada.
+  { status: "sent", sent_at: Date.parse("2026-08-01T12:00:00Z"), created_at: Date.parse("2026-08-01T12:00:00Z") },
+  // Queued/skipped/canceled não entram no funil.
+  { status: "queued", sent_at: null, created_at: Date.parse("2026-09-22T12:00:00Z") },
+  { status: "skipped", sent_at: null, created_at: Date.parse("2026-09-22T12:00:00Z") },
+];
+const funnelClicks = [
+  { created_at: Date.parse("2026-09-02T14:00:00Z"), button_label: "Copiar código Pix" },
+  { created_at: Date.parse("2026-09-23T14:00:00Z"), button_label: "Copiar código Pix" },
+  { created_at: Date.parse("2026-09-23T15:00:00Z"), button_label: "Abrir portal" }, // não é Pix
+  { created_at: Date.parse("2026-08-20T14:00:00Z"), button_label: "Copiar código Pix" }, // fora da janela
+];
+
+const funnel = aggregateFunnel({ weeks: buildFunnelWeeks({ now: FUNNEL_NOW, weeks: 4 }), deliveries: funnelDeliveries, clicks: funnelClicks });
+eq("semana 1: 6 enviados", funnel[0]?.sent, 6);
+eq("semana 1: 4 entregues", funnel[0]?.delivered, 4);
+eq("semana 1: 3 lidos", funnel[0]?.read, 3);
+eq("semana 1: 1 falha", funnel[0]?.failed, 1);
+eq("semana 1: 1 clique no Pix", funnel[0]?.pixClicks, 1);
+eq("semana 4: 2 enviados", funnel[3]?.sent, 2);
+eq("semana 4: 1 entregue", funnel[3]?.delivered, 1);
+eq("semana 4: 0 lidos", funnel[3]?.read, 0);
+eq("semana 4: 1 clique no Pix", funnel[3]?.pixClicks, 1);
+eq("semana 2 e 3 ficam zeradas", [funnel[1]?.sent, funnel[2]?.sent], [0, 0]);
+
+const funnelTotal = funnelTotals(funnel);
+eq("totais somam as semanas", funnelTotal, { sent: 8, delivered: 5, read: 3, pixClicks: 2, failed: 1 });
+
+// O funil é CUMULATIVO por etapa (entregue ⊇ lido) — nunca entregue > enviado.
+check(
+  "funil cumulativo: entregue nunca passa de enviado",
+  funnel.every((w) => w.delivered <= w.sent && w.read <= w.delivered),
+  funnel
+);
+
+// Cliques sem rótulo não quebram a agregação.
+const funnelNoLabel = aggregateFunnel({ weeks: buildFunnelWeeks({ now: FUNNEL_NOW, weeks: 2 }), deliveries: [], clicks: [{ created_at: Date.parse("2026-09-22T14:00:00Z"), button_label: null }] });
+eq("clique sem rótulo é ignorado", funnelNoLabel[1]?.pixClicks, 0);
 
 // ---------------------------------------------------------------------------
 
