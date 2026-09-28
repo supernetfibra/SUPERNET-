@@ -70,6 +70,8 @@ export function SendFlowCard() {
   const [status, setStatus] = useState<FlowStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [dispatching, setDispatching] = useState(false);
+  /** Indicador do auto-refresh: quando o card atualizou pela última vez. */
+  const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -77,17 +79,34 @@ export function SendFlowCard() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Erro no diagnóstico.");
       setStatus({ ...(data as FlowStatus), nowAt: Date.now() });
+      setRefreshedAt(Date.now());
     } catch {
-      setStatus(null);
+      // Auto-refresh: falha pontual NÃO apaga o último estado bom — o operador
+      // continua vendo o diagnóstico, com o horário mostrando que está velho.
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Primeira carga + auto-refresh a cada 60s. Silencioso: sem spinner, sem
+  // flash — só os números da trilha mudando. Pausa quando a aba está oculta
+  // (aba em fundo não precisa gastar chamadas) e recarrega ao voltar.
   useEffect(() => {
-    void (async () => {
-      await load();
-    })();
+    let alive = true;
+    const tick = () => {
+      if (alive && document.visibilityState === "visible") void (async () => { await load(); })();
+    };
+    void (async () => { await load(); })();
+    const interval = window.setInterval(tick, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const handleDispatch = async () => {
@@ -220,9 +239,25 @@ export function SendFlowCard() {
       <CardHeader className="pb-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-sm font-medium tracking-tight">Fluxo de envio</CardTitle>
-          <span className="text-[10px] text-muted-foreground">
-            {doneCount}/{steps.length} prontos
-          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void load()}
+              title="Atualizar agora (auto-refresh a cada 1 min)"
+              className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              {refreshedAt
+                ? `atualizado ${new Intl.RelativeTimeFormat("pt-BR", { numeric: "always" }).format(
+                    -Math.max(1, Math.round((status.nowAt - refreshedAt) / 60000)),
+                    "minute"
+                  )}`
+                : "atualizando…"}
+            </button>
+            <span className="text-[10px] text-muted-foreground">
+              {doneCount}/{steps.length} prontos
+            </span>
+          </div>
         </div>
         <CardDescription className="text-xs text-muted-foreground">
           O caminho da mensagem, do WhatsApp até a fila — na ordem. Cada passo tem uma ação.
