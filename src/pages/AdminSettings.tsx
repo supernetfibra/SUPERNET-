@@ -51,6 +51,8 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { ChevronDown } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
@@ -64,6 +66,22 @@ import type { FunnelTotalsView, FunnelWeekView } from "@/lib/engagement-types";
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 const BRANDING_STORAGE_KEY = "mikweb_branding";
 const CONFIG_STORAGE_KEY = "mikweb_api_config";
+
+/**
+ * Modos de envio (card WhatsApp): os dois limites técnicos do canal apresentados
+ * como uma única escolha. `cap` é o `dailyNewChatCap` (0 = sem teto). O modo é
+ * apenas APRESENTAÇÃO — o que é salvo no banco continuam sendo os números, então
+ * o backend, o simulador e os testes não mudam.
+ */
+const SEND_MODES = [
+  { cap: 5, label: "Prudente", hint: "Cresce devagar, risco mínimo de bloqueio" },
+  { cap: 50, label: "Equilibrado", hint: "Até 50 clientes novos por dia" },
+  { cap: 0, label: "Acelerado", hint: "Sem teto de novas conversas — só para base já alcançada" },
+] as const;
+
+function sendModeOf(cap: number): (typeof SEND_MODES)[number]["label"] | undefined {
+  return SEND_MODES.find((m) => m.cap === cap)?.label;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -223,6 +241,13 @@ export default function AdminSettings() {
     windowStart: 9,
     windowEnd: 20,
   });
+  /**
+   * Modo de envio selecionado; `undefined` = configuração sob medida (avançado) —
+   * o preset não é aplicado e os campos avançados preservam o que está em vigor.
+   */
+  const [waSendMode, setWaSendMode] = useState<ReturnType<typeof sendModeOf> | undefined>(undefined);
+  /** Ajustes avançados recolhidos por padrão: a maioria dos casos resolve no modo. */
+  const [waShowAdvanced, setWaShowAdvanced] = useState(false);
   const [waSaving, setWaSaving] = useState(false);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waQr, setWaQr] = useState<string | null>(null);
@@ -263,6 +288,7 @@ export default function AdminSettings() {
       windowStart: Number(data.windowStart ?? 9),
       windowEnd: Number(data.windowEnd ?? 20),
     });
+    setWaSendMode(sendModeOf(Number(data.dailyNewChatCap ?? 20)));
     setWaError(data.instanceError || null);
     setWaWebhookUrl(data.webhookUrl ?? null);
   }, []);
@@ -1287,16 +1313,61 @@ export default function AdminSettings() {
             <Switch checked={waEnabled} onCheckedChange={setWaEnabled} className="cursor-pointer" />
           </div>
 
+          {/* Modo de envio — os dois limites técnicos viram uma escolha com consequência clara.
+              Sem preset (avancado), os campos de baixo preservam a configuração em vigor. */}
+          <div className="space-y-2">
+            <Label className="text-[10px] font-medium text-muted-foreground">
+              Velocidade de envio — quantos clientes novos o canal alcança por dia
+            </Label>
+            <ToggleGroup
+              type="single"
+              spacing={2}
+              variant="outline"
+              value={waSendMode ?? ""}
+              onValueChange={(value) => {
+                if (!value) return;
+                const mode = SEND_MODES.find((m) => m.label === value);
+                if (!mode) return;
+                setWaSendMode(mode.label);
+                setWaCaps({ ...waCaps, dailyNewChatCap: mode.cap });
+              }}
+              className="flex-wrap"
+            >
+              {SEND_MODES.map((mode) => (
+                <ToggleGroupItem key={mode.label} value={mode.label} className="text-xs cursor-pointer">
+                  {mode.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <p className="text-[10px] text-muted-foreground">
+              {waSendMode
+                ? SEND_MODES.find((m) => m.label === waSendMode)?.hint
+                : `Configuração sob medida: ${waCaps.dailyNewChatCap === 0 ? "sem teto" : waCaps.dailyNewChatCap} novas conversas/dia`}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setWaShowAdvanced((v) => !v)}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${waShowAdvanced ? "" : "-rotate-90"}`} />
+            Ajustes avançados
+          </button>
+          {waShowAdvanced && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-2">
               <Label className="text-[10px] font-medium text-muted-foreground">
-                Novas conversas/dia
+                Novas conversas/dia (0 = sem teto)
               </Label>
               <Input
                 type="number"
                 min={0}
                 value={waCaps.dailyNewChatCap}
-                onChange={(e) => setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) })}
+                onChange={(e) => {
+                  setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) });
+                  setWaSendMode(sendModeOf(Number(e.target.value)));
+                }}
                 className="h-9 text-xs font-mono"
               />
             </div>
@@ -1339,6 +1410,7 @@ export default function AdminSettings() {
               />
             </div>
           </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <Button
