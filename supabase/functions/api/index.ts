@@ -1158,15 +1158,33 @@ app.post("/admin/test-connection", async (c) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Eventos de OPERAÇÃO do sistema. Não são acessos de cliente: são gravações de
+// configuração salva, testes de envio do painel e crons. O histórico de acesso
+// do painel exclui por padrão (scope=customer); a aba "Operação" os mostra
+// (scope=system). `scope=all` mantém o comportamento antigo de tudo junto.
+// ---------------------------------------------------------------------------
+const SYSTEM_AUDIT_TYPES = [
+  "whatsapp_config",
+  "whatsapp_sent",
+  "whatsapp_failed",
+  "whatsapp_skipped",
+  "whatsapp_opt_in",
+  "notification_config",
+];
+
 app.get("/admin/audit-logs", async (c) => {
   if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
   const url = new URL(c.req.raw.url);
   const type = url.searchParams.get("type") || undefined;
   const cpf = url.searchParams.get("cpf") || undefined;
+  const scope = url.searchParams.get("scope") || "customer";
 
   let query = db().from("mikweb_audit_log").select("*").order("timestamp", { ascending: false }).limit(100);
   if (type && type !== "all") query = query.eq("type", type);
   if (cpf) query = query.eq("cpf", cpf);
+  if (scope === "customer") query = query.not("type", "in", `(${SYSTEM_AUDIT_TYPES.join(",")})`);
+  else if (scope === "system") query = query.in("type", SYSTEM_AUDIT_TYPES);
   const { data: logs = [] } = await query;
 
   const { data: allLogs = [] } = await db()

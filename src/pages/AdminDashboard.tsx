@@ -51,6 +51,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
 import { mapStatus } from "@/lib/billing-utils";
@@ -137,6 +138,14 @@ interface AuditEntry {
     billingId?: string;
     reference?: string;
     value?: number;
+    // Eventos de operação (aba "Operação")
+    test?: boolean;
+    action?: string;
+    scanned?: number;
+    newContacts?: number;
+    updates?: number;
+    enabled?: boolean | null;
+    origin?: string;
   };
 }
 
@@ -217,6 +226,39 @@ const typeLabels: Record<string, { label: string; color: string }> = {
   barcode_copied: { label: "Copiou Código", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 dark:text-sky-400" },
   pix_copied: { label: "Copiou PIX", color: "text-teal-600 bg-teal-50 dark:bg-teal-950/20 dark:text-teal-400" },
   pdf_viewed: { label: "Acessou PDF", color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 dark:text-violet-400" },
+  // ── Operação do sistema (aba "Operação"): crons, config salva, testes de envio ──
+  whatsapp_config: { label: "Config WhatsApp", color: "text-slate-600 bg-slate-50 dark:bg-slate-950/20 dark:text-slate-400" },
+  notification_config: { label: "Config Régua", color: "text-slate-600 bg-slate-50 dark:bg-slate-950/20 dark:text-slate-400" },
+  whatsapp_sent: { label: "Envio/Teste OK", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
+  whatsapp_failed: { label: "Envio/Teste Falhou", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
+  whatsapp_skipped: { label: "Envio Pulado", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400" },
+  whatsapp_opt_in: { label: "Import Opt-in", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 dark:text-sky-400" },
+};
+
+/**
+ * Eventos de OPERAÇÃO (cron, configuração salva, teste de envio) não têm cliente:
+ * são do sistema. A aba "Operação" mostra quem disparou em vez de um nome.
+ * Complemento da linha 2 para eventos de operação sem erro/mensagem útil.
+ */
+const systemEventSubtitle = (entry: AuditEntry): string | null => {
+  const meta = entry.metadata ?? {};
+  switch (entry.type) {
+    case "whatsapp_opt_in":
+      return meta.action === "cron-import-contacts"
+        ? "Cron diário: reimportação de contatos MikWeb"
+        : "Importação de contatos (painel)";
+    case "whatsapp_sent":
+      return meta.test ? "Teste de envio do painel" : "Envio manual (painel)";
+    case "whatsapp_failed":
+    case "whatsapp_skipped":
+      return meta.test ? "Teste de envio do painel" : null;
+    case "whatsapp_config":
+      return "Configuração do canal salva";
+    case "notification_config":
+      return "Régua de lembretes salva";
+    default:
+      return null;
+  }
 };
 
 interface ReminderBilling {
@@ -290,6 +332,8 @@ export default function AdminDashboard() {
 
   // Audit log CPF filter
   const [auditCpf, setAuditCpf] = useState("");
+  /** scope do log: eventos de clientes (padrão) ou de operação do sistema (cron/config/testes). */
+  const [auditScope, setAuditScope] = useState<"customer" | "system">("customer");
 
   // Installation requests (new customer signup)
   const [installRequests, setInstallRequests] = useState<any[]>([]);
@@ -448,12 +492,13 @@ export default function AdminDashboard() {
     loadData();
   }, [loadData]);
 
-  const loadAuditLogs = async (type?: string, cpf?: string) => {
+  const loadAuditLogs = async (type?: string, cpf?: string, scope: "customer" | "system" = auditScope) => {
     setLogsLoading(true);
     try {
       const params = new URLSearchParams();
       if (type && type !== "all") params.set("type", type);
       if (cpf && cpf.trim()) params.set("cpf", cpf.replace(/\D/g, ""));
+      params.set("scope", scope);
 
       const res = await adminFetch(
         `/api/admin/audit-logs?${params.toString()}`
@@ -479,10 +524,12 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      loadAuditLogs(logFilter, auditCpf);
+      loadAuditLogs(logFilter, auditCpf, auditScope);
     }, 400);
     return () => clearTimeout(t);
-  }, [logFilter, isVerified, auditCpf]);
+    // loadAuditLogs é recriada a cada render: listá-la rearmaria o polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logFilter, isVerified, auditCpf, auditScope]);
 
   const handleSaveConfig = async () => {
     setConfigSaving(true);
@@ -1015,7 +1062,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Audit Log */}
+      {/* Audit Log — abas: acessos de clientes × operação do sistema */}
       <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.1s_both]">
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
@@ -1026,6 +1073,8 @@ export default function AdminDashboard() {
                   </CardTitle>
                 </div>
                 <div className="flex items-center gap-2">
+                  {auditScope === "customer" && (
+                    <>
                   <Input
                     placeholder="CPF..."
                     value={auditCpf}
@@ -1066,6 +1115,14 @@ export default function AdminDashboard() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
+                  </>
+                  )}
+                  <Tabs value={auditScope} onValueChange={(v) => setAuditScope(v as "customer" | "system")}>
+                    <TabsList className="h-7">
+                      <TabsTrigger value="customer" className="text-[10px] px-2 py-0.5">Clientes</TabsTrigger>
+                      <TabsTrigger value="system" className="text-[10px] px-2 py-0.5">Operação</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
                   <button
                     onClick={handleRefresh}
                     className="text-muted-foreground hover:text-foreground transition-colors"
@@ -1115,15 +1172,20 @@ export default function AdminDashboard() {
                         </Badge>
 
                         <div className="flex-1 min-w-0">
-                          {/* Line 1: Nome + CPF */}
+                          {/* Line 1: Nome + CPF — eventos de operação não têm cliente,
+                              então mostram quem disparou (cron/painel) em vez de um nome falso */}
                           <div className="flex items-center gap-2 flex-wrap">
                             {entry.customerName ? (
                               <span className="text-foreground font-medium truncate">
                                 {entry.customerName}
                               </span>
+                            ) : entry.cpf ? (
+                              <span className="text-foreground font-medium truncate">
+                                Cliente
+                              </span>
                             ) : (
                               <span className="text-muted-foreground italic">
-                                Cliente
+                                Sistema
                               </span>
                             )}
                             {entry.cpf && (
@@ -1137,6 +1199,11 @@ export default function AdminDashboard() {
                             {entry.errorMessage && (
                               <span className="block truncate">
                                 {entry.errorMessage}
+                              </span>
+                            )}
+                            {!entry.errorMessage && systemEventSubtitle(entry) && (
+                              <span className="block truncate">
+                                {systemEventSubtitle(entry)}
                               </span>
                             )}
                             {entry.metadata?.reference && (
