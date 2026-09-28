@@ -407,7 +407,7 @@ export default function AdminSimulator() {
 
             <div className="space-y-2">
               <Label className="text-[10px] font-medium text-muted-foreground">
-                Cota novas conversas
+                Cota de conversas novas/dia
               </Label>
               <Input
                 type="number"

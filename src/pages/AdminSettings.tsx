@@ -1065,16 +1065,19 @@ export default function AdminSettings() {
           {/* Estado atual — o que o backend realmente enxerga */}
           <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
             <span className="px-2 py-0.5 rounded-sm border border-border">
-              credenciais: {waConfig?.origin ?? "—"}
+              credenciais: {waConfig?.origin === "env" ? "secrets do servidor" : waConfig?.origin === "db" ? "salvas no painel" : waConfig?.origin ?? "—"}
             </span>
             <span className="px-2 py-0.5 rounded-sm border border-border">
               token: {waConfig?.hasInstanceToken ? waConfig?.instanceTokenMasked : "não configurado"}
             </span>
             {waConfig?.limits ? (
-              <span className="px-2 py-0.5 rounded-sm border border-border">
-                novas conversas: {waConfig.limits.newChatUsed ?? "?"}/
-                {waConfig.limits.newChatTotal ?? "?"}
-                {waConfig.limits.newChatStatus ? ` (${waConfig.limits.newChatStatus})` : ""}
+              <span
+                className="px-2 py-0.5 rounded-sm border border-border"
+                title="Limite de novas conversas imposto pela UazAPI (provedor WhatsApp) — não é configuração do painel"
+              >
+                capping UazAPI: {waConfig.limits.newChatUsed ?? "?"}/
+                {waConfig.limits.newChatTotal ?? "?"} conversas novas
+                {waConfig.limits.newChatStatus ? ` · ${waConfig.limits.newChatStatus}` : ""}
               </span>
             ) : null}
             {waConfig?.pausedUntil ? (
