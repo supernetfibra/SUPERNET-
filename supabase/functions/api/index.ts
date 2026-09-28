@@ -1844,6 +1844,88 @@ function buildWebhookUrl(request: Request): string {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/admin/whatsapp/flow-status — diagnóstico do fluxo de envio em 1 chamada
+//
+// Alimenta o card "Fluxo de envio" do painel: cada etapa do caminho (credenciais →
+// conexão → régua → contatos → fila → janela/cotas) com um estado pronto para exibição.
+// A avaliação vive AQUI (não no frontend) para que o teste e a tela digam a mesma coisa.
+// ---------------------------------------------------------------------------
+app.get("/admin/whatsapp/flow-status", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const runtime = whatsappRuntime();
+  const config = await runtime.getConfig();
+  const currentNow = now();
+
+  let rulesActive: number | null = null;
+  let rulesTotal: number | null = null;
+  try {
+    const loaded = await runtime.getSettings();
+    const rules = (loaded as unknown as { settings?: { rules?: { active: boolean }[] } }).settings?.rules;
+    if (rules) {
+      rulesTotal = rules.length;
+      rulesActive = rules.filter((rule) => rule.active).length;
+    }
+  } catch {
+    // régua indisponível: fica "?" na tela, não derruba o endpoint
+  }
+
+  let contactsOptIn: number | null = null;
+  try {
+    const { count } = await db()
+      .from("whatsapp_contacts")
+      .select("id", { count: "exact", head: true })
+      .eq("opt_in", true);
+    contactsOptIn = count ?? null;
+  } catch {
+    // migration de contatos ainda não aplicada
+  }
+
+  const { data: queueRows } = await db()
+    .from("notification_deliveries")
+    .select("status, scheduled_for, channel")
+    .eq("channel", "whatsapp")
+    .in("status", ["queued", "sending"])
+    .limit(1000);
+  const queueRowsSafe = (queueRows ?? []) as Record<string, unknown>[];
+  const queuedNow = queueRowsSafe.filter((row) => Number(row.scheduled_for ?? 0) <= currentNow).length;
+  const queuedFuture = queueRowsSafe.length - queuedNow;
+
+  const { count: failedCount } = await db()
+    .from("notification_deliveries")
+    .select("id", { count: "exact", head: true })
+    .eq("channel", "whatsapp")
+    .eq("status", "failed");
+
+  const inWindow = (() => {
+    const hourBR = Number(
+      new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", hour12: false, timeZone: "America/Sao_Paulo" }).format(currentNow)
+    );
+    return hourBR >= config.windowStart && hourBR < config.windowEnd;
+  })();
+
+  return json({
+    now: currentNow,
+    // Etapa 1 — credenciais da UazAPI
+    credentials: { ok: !!config.baseUrl && !!config.instanceToken, origin: config.origin },
+    // Etapa 2 — instância conectada
+    connected: { ok: config.lastStatus === "connected", state: config.lastStatus },
+    // Etapa 3 — canal ativo
+    enabled: { ok: config.enabled },
+    // Etapa 4 — régua com regras ligadas
+    rules: { ok: (rulesActive ?? 0) > 0, active: rulesActive, total: rulesTotal },
+    // Etapa 5 — contatos com opt-in
+    contacts: { ok: (contactsOptIn ?? 0) > 0, optIn: contactsOptIn },
+    // Etapa 6 — fila (o que sai agora vs. agendado para depois)
+    queue: { ready: queuedNow, scheduled: queuedFuture, failed: failedCount ?? 0 },
+    // Janela de envio e pausas
+    window: { inWindow, start: config.windowStart, end: config.windowEnd },
+    pausedUntil: config.pausedUntil,
+    timeLock: null,
+    sendGapSeconds: config.sendGapSeconds,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/admin/whatsapp/config — salvar (token vazio não apaga o existente)
 // ---------------------------------------------------------------------------
 app.post("/admin/whatsapp/config", async (c) => {

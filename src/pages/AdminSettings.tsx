@@ -53,6 +53,7 @@ import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
 import { ReminderRulesCard } from "@/components/ReminderRulesCard";
 import { ReminderMessagesCard } from "@/components/ReminderMessagesCard";
+import { SendFlowCard } from "@/components/SendFlowCard";
 import { ChevronDown } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useNavigate } from "react-router";
@@ -1062,6 +1063,9 @@ export default function AdminSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* O fluxo como trilha guiada — a porta de entrada da seção */}
+          <SendFlowCard />
+
           {/* Estado atual — o que o backend realmente enxerga */}
           <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
             <span className="px-2 py-0.5 rounded-sm border border-border">

@@ -1275,6 +1275,57 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// 17. Fluxo de envio: diagnóstico consolidado (card guiado do painel)
+// ---------------------------------------------------------------------------
+
+section("17. Fluxo de envio — etapas e bloqueios");
+
+// Contrato do endpoint /admin/whatsapp/flow-status: as etapas derivam SEMPRE do
+// mesmo campo que o dispatcher usa, para o card não "prometer" algo diferente.
+// (Avaliação vive no backend; aqui travamos a lógica de classificação da tela.)
+const flowEtapa = (credentialsOk, connectedOk) => (credentialsOk && connectedOk ? "ok" : "todo");
+eq("etapa 1 ok só com credenciais + conexão", flowEtapa(true, true), "ok");
+eq("etapa 1 pendente sem conexão", flowEtapa(true, false), "todo");
+eq("etapa 1 pendente sem credenciais", flowEtapa(false, true), "todo");
+
+// Bloqueios: pausa manual e time-lock aparecem como aviso; fora da janela só
+// importa quando o canal está LIGADO (desligado, o motivo é outro).
+const flowBlockers = ({ pausedUntil, timeLockUntil, nowMs, inWindow, enabled }) => {
+  const out = [];
+  if (timeLockUntil && timeLockUntil > nowMs) out.push("time-lock");
+  else if (pausedUntil && pausedUntil > nowMs) out.push("pausa");
+  if (!inWindow && enabled) out.push("janela");
+  return out;
+};
+const FLOW_NOW = Date.parse("2026-09-28T12:00:00Z");
+eq("sem pausa e dentro da janela: zero bloqueios", flowBlockers({ pausedUntil: null, timeLockUntil: null, nowMs: FLOW_NOW, inWindow: true, enabled: true }), []);
+eq("pausa manual futura bloqueia", flowBlockers({ pausedUntil: FLOW_NOW + 60000, timeLockUntil: null, nowMs: FLOW_NOW, inWindow: true, enabled: true }), ["pausa"]);
+eq("time-lock vence pausa manual", flowBlockers({ pausedUntil: FLOW_NOW + 60000, timeLockUntil: FLOW_NOW + 999999, nowMs: FLOW_NOW, inWindow: true, enabled: true }), ["time-lock"]);
+eq("fora da janela com canal ligado bloqueia", flowBlockers({ pausedUntil: null, timeLockUntil: null, nowMs: FLOW_NOW, inWindow: false, enabled: true }), ["janela"]);
+eq("fora da janela com canal desligado não cita janela", flowBlockers({ pausedUntil: null, timeLockUntil: null, nowMs: FLOW_NOW, inWindow: false, enabled: false }), []);
+eq("pausa no passado não bloqueia", flowBlockers({ pausedUntil: FLOW_NOW - 60000, timeLockUntil: null, nowMs: FLOW_NOW, inWindow: true, enabled: true }), []);
+
+// Fila do card: "prontos" = scheduled_for <= agora; "agendados" = o resto.
+const flowQueue = (rows, nowMs) => ({
+  ready: rows.filter((r) => Number(r.scheduled_for ?? 0) <= nowMs && r.status === "queued").length,
+  scheduled: rows.filter((r) => Number(r.scheduled_for ?? 0) > nowMs && r.status === "queued").length,
+  sending: rows.filter((r) => r.status === "sending").length,
+});
+eq(
+  "fila separa prontos de agendados",
+  flowQueue(
+    [
+      { status: "queued", scheduled_for: FLOW_NOW - 1000 },
+      { status: "queued", scheduled_for: FLOW_NOW + 3600000 },
+      { status: "sending", scheduled_for: FLOW_NOW - 1000 },
+      { status: "sent", scheduled_for: FLOW_NOW - 1000 },
+    ],
+    FLOW_NOW
+  ),
+  { ready: 1, scheduled: 1, sending: 1 }
+);
+
+// ---------------------------------------------------------------------------
 
 console.log(`\n${failures.length === 0 ? "✓" : "✗"} ${pass} verificações passaram, ${failures.length} falharam`);
 for (const item of failures) console.log(`  ✗ ${item}`);
