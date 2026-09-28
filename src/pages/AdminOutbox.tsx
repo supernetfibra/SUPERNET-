@@ -876,17 +876,34 @@ export default function AdminOutbox() {
                           </div>
                         </td>
 
-                        {/* Horário */}
+                        {/* Horário — na fila, "programado" é a informação principal:
+                            quando sai E por que está esperando essa hora */}
                         <td className="py-3 px-4 whitespace-nowrap">
                           <div className="space-y-0.5">
-                            <span className="text-[11px] text-foreground font-medium">
-                              {item.sentAt ? `Enviado: ${formatEpochTime(item.sentAt)}` : `Criado: ${formatEpochTime(item.createdAt)}`}
-                            </span>
-                            {item.status === "queued" && item.scheduledFor > 0 && (
-                              <p className="text-[10px] text-muted-foreground">
-                                Agendado: {formatEpochTime(item.scheduledFor)}
-                              </p>
+                            {item.status === "queued" && item.scheduledFor > 0 ? (
+                              <>
+                                <span className="text-[11px] text-foreground font-medium">
+                                  📅 {formatEpochTime(item.scheduledFor)}
+                                </span>
+                                {item.errorMessage ? (
+                                  <p
+                                    className="text-[10px] text-muted-foreground max-w-[180px] truncate"
+                                    title={item.errorMessage}
+                                  >
+                                    {item.errorMessage}
+                                  </p>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-foreground font-medium">
+                                {item.sentAt ? `Enviado: ${formatEpochTime(item.sentAt)}` : `Criado: ${formatEpochTime(item.createdAt)}`}
+                              </span>
                             )}
+                            {item.status !== "queued" && item.sentAt ? (
+                              <p className="text-[10px] text-muted-foreground">
+                                Criado: {formatEpochTime(item.createdAt)}
+                              </p>
+                            ) : null}
                           </div>
                         </td>
 

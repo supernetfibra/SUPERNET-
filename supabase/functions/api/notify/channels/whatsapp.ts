@@ -29,8 +29,10 @@ export interface WhatsAppAdapterDeps {
   now?: () => number;
   /** Validade do cache de `ready()`, para não consultar status a cada mensagem. */
   readinessTtlMs?: number;
-  minDelayMs?: number;
-  maxDelayMs?: number;
+  /** Ritmo configurável: pausa mínima entre mensagens (ms). Async: lê a config na hora do envio. Número: fixo (testes). */
+  minDelayMs?: number | (() => Promise<number | undefined> | number | undefined);
+  /** Pausa máxima (ms) — o sorteio entre min e máx é o jitter humano. */
+  maxDelayMs?: number | (() => Promise<number | undefined> | number | undefined);
 }
 
 const DEFAULT_READINESS_TTL_MS = 20_000;
@@ -95,10 +97,12 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
       }
 
       try {
+        const minDelay = typeof deps.minDelayMs === "function" ? await deps.minDelayMs() : deps.minDelayMs;
+        const maxDelay = typeof deps.maxDelayMs === "function" ? await deps.maxDelayMs() : deps.maxDelayMs;
         const sent = await client.sendText({
           number: target,
           text: rendered.body,
-          delay: humanDelayMs(seedFrom(ctx.eventId, ctx.now), deps.minDelayMs, deps.maxDelayMs),
+          delay: humanDelayMs(seedFrom(ctx.eventId, ctx.now), minDelay, maxDelay),
           linkPreview: true,
           trackId: ctx.eventId,
           readChat: false,

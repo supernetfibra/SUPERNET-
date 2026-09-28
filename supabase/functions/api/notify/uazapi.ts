@@ -400,8 +400,14 @@ export function createUazapiClient(options: UazapiOptions): UazapiClient {
  * A UazAPI mostra "digitando..." durante esse intervalo: uma rajada de mensagens
  * disparadas no mesmo instante é um dos padrões que o WhatsApp penaliza.
  */
-export function humanDelayMs(seed: number, min = 2500, max = 9000): number {
-  const span = Math.max(0, max - min);
+export function humanDelayMs(
+  seed: number,
+  min: number | undefined = 2500,
+  max: number | undefined = 9000
+): number {
+  const minMs = min === undefined || !Number.isFinite(min) || min <= 0 ? 2500 : min;
+  const maxMs = max === undefined || !Number.isFinite(max) || max < minMs ? minMs * 2 : max;
+  const span = Math.max(0, maxMs - minMs);
   const pseudo = Math.abs(Math.sin(seed * 12.9898) * 43758.5453);
-  return Math.round(min + (pseudo % 1) * span);
+  return Math.round(minMs + (pseudo % 1) * span);
 }

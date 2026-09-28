@@ -208,6 +208,8 @@ export default function AdminSimulator() {
   const [report, setReport] = useState<SimReport | null>(null);
   const [reference, setReference] = useState<{ report: SimReport; params: SimParams } | null>(null);
   const [loading, setLoading] = useState(true);
+  /** Edição técnica da régua (chave/evento/prioridade) recolhida: o simples é ligar/desligar. */
+  const [showAdvancedRules, setShowAdvancedRules] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Configuração persistida: é dela que os campos nascem e contra ela que se mede
@@ -531,10 +533,21 @@ export default function AdminSimulator() {
     [report, decisionFilter, ruleFilter, search]
   );
 
+  /** Paginação da fila detalhada — 50 linhas por página. */
+  const [itemPage, setItemPage] = useState(0);
+  const ITEMS_PER_PAGE = 50;
+  const totalItemPages = Math.max(1, Math.ceil(filteredItems.length / ITEMS_PER_PAGE));
+  const safeItemPage = Math.min(itemPage, totalItemPages - 1);
+  const pagedItems = useMemo(
+    () => filteredItems.slice(safeItemPage * ITEMS_PER_PAGE, (safeItemPage + 1) * ITEMS_PER_PAGE),
+    [filteredItems, safeItemPage]
+  );
+
   const toggleDecision = (code: string) => {
     setDecisionFilter((current) =>
       current.includes(code) ? current.filter((entry) => entry !== code) : [...current, code]
     );
+    setItemPage(0);
   };
 
   const downloadJson = () => {
@@ -976,82 +989,137 @@ export default function AdminSimulator() {
               {settingsError} Os campos abaixo continuam no padrão do formulário, e a rodada sai
               marcada como override — o que está salvo não pôde ser lido.
             </p>
-          ) : null}
-
-          <p className="text-[10px] text-muted-foreground">
-            ligada · chave · evento · deslocamento em dias (negativo = antes do vencimento) ·
-            prioridade · rótulo. A régua salva é a que o envio automático usará.
+          ) : null}          <p className="text-[10px] text-muted-foreground">
+            Ligue ou desligue cada aviso da régua. A régua salva é a que o envio automático usará.
           </p>
 
+          {/* Visão SIMPLES: um cartão por regra, com toggle e descrição em português.
+              A edição técnica (chave/evento/prioridade/rótulo) fica no modo avançado. */}
           <div className="space-y-2">
-            {params.rules.map((rule, index) => (
-              <div key={`${rule.key}-${index}`} className="flex flex-wrap items-center gap-2">
-                <Switch
-                  checked={rule.active}
-                  onCheckedChange={(checked) => updateRule(index, { active: checked })}
-                  className="cursor-pointer"
-                />
-                <Input
-                  value={rule.key}
-                  onChange={(event) =>
-                    updateRule(index, { key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })
-                  }
-                  className="h-8 w-28 text-xs font-mono"
-                  placeholder="chave"
-                />
-                <Select
-                  value={rule.eventKey}
-                  onValueChange={(value) => updateRule(index, { eventKey: value })}
+            {params.rules.map((rule, index) => {
+              const offsetLabel =
+                rule.offsetDays === 0
+                  ? "no dia do vencimento"
+                  : rule.offsetDays > 0
+                    ? `${rule.offsetDays} dia${rule.offsetDays > 1 ? "s" : ""} após o vencimento`
+                    : `${Math.abs(rule.offsetDays)} dia${Math.abs(rule.offsetDays) > 1 ? "s" : ""} antes do vencimento`;
+              const eventLabel =
+                rule.eventKey === "billing.due_soon"
+                  ? "Aviso de aproximação"
+                  : rule.eventKey === "billing.due_today"
+                    ? "Lembrete do dia"
+                    : rule.eventKey === "billing.late"
+                      ? "Aviso de atraso"
+                      : rule.eventKey;
+              return (
+                <div
+                  key={`${rule.key}-${index}`}
+                  className={`flex items-center justify-between gap-3 rounded-sm border px-3 py-2.5 transition-colors ${
+                    rule.active ? "border-border bg-background" : "border-border/50 bg-muted/30"
+                  }`}
                 >
-                  <SelectTrigger className="h-8 w-40 text-xs cursor-pointer">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(baseline?.eventKeys ?? [rule.eventKey]).map((eventKey) => (
-                      <SelectItem key={eventKey} value={eventKey} className="text-xs">
-                        {eventKey}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center gap-1">
+                  <div className="min-w-0">
+                    <p className={`text-xs font-medium ${rule.active ? "text-foreground" : "text-muted-foreground"}`}>
+                      {rule.label || eventLabel}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {eventLabel} · {offsetLabel}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={rule.active}
+                    onCheckedChange={(checked) => updateRule(index, { active: checked })}
+                    className="cursor-pointer shrink-0"
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowAdvancedRules((v) => !v)}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${showAdvancedRules ? "" : "-rotate-90"}`} />
+            Editar avançado (chave, evento, prioridade, rótulo)
+          </button>
+          {showAdvancedRules && (
+            <div className="space-y-2">
+              {params.rules.map((rule, index) => (
+                <div key={`adv-${rule.key}-${index}`} className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={rule.key}
+                    onChange={(event) =>
+                      updateRule(index, { key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })
+                    }
+                    className="h-8 w-28 text-xs font-mono"
+                    placeholder="chave"
+                  />
+                  <Select
+                    value={rule.eventKey}
+                    onValueChange={(value) => updateRule(index, { eventKey: value })}
+                  >
+                    <SelectTrigger className="h-8 w-40 text-xs cursor-pointer">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(baseline?.eventKeys ?? [rule.eventKey]).map((eventKey) => (
+                        <SelectItem key={eventKey} value={eventKey} className="text-xs">
+                          {eventKey}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      min={-60}
+                      max={60}
+                      value={rule.offsetDays}
+                      onChange={(event) => updateRule(index, { offsetDays: Number(event.target.value) })}
+                      className="h-8 w-16 text-xs font-mono"
+                    />
+                    <span className="text-[10px] text-muted-foreground">d</span>
+                  </div>
                   <Input
                     type="number"
-                    min={-60}
-                    max={60}
-                    value={rule.offsetDays}
-                    onChange={(event) => updateRule(index, { offsetDays: Number(event.target.value) })}
+                    min={0}
+                    max={999}
+                    value={rule.sortOrder}
+                    onChange={(event) => updateRule(index, { sortOrder: Number(event.target.value) })}
                     className="h-8 w-16 text-xs font-mono"
+                    title="Prioridade na fila (menor primeiro)"
                   />
-                  <span className="text-[10px] text-muted-foreground">d</span>
+                  <Input
+                    value={rule.label}
+                    onChange={(event) => updateRule(index, { label: event.target.value })}
+                    className="h-8 flex-1 min-w-40 text-xs"
+                    placeholder="rótulo para o painel"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-red-600"
+                    onClick={() => removeRule(index)}
+                    title="Remover regra"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <Input
-                  type="number"
-                  min={0}
-                  max={999}
-                  value={rule.sortOrder}
-                  onChange={(event) => updateRule(index, { sortOrder: Number(event.target.value) })}
-                  className="h-8 w-16 text-xs font-mono"
-                  title="Prioridade na fila (menor primeiro)"
-                />
-                <Input
-                  value={rule.label}
-                  onChange={(event) => updateRule(index, { label: event.target.value })}
-                  className="h-8 flex-1 min-w-40 text-xs"
-                  placeholder="rótulo para o painel"
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0 cursor-pointer text-muted-foreground hover:text-red-600"
-                  onClick={() => removeRule(index)}
-                  title="Remover regra"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-8 cursor-pointer"
+                disabled={!baseline || params.rules.length >= (baseline?.maxRules ?? 12)}
+                onClick={addRule}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1.5" />
+                Adicionar regra
+              </Button>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -1573,7 +1641,7 @@ export default function AdminSimulator() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <div className="w-40">
-                  <Select value={ruleFilter} onValueChange={setRuleFilter}>
+                  <Select value={ruleFilter} onValueChange={(v) => { setRuleFilter(v); setItemPage(0); }}>
                     <SelectTrigger className="h-8 text-xs cursor-pointer">
                       <SelectValue />
                     </SelectTrigger>
@@ -1592,7 +1660,10 @@ export default function AdminSimulator() {
                   <Input
                     placeholder="Cliente, referência ou CPF"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setItemPage(0);
+                    }}
                     className="h-8 text-xs pl-8"
                   />
                 </div>
@@ -1620,7 +1691,7 @@ export default function AdminSimulator() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredItems.map((item) => {
+                      pagedItems.map((item) => {
                         const isOpen = expanded === item.dedupeKey;
                         return (
                           <Fragment key={item.dedupeKey}>
@@ -1715,6 +1786,35 @@ export default function AdminSimulator() {
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Paginação — o total continua sendo o resumo; a tabela mostra uma página por vez */}
+              {filteredItems.length > ITEMS_PER_PAGE ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                  <span>
+                    página {safeItemPage + 1} de {totalItemPages} · {filteredItems.length} avisos filtrados
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[10px] cursor-pointer"
+                      disabled={safeItemPage === 0}
+                      onClick={() => setItemPage(safeItemPage - 1)}
+                    >
+                      ← anterior
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[10px] cursor-pointer"
+                      disabled={safeItemPage >= totalItemPages - 1}
+                      onClick={() => setItemPage(safeItemPage + 1)}
+                    >
+                      próxima →
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
 
               {report.skippedSamples.length ? (
                 <details className="text-[11px] text-muted-foreground">

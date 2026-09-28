@@ -1802,6 +1802,7 @@ app.get("/admin/whatsapp/config", async (c) => {
     adminTokenMasked: maskToken(config.adminToken),
     dailyNewChatCap: config.dailyNewChatCap,
     perCustomerCap: config.perCustomerCap,
+    sendGapSeconds: config.sendGapSeconds,
     windowStart: config.windowStart,
     windowEnd: config.windowEnd,
     pausedUntil: config.pausedUntil,
@@ -1861,6 +1862,7 @@ app.post("/admin/whatsapp/config", async (c) => {
     enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
     dailyNewChatCap: num(body.dailyNewChatCap),
     perCustomerCap: num(body.perCustomerCap),
+    sendGapSeconds: num(body.sendGapSeconds),
     windowStart: num(body.windowStart),
     windowEnd: num(body.windowEnd),
   });

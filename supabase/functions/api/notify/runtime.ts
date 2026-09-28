@@ -108,6 +108,13 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
     getConfig,
     outbox,
     setPausedUntil: (until) => setWhatsAppPausedUntil(configDeps, until),
+    // Ritmo configurável ("pausa entre mensagens", em segundos): min = valor
+    // configurado, máx = dobro (jitter). 0/ausente → o adapter usa o default humano.
+    minDelayMs: async () => (await getConfig()).sendGapSeconds * 1000 || undefined,
+    maxDelayMs: async () => {
+      const gap = (await getConfig()).sendGapSeconds;
+      return gap > 0 ? gap * 2000 : undefined;
+    },
     now: deps.now,
   });
 

@@ -67,21 +67,7 @@ const ADMIN_TOKEN_KEY = "mikweb_admin_token";
 const BRANDING_STORAGE_KEY = "mikweb_branding";
 const CONFIG_STORAGE_KEY = "mikweb_api_config";
 
-/**
- * Modos de envio (card WhatsApp): os dois limites técnicos do canal apresentados
- * como uma única escolha. `cap` é o `dailyNewChatCap` (0 = sem teto). O modo é
- * apenas APRESENTAÇÃO — o que é salvo no banco continuam sendo os números, então
- * o backend, o simulador e os testes não mudam.
- */
-const SEND_MODES = [
-  { cap: 5, label: "Prudente", hint: "Cresce devagar, risco mínimo de bloqueio" },
-  { cap: 50, label: "Equilibrado", hint: "Até 50 clientes novos por dia" },
-  { cap: 0, label: "Acelerado", hint: "Sem teto de novas conversas — só para base já alcançada" },
-] as const;
 
-function sendModeOf(cap: number): (typeof SEND_MODES)[number]["label"] | undefined {
-  return SEND_MODES.find((m) => m.cap === cap)?.label;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -170,6 +156,7 @@ interface WhatsAppConfigView {
   adminTokenMasked: string;
   dailyNewChatCap: number;
   perCustomerCap: number;
+  sendGapSeconds: number;
   windowStart: number;
   windowEnd: number;
   pausedUntil: number | null;
@@ -236,17 +223,13 @@ export default function AdminSettings() {
   const [waShowToken, setWaShowToken] = useState(false);
   const [waEnabled, setWaEnabled] = useState(false);
   const [waCaps, setWaCaps] = useState({
-    dailyNewChatCap: 20,
+    dailyNewChatCap: 200,
     perCustomerCap: 1,
+    sendGapSeconds: 10,
     windowStart: 9,
     windowEnd: 20,
   });
-  /**
-   * Modo de envio selecionado; `undefined` = configuração sob medida (avançado) —
-   * o preset não é aplicado e os campos avançados preservam o que está em vigor.
-   */
-  const [waSendMode, setWaSendMode] = useState<ReturnType<typeof sendModeOf> | undefined>(undefined);
-  /** Ajustes avançados recolhidos por padrão: a maioria dos casos resolve no modo. */
+  /** Ajustes avançados recolhidos por padrão: o ritmo resolve a maioria dos casos. */
   const [waShowAdvanced, setWaShowAdvanced] = useState(false);
   const [waSaving, setWaSaving] = useState(false);
   const [waConnecting, setWaConnecting] = useState(false);
@@ -283,12 +266,12 @@ export default function AdminSettings() {
     setWaBaseUrl(data.baseUrl || "");
     setWaEnabled(Boolean(data.enabled));
     setWaCaps({
-      dailyNewChatCap: Number(data.dailyNewChatCap ?? 20),
+      dailyNewChatCap: Number(data.dailyNewChatCap ?? 200),
       perCustomerCap: Number(data.perCustomerCap ?? 1),
+      sendGapSeconds: Number(data.sendGapSeconds ?? 0),
       windowStart: Number(data.windowStart ?? 9),
       windowEnd: Number(data.windowEnd ?? 20),
     });
-    setWaSendMode(sendModeOf(Number(data.dailyNewChatCap ?? 20)));
     setWaError(data.instanceError || null);
     setWaWebhookUrl(data.webhookUrl ?? null);
   }, []);
@@ -1313,36 +1296,40 @@ export default function AdminSettings() {
             <Switch checked={waEnabled} onCheckedChange={setWaEnabled} className="cursor-pointer" />
           </div>
 
-          {/* Modo de envio — os dois limites técnicos viram uma escolha com consequência clara.
-              Sem preset (avancado), os campos de baixo preservam a configuração em vigor. */}
+          {/* Ritmo — o que o usuário realmente quer controlar: o intervalo entre
+              uma mensagem e a outra. A cota anti-bloqueio fica escondida nos
+              avançados: é guarda de segurança, não controle de alcance. */}
           <div className="space-y-2">
-            <Label className="text-[10px] font-medium text-muted-foreground">
-              Velocidade de envio — quantos clientes novos o canal alcança por dia
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Pausa entre uma mensagem e outra
+              </Label>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {waCaps.sendGapSeconds > 0
+                  ? `${waCaps.sendGapSeconds}–${waCaps.sendGapSeconds * 2}s`
+                  : "automática (2,5–9s)"}
+              </span>
+            </div>
             <ToggleGroup
               type="single"
               spacing={2}
               variant="outline"
-              value={waSendMode ?? ""}
+              value={String(waCaps.sendGapSeconds)}
               onValueChange={(value) => {
                 if (!value) return;
-                const mode = SEND_MODES.find((m) => m.label === value);
-                if (!mode) return;
-                setWaSendMode(mode.label);
-                setWaCaps({ ...waCaps, dailyNewChatCap: mode.cap });
+                setWaCaps({ ...waCaps, sendGapSeconds: Number(value) });
               }}
               className="flex-wrap"
             >
-              {SEND_MODES.map((mode) => (
-                <ToggleGroupItem key={mode.label} value={mode.label} className="text-xs cursor-pointer">
-                  {mode.label}
-                </ToggleGroupItem>
-              ))}
+              <ToggleGroupItem value="10" className="text-xs cursor-pointer">10s</ToggleGroupItem>
+              <ToggleGroupItem value="30" className="text-xs cursor-pointer">30s</ToggleGroupItem>
+              <ToggleGroupItem value="60" className="text-xs cursor-pointer">1 min</ToggleGroupItem>
+              <ToggleGroupItem value="120" className="text-xs cursor-pointer">2 min</ToggleGroupItem>
             </ToggleGroup>
-            <p className="text-[10px] text-muted-foreground">
-              {waSendMode
-                ? SEND_MODES.find((m) => m.label === waSendMode)?.hint
-                : `Configuração sob medida: ${waCaps.dailyNewChatCap === 0 ? "sem teto" : waCaps.dailyNewChatCap} novas conversas/dia`}
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              {waCaps.sendGapSeconds > 0
+                ? `Envia 1 mensagem a cada ${waCaps.sendGapSeconds}–${waCaps.sendGapSeconds * 2} segundos, dentro da janela de envio — TODOS os devedores do dia recebem, só que em ritmo seguro.`
+                : "Sem pausa configurada, o sistema usa um ritmo automático de 2,5–9 segundos entre mensagens."}
             </p>
           </div>
 
@@ -1358,16 +1345,14 @@ export default function AdminSettings() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-2">
               <Label className="text-[10px] font-medium text-muted-foreground">
-                Novas conversas/dia (0 = sem teto)
+                Pausa customizada (s)
               </Label>
               <Input
                 type="number"
                 min={0}
-                value={waCaps.dailyNewChatCap}
-                onChange={(e) => {
-                  setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) });
-                  setWaSendMode(sendModeOf(Number(e.target.value)));
-                }}
+                max={3600}
+                value={waCaps.sendGapSeconds}
+                onChange={(e) => setWaCaps({ ...waCaps, sendGapSeconds: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
             </div>
@@ -1408,6 +1393,22 @@ export default function AdminSettings() {
                 onChange={(e) => setWaCaps({ ...waCaps, windowEnd: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
+            </div>
+            <div className="space-y-2 col-span-2 sm:col-span-4">
+              <Label className="text-[10px] font-medium text-muted-foreground">
+                Teto diário de novas conversas (proteção do número)
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={waCaps.dailyNewChatCap}
+                onChange={(e) => setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) })}
+                className="h-9 text-xs font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Guarda de segurança contra bloqueio do WhatsApp (time-lock). 0 = sem teto.
+                Só reduza se o WhatsApp avisar sobre o número.
+              </p>
             </div>
           </div>
           )}

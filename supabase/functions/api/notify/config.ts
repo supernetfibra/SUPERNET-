@@ -20,6 +20,13 @@ export interface WhatsAppConfig {
   enabled: boolean;
   dailyNewChatCap: number;
   perCustomerCap: number;
+  /**
+   * PAUSA ENTRE UMA MENSAGEM E A OUTRA, em segundos (o "ritmo" configurável).
+   * O adapter sorteia o atraso real entre `minDelayMs = sendGapSeconds * 1000`
+   * e `maxDelayMs = minGap * 2` — o jitter é o que faz o padrão não parecer
+   * máquina. 0 = sem pausa configurada (o adapter usa o default dele).
+   */
+  sendGapSeconds: number;
   windowStart: number;
   windowEnd: number;
   pausedUntil: number | null;
@@ -44,6 +51,7 @@ export const EMPTY_WHATSAPP_CONFIG: WhatsAppConfig = {
   enabled: false,
   dailyNewChatCap: 20,
   perCustomerCap: 1,
+  sendGapSeconds: 0,
   windowStart: 9,
   windowEnd: 20,
   pausedUntil: null,
@@ -91,6 +99,7 @@ export async function getWhatsAppConfig(deps: ConfigDeps): Promise<WhatsAppConfi
     enabled: origin !== "none" && row?.enabled === true,
     dailyNewChatCap: toInt(row?.daily_new_chat_cap, 20),
     perCustomerCap: Math.max(toInt(row?.per_customer_cap, 1), 1),
+    sendGapSeconds: Math.max(toInt(row?.send_gap_seconds, 0), 0),
     windowStart: Math.min(Math.max(toInt(row?.window_start, 9), 0), 23),
     windowEnd: Math.min(Math.max(toInt(row?.window_end, 20), 0), 24),
     pausedUntil: row?.paused_until === null || row?.paused_until === undefined ? null : Number(row.paused_until),
@@ -109,6 +118,7 @@ export interface ConfigSaveInput {
   enabled?: boolean;
   dailyNewChatCap?: number;
   perCustomerCap?: number;
+  sendGapSeconds?: number;
   windowStart?: number;
   windowEnd?: number;
 }
@@ -128,6 +138,7 @@ export async function saveWhatsAppConfig(
   if (input.enabled !== undefined) patch.enabled = input.enabled;
   if (input.dailyNewChatCap !== undefined) patch.daily_new_chat_cap = Math.max(0, Math.trunc(input.dailyNewChatCap));
   if (input.perCustomerCap !== undefined) patch.per_customer_cap = Math.max(1, Math.trunc(input.perCustomerCap));
+  if (input.sendGapSeconds !== undefined) patch.send_gap_seconds = Math.max(0, Math.trunc(input.sendGapSeconds));
   if (input.windowStart !== undefined) patch.window_start = Math.min(Math.max(Math.trunc(input.windowStart), 0), 23);
   if (input.windowEnd !== undefined) patch.window_end = Math.min(Math.max(Math.trunc(input.windowEnd), 1), 24);
 
