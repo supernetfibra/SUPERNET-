@@ -287,17 +287,43 @@ export function createUazapiClient(options: UazapiOptions): UazapiClient {
           };
         } catch (error) {
           // O recurso interativo pode não estar disponível (doc: "pode ser
-          // descontinuado a qualquer momento"). Fallback: reenvia como TEXTO puro
-          // com as ações em linhas — a mensagem chega de qualquer forma.
+          // descontinuado a qualquer momento"). Fallback em duas partes:
+          //   1. o TEXTO segue limpo (sem códigos), com uma nota dizendo que o
+          //      código vem na mensagem seguinte;
+          //   2. cada CÓDIGO copiável vira uma mensagem PRÓPRIA, contendo SÓ o
+          //      código — assim o "copiar mensagem" do WhatsApp copia exatamente
+          //      o valor pronto para colar. Prefixos ("📋 Rótulo:") e quebras de
+          //      linha no corpo contaminam o valor colado pelo cliente.
+          // Links (`url`) já costumam estar no corpo ({{boleto}}/{{link}}): só
+          // entram como linha 🔗 se ainda não aparecerem no texto.
           if (error instanceof UazapiError && (error.isBadRequest || error.status === 500)) {
-            const fallbackBody = `${input.text}\n\n${(input.actions ?? [])
-              .map((action) => (action.copy ? `📋 ${action.label}: ${action.copy}` : action.url ? `🔗 ${action.label}: ${action.url}` : action.label))
-              .join("\n")}`;
+            const copyActions = (input.actions ?? []).filter(
+              (action): action is { label: string; copy: string } => typeof action.copy === "string" && action.copy.length > 0
+            );
+            const urlExtras = (input.actions ?? [])
+              .filter((action) => action.url && !input.text.includes(action.url))
+              .map((action) => `🔗 ${action.label}: ${action.url}`);
+            const note = copyActions.length
+              ? "\n\n⚠️ Os botões não estavam disponíveis — o código vem na mensagem seguinte: copie a mensagem inteira."
+              : "";
+            const fallbackBody = [input.text + note, ...urlExtras].filter((part) => part.length > 0).join("\n\n");
             const fallback = asRecord(await request("POST", "/send/text", { ...body, text: fallbackBody }));
+            // Best-effort: a mensagem principal JÁ SAIU — se um código falhar aqui,
+            // marcá-la como falha reenviaria a mensagem inteira (duplicata para o
+            // cliente). O problema fica registrado em `raw.followupErrors` e o
+            // cliente ainda tem o portal/PDF no texto como alternativa.
+            const followupErrors: string[] = [];
+            for (const action of copyActions) {
+              try {
+                await request("POST", "/send/text", { number: input.number, text: action.copy });
+              } catch (followupError) {
+                followupErrors.push(`${action.label}: ${followupError instanceof Error ? followupError.message : String(followupError)}`);
+              }
+            }
             return {
               providerId: stringOrNull(fallback.messageid) ?? stringOrNull(fallback.id),
               status: stringOrNull(fallback.status) ?? stringOrNull(asRecord(fallback.response).status),
-              raw: fallback,
+              raw: { fallback, followups: copyActions.length, ...(followupErrors.length ? { followupErrors } : {}) },
             };
           }
           throw error;

@@ -1162,6 +1162,119 @@ const funnelNoLabel = aggregateFunnel({ weeks: buildFunnelWeeks({ now: FUNNEL_NO
 eq("clique sem rótulo é ignorado", funnelNoLabel[1]?.pixClicks, 0);
 
 // ---------------------------------------------------------------------------
+// 16. Fallback de botões → texto (códigos em mensagens separadas)
+// ---------------------------------------------------------------------------
+
+section("16. Fallback: códigos em mensagens separadas");
+
+import { createUazapiClient } from "../supabase/functions/api/notify/uazapi.ts";
+
+/**
+ * Mock do fetch global: a primeira chamada a /send/menu falha com 400 (recurso
+ * recusado — o gatilho do fallback), as demais (/send/text) são gravadas.
+ */
+function makeFallbackFetch() {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body ?? "{}");
+    calls.push({ path: new URL(_url).pathname, body });
+    if (new URL(_url).pathname.endsWith("/send/menu")) {
+      return new Response(JSON.stringify({ error: "menu não disponível" }), { status: 400 });
+    }
+    return new Response(JSON.stringify({ messageid: `wamid.${calls.length}`, status: "sent" }), { status: 200 });
+  };
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = realFetch;
+    },
+  };
+}
+
+const fallbackInput = {
+  number: "5598999990001",
+  text: "Olá, João! Sua fatura vence em 25/09/2026.\nPague com o Pix copiável no botão abaixo. 👇\nVer no portal: https://portal.com/faturas/b1",
+  actions: [
+    { label: "Copiar código Pix", copy: "PIX000-CODIGO-LONGO" },
+    { label: "Copiar código de barras", copy: "34191090123456789012345678901234512345678901234" },
+    { label: "Abrir portal", url: "https://portal.com/faturas/b1" },
+  ],
+};
+
+const fb = makeFallbackFetch();
+try {
+  const client = createUazapiClient({ baseUrl: "https://uazapi.test", token: "t" });
+  const result = await client.sendText(fallbackInput);
+
+  const textCalls = fb.calls.filter((c) => c.path.endsWith("/send/text"));
+  eq("menu recusado → 3 mensagens de texto (principal + 2 códigos)", textCalls.length, 3);
+  eq("mensagem principal não contém código", textCalls[0]?.body.text.includes("PIX000"), false);
+  check(
+    "mensagem principal avisa que o código vem na sequência",
+    textCalls[0]?.body.text.includes("código vem na mensagem seguinte"),
+    textCalls[0]?.body.text
+  );
+  // Link do portal já está no texto: não pode vir duplicado como linha 🔗.
+  check("link do portal não é duplicado", !textCalls[0]?.body.text.includes("🔗"), textCalls[0]?.body.text);
+  // UM código por mensagem, contendo SÓ o código — "copiar mensagem" copia o valor pronto.
+  eq("2ª mensagem contém só o código Pix", textCalls[1]?.body.text, "PIX000-CODIGO-LONGO");
+  eq("3ª mensagem contém só a linha digitável", textCalls[2]?.body.text, "34191090123456789012345678901234512345678901234");
+  check("envio é reportado como OK", typeof result.providerId === "string", result.providerId);
+  check("nenhuma falha de follow-up", result.raw.followupErrors === undefined, result.raw);
+} finally {
+  fb.restore();
+}
+
+// Fallback parcial: segundo código falha — resultado continua OK (a principal saiu),
+// mas o problema fica registrado em raw.followupErrors para diagnóstico.
+const fb2 = makeFallbackFetch();
+try {
+  let textCount = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const isText = new URL(url).pathname.endsWith("/send/text");
+    if (isText) textCount++;
+    // 2º /send/text = código Pix → falha de rede.
+    if (isText && textCount === 2) {
+      return Promise.reject(new Error("network down"));
+    }
+    if (new URL(url).pathname.endsWith("/send/menu")) {
+      return new Response(JSON.stringify({ error: "menu não disponível" }), { status: 400 });
+    }
+    return new Response(JSON.stringify({ messageid: `wamid.${textCount}`, status: "sent" }), { status: 200 });
+  };
+  try {
+    const client = createUazapiClient({ baseUrl: "https://uazapi.test", token: "t" });
+    const partial = await client.sendText(fallbackInput);
+    check("falha num código não derruba o envio", typeof partial.providerId === "string", partial.providerId);
+    eq("uma falha de follow-up registrada", partial.raw.followupErrors?.length, 1);
+    check("falha citada identifica o rótulo", String(partial.raw.followupErrors?.[0]).includes("Copiar código Pix"), partial.raw.followupErrors);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+} finally {
+  fb2.restore();
+}
+
+// Sem ações de cópia (só links): fallback NÃO adiciona a nota de código.
+const fb3 = makeFallbackFetch();
+try {
+  const client = createUazapiClient({ baseUrl: "https://uazapi.test", token: "t" });
+  await client.sendText({
+    number: "5598999990001",
+    text: "Mensagem com link apenas: https://portal.com/faturas/b9",
+    actions: [{ label: "Abrir portal", url: "https://portal.com/faturas/b9" }],
+  });
+  const callsText = fb3.calls.filter((c) => c.path.endsWith("/send/text"));
+  eq("só links → uma mensagem, sem nota de código", callsText.length, 1);
+  check("sem nota de código", !callsText[0]?.body.text.includes("mensagem seguinte"), callsText[0]?.body.text);
+  check("link já no texto não é repetido", !callsText[0]?.body.text.includes("🔗"), callsText[0]?.body.text);
+} finally {
+  fb3.restore();
+}
+
+// ---------------------------------------------------------------------------
 
 console.log(`\n${failures.length === 0 ? "✓" : "✗"} ${pass} verificações passaram, ${failures.length} falharam`);
 for (const item of failures) console.log(`  ✗ ${item}`);
