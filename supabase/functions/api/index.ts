@@ -38,6 +38,15 @@ import type { ChannelTemplate } from "./notify/templates.ts";
 import { createUazapiClient } from "./notify/uazapi.ts";
 import { createWhatsAppRuntime } from "./notify/runtime.ts";
 import { handleUazapiWebhook } from "./notify/webhook.ts";
+import { toDeliveryView, RULE_KEY_LABELS } from "./notify/deliveries-view.ts";
+import {
+  buildChannelDownMessage,
+  buildDispatchFailuresMessage,
+  buildQuotaPausedMessage,
+  normalizeAdminAlerts,
+} from "./notify/admin-alerts.ts";
+import { sendAdminAlert } from "./notify/admin-alerts-send.ts";
+import type { DispatchSummary } from "./notify/dispatch.ts";
 import { aggregateFunnel, buildFunnelWeeks, funnelTotals, weekStartToMs } from "./notify/engagement.ts";
 
 // ---------------------------------------------------------------------------
@@ -1325,6 +1334,119 @@ function uazapiClientFrom(config: { baseUrl: string; instanceToken: string; admi
   });
 }
 
+// ---------------------------------------------------------------------------
+// Alertas de operação — o sistema avisa o ADMIN (WhatsApp + push) quando algo
+// precisa de intervenção: canal parado, rodada com falhas, time-lock.
+// ---------------------------------------------------------------------------
+
+/** Fallback push para o admin: assinaturas do painel (o alerta de canal não pode depender do canal). */
+async function sendPushToAdmins(payload: { title: string; body: string }): Promise<number> {
+  try {
+    const { data: subs } = await db()
+      .from("push_subscriptions")
+      .select("endpoint, keys")
+      .limit(500);
+    if (!subs || subs.length === 0) return 0;
+    const { sent } = await sendPushToSubs(subs, { title: payload.title, body: payload.body, tag: "admin-alert" });
+    return sent;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Avalia os gatilhos de alerta após uma rodada de dispatch e avisa o admin.
+ * Best-effort por design: NENHUM erro aqui pode derrubar o cron de envio.
+ *
+ * Gatilhos (com cooldown de 4h por tipo — ver admin-alerts.ts):
+ *  - falhas >= adminAlerts.failureThreshold na rodada;
+ *  - time-lock (WhatsApp impôs pausa por volume);
+ *  - pausa com fila parada E instância desconectada (verificação pontual na UazAPI).
+ */
+async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> {
+  try {
+    const runtime = whatsappRuntime();
+    const loaded = await runtime.getSettings();
+    const config = loaded.settings.adminAlerts;
+    const nowMs = Date.now();
+    const alertDeps = {
+      db,
+      getWhatsAppConfig: () => runtime.getConfig(),
+      sendPushToAdmins,
+      log: (message: string, extra?: Record<string, unknown>) => console.log(`[ADMIN_ALERT] ${message}`, extra ?? ""),
+    };
+
+    // 1) Rodada com muitas falhas — motivo e primeiro exemplo.
+    if (summary.failed >= config.failureThreshold && config.alertDispatchFailures) {
+      const sample = summary.results.find((r) => !r.ok)?.reason ?? null;
+      await sendAdminAlert(alertDeps, {
+        key: "dispatch-failures",
+        config,
+        title: "Lembretes: falhas no envio",
+        message: buildDispatchFailuresMessage({ failed: summary.failed, sent: summary.sent, sample, at: nowMs }),
+        phone: config.phone,
+        now: nowMs,
+      });
+      return;
+    }
+
+    // 2) Pausa com fila: ou é time-lock (avisa) ou o canal está fora (verifica).
+    if (!summary.paused) return;
+    const pauseReason = summary.pauseReason ?? "";
+
+    if (/time-lock/i.test(pauseReason)) {
+      const cfg = await runtime.getConfig();
+      if (cfg.pausedUntil) {
+        await sendAdminAlert(alertDeps, {
+          key: "quota-paused",
+          config,
+          title: "Lembretes: pausa do WhatsApp",
+          message: buildQuotaPausedMessage({ until: cfg.pausedUntil }),
+          phone: config.phone,
+          now: nowMs,
+        });
+      }
+      return;
+    }
+
+    // Fora da janela com instância saudável é operação normal (madrugada): só
+    // verifico a instância quando há fila pronta que não anda — sinais de canal fora.
+    if (summary.claimed > 0 && summary.sent === 0 && summary.failed === 0) {
+      const wa = await runtime.getConfig();
+      if (wa.baseUrl && wa.instanceToken) {
+        try {
+          const status = await uazapiClientFrom(wa).instanceStatus();
+          await runtime.setStatus(status.state);
+          if (!status.connected) {
+            await sendAdminAlert(alertDeps, {
+              key: "channel-down",
+              config,
+              title: "Lembretes: canal WhatsApp parado",
+              message: buildChannelDownMessage({ reason: `instância ${status.state}` }),
+              phone: config.phone,
+              now: nowMs,
+            });
+          }
+        } catch {
+          // A própria verificação falhou (sem rede/credencial inválida): o alerta
+          // de credencial quebrada viraria spam — fica no log do servidor.
+        }
+      } else if (wa.enabled) {
+        await sendAdminAlert(alertDeps, {
+          key: "channel-down",
+          config,
+          title: "Lembretes: canal WhatsApp parado",
+          message: buildChannelDownMessage({ reason: "credenciais da UazAPI ausentes" }),
+          phone: config.phone,
+          now: nowMs,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[ADMIN_ALERT_ERROR]", error);
+  }
+}
+
 /**
  * Endpoint interno: aceita o secret de cron OU um admin autenticado (para o painel
  * conseguir forçar o dreno da fila sem conhecer o secret).
@@ -1630,6 +1752,7 @@ app.post("/admin/notifications/settings", async (c) => {
       skipInactiveCustomers: typeof body.skipInactiveCustomers === "boolean" ? body.skipInactiveCustomers : undefined,
       portalBaseUrl: typeof body.portalBaseUrl === "string" ? body.portalBaseUrl : undefined,
       companyName: typeof body.companyName === "string" ? body.companyName : undefined,
+      adminAlerts: body.adminAlerts === undefined ? undefined : normalizeAdminAlerts(body.adminAlerts),
     },
     { updatedBy: "admin" }
   );
@@ -1647,6 +1770,7 @@ app.post("/admin/notifications/settings", async (c) => {
       rules: result.loaded.settings.rules.map((rule) => `${rule.active ? "" : "✕"}${rule.key}@${rule.offsetDays}`),
       horizonDays: result.loaded.settings.horizonDays,
       runAtHour: result.loaded.settings.runAtHour,
+      adminAlertsConfigured: Boolean(result.loaded.settings.adminAlerts.phone),
     },
   });
 
@@ -1858,6 +1982,7 @@ app.get("/admin/whatsapp/flow-status", async (c) => {
 
   let rulesActive: number | null = null;
   let rulesTotal: number | null = null;
+  let adminAlertsConfigured = false;
   try {
     const loaded = await runtime.getSettings();
     const rules = (loaded as unknown as { settings?: { rules?: { active: boolean }[] } }).settings?.rules;
@@ -1865,6 +1990,7 @@ app.get("/admin/whatsapp/flow-status", async (c) => {
       rulesTotal = rules.length;
       rulesActive = rules.filter((rule) => rule.active).length;
     }
+    adminAlertsConfigured = Boolean(loaded.settings.adminAlerts.phone);
   } catch {
     // régua indisponível: fica "?" na tela, não derruba o endpoint
   }
@@ -1922,7 +2048,99 @@ app.get("/admin/whatsapp/flow-status", async (c) => {
     pausedUntil: config.pausedUntil,
     timeLock: null,
     sendGapSeconds: config.sendGapSeconds,
+    // Alerta de operação: configurado = número do admin salvo (o card mostra dica se não).
+    adminAlerts: { configured: adminAlertsConfigured },
   });
+});
+
+// ---------------------------------------------------------------------------
+// GET|POST /api/admin/alerts — alertas de operação ao admin
+//
+// GET: config atual + quando cada alerta disparou por último (anti-spam visível).
+// POST: salva número/gatilhos (merge parcial — campo ausente mantém o atual).
+// ---------------------------------------------------------------------------
+app.get("/admin/alerts", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const runtime = whatsappRuntime();
+    const loaded = await runtime.getSettings();
+    const alerts = loaded.settings.adminAlerts;
+    let lastSentAt: Record<string, number> = {};
+    try {
+      const { data } = await db().from("admin_alerts_state").select("state").eq("key", "default").maybeSingle();
+      const raw = (data as { state?: Record<string, unknown> } | null)?.state ?? {};
+      for (const [key, value] of Object.entries(raw)) {
+        const num = Number(value);
+        if (Number.isFinite(num) && num > 0) lastSentAt[key] = Math.trunc(num);
+      }
+    } catch {
+      // migration 009 pendente: sem memória ainda
+    }
+    return json({
+      alerts,
+      lastSentAt,
+      cooldownHours: 4,
+      origin: loaded.origin,
+      updatedAt: loaded.updatedAt,
+      updatedBy: loaded.updatedBy,
+    });
+  } catch (error) {
+    console.error("[ADMIN_ALERTS_READ_ERROR]", error);
+    return jsonError("Erro ao ler a configuração de alertas.", 500);
+  }
+});
+
+app.post("/admin/alerts", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    const runtime = whatsappRuntime();
+    const current = await runtime.getSettings();
+    const merged = normalizeAdminAlerts({ ...current.settings.adminAlerts, ...normalizeAdminAlerts(body) });
+    const result = await runtime.saveSettings({ adminAlerts: merged }, { updatedBy: "admin" });
+    if (!result.ok) {
+      console.error("[ADMIN_ALERTS_SAVE_ERROR]", result.error);
+      return jsonError(result.error, 500);
+    }
+    await logEvent({
+      type: "notification_config",
+      metadata: { action: "admin-alerts", configured: Boolean(result.loaded.settings.adminAlerts.phone) },
+    });
+    return json({ success: true, alerts: result.loaded.settings.adminAlerts, notes: [...result.notes, ...result.loaded.notes] });
+  } catch (error) {
+    console.error("[ADMIN_ALERTS_SAVE_ERROR]", error);
+    return jsonError("Erro ao salvar os alertas.", 500);
+  }
+});
+
+// POST /api/admin/alerts/test — envia AGORA uma mensagem de teste para o admin.
+// Envio DIRETO (sem cooldown e sem gravar memória): é o botão "enviar teste" do
+// painel — repetido de propósito quando o admin está ajustando o número.
+app.post("/admin/alerts/test", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const runtime = whatsappRuntime();
+    const loaded = await runtime.getSettings();
+    const config = loaded.settings.adminAlerts;
+    if (!config.phone) {
+      return jsonError("Salve o WhatsApp do admin antes de testar.", 400);
+    }
+    const message = "✅ Teste de alerta do sistema de lembretes. Este é o número que receberá avisos de operação (canal parado, falhas de envio).";
+    const wa = await runtime.getConfig();
+    if (wa.baseUrl && wa.instanceToken) {
+      try {
+        await uazapiClientFrom(wa).sendText({ number: config.phone, text: message });
+        return json({ success: true, via: "whatsapp" });
+      } catch (error) {
+        console.warn("[ADMIN_ALERT_TEST] WhatsApp falhou, tentando push:", error instanceof Error ? error.message : error);
+      }
+    }
+    const sent = await sendPushToAdmins({ title: "Teste de alerta", body: message });
+    return json({ success: sent > 0, via: sent > 0 ? "push" : "none", reason: sent > 0 ? null : "canal WhatsApp indisponível e push não entregue" });
+  } catch (error) {
+    console.error("[ADMIN_ALERTS_TEST_ERROR]", error);
+    return jsonError("Erro ao enviar o teste de alerta.", 500);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -2312,13 +2530,18 @@ app.post("/admin/notifications/send-now", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/admin/notifications/deliveries — fila e histórico
+// GET /api/admin/notifications/deliveries — fila e histórico, com o "porquê" de cada linha
 // ---------------------------------------------------------------------------
+// Enriquecimento aditivo (sem migration): cada entrega ganha `ruleKey`/`ruleLabel`
+// (régua de origem, extraída da dedupe_key do evento), `customerName` (mapa com
+// whatsapp_contacts) e `reasonLabel` (frase legível do estado/agendamento).
+// Aceita `rule=` para filtrar por régua e `search=` também casa nome do cliente.
 app.get("/admin/notifications/deliveries", async (c) => {
   if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
   const url = new URL(c.req.raw.url);
   const status = url.searchParams.get("status") || "all";
   const customerId = url.searchParams.get("customerId") || undefined;
+  const rule = url.searchParams.get("rule")?.trim() || undefined;
   const search = url.searchParams.get("search")?.trim().toLowerCase() || undefined;
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50) || 50, 1), 500);
   const runtime = whatsappRuntime();
@@ -2329,30 +2552,56 @@ app.get("/admin/notifications/deliveries", async (c) => {
       runtime.outbox.stats({ since: now() - 7 * 24 * 60 * 60 * 1000 }),
     ]);
 
-    // Opcionalmente associa o nome do cliente a partir de whatsapp_contacts ou evento
-    let deliveries = rawDeliveries;
+    // Mapa id → nome: uma única leitura de whatsapp_contacts para a página inteira.
+    const customerIds = [
+      ...new Set(rawDeliveries.map((d) => d.customerId).filter((v): v is string => !!v)),
+    ];
+    const namesById = new Map<string, string>();
+    if (customerIds.length) {
+      const { data: contactRows } = await db()
+        .from("whatsapp_contacts")
+        .select("customer_id, customer_name")
+        .in("customer_id", customerIds);
+      for (const row of (contactRows ?? []) as Array<{ customer_id: unknown; customer_name: unknown }>) {
+        const id = row.customer_id == null ? null : String(row.customer_id);
+        const name = row.customer_name == null ? null : String(row.customer_name).trim();
+        if (id && name) namesById.set(id, name);
+      }
+    }
+
+    const viewNow = now();
+    let deliveries = rawDeliveries.map((d) =>
+      toDeliveryView(d, { customerName: d.customerId ? namesById.get(d.customerId) ?? null : null, now: viewNow })
+    );
+
+    if (rule) {
+      const wanted = rule === "manual" ? "manual" : rule;
+      deliveries = deliveries.filter((d) => d.ruleKey === wanted);
+    }
     if (search) {
       const q = search;
-      deliveries = rawDeliveries.filter((d) => {
+      deliveries = deliveries.filter((d) => {
         const target = (d.target || "").toLowerCase();
         const cid = (d.customerId || "").toLowerCase();
         const cpf = (d.cpf || "").replace(/\D/g, "");
         const rawCpf = (d.cpf || "").toLowerCase();
         const err = (d.errorMessage || "").toLowerCase();
+        const name = (d.customerName || "").toLowerCase();
         return (
           target.includes(q) ||
           cid.includes(q) ||
           cpf.includes(q.replace(/\D/g, "")) ||
           rawCpf.includes(q) ||
-          err.includes(q)
-        );
+          err.includes(q) ||
+          name.includes(q)
+        )
       }).slice(0, limit);
     }
 
-    return json({ deliveries, stats, migrationPending: false });
+    return json({ deliveries, stats, ruleKeys: Object.keys(RULE_KEY_LABELS), migrationPending: false });
   } catch (error) {
     // Migration 003 pendente é o caso esperado aqui — devolve vazio, não 500.
-    return json({ deliveries: [], stats: {}, migrationPending: true, error: error instanceof Error ? error.message : String(error) });
+    return json({ deliveries: [], stats: {}, ruleKeys: Object.keys(RULE_KEY_LABELS), migrationPending: true, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -2579,6 +2828,9 @@ app.on(["GET", "POST"], "/cron/notify-dispatch", async (c) => {
   try {
     const summary = await whatsappRuntime().dispatch({ limit, channel, policy });
     if (summary.paused) console.warn("[NOTIFY_DISPATCH_PAUSED]", summary.pauseReason);
+    // Alertas ao admin só no modo automatizado: o clique manual no painel não deve
+    // ganhar latência de verificação de canal (e quem clicou já está olhando).
+    if (policy === "automated") await runOperationAlertChecks(summary);
     return json(summary);
   } catch (error) {
     console.error("[NOTIFY_DISPATCH_ERROR]", error);

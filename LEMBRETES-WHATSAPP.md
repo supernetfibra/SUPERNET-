@@ -344,6 +344,28 @@ src/pages/AdminSimulator.tsx  → a tela do simulador (§14b)
 
 ## 13. Observabilidade e segurança
 
+### 13a. Alertas de operação ao admin — implementado 🔸
+
+O sistema avisa o ADMIN quando a operação precisa dele (o lembrete do cliente tem
+outro dono — este é o do dono do sistema):
+
+*   **Gatilhos** (avaliados no cron de dispatch, modo automatizado):
+    1. rodada com `failed >= adminAlerts.failureThreshold` (default 5);
+    2. time-lock imposto pelo WhatsApp;
+    3. fila pronta que não anda + instância UazAPI desconectada (ou credenciais
+       ausentes com canal ligado).
+*   **Canal**: WhatsApp direto do número (`adminAlerts.phone`), FORA da outbox —
+    o alerta não compete com janela/cota do cliente e não aparece em Mensagens.
+    Fallback: push para as assinaturas do painel (o alerta sobre o canal não pode
+    depender só do canal).
+*   **Anti-spam**: cooldown de 4h por tipo, memória em `admin_alerts_state`
+    (migration 009 — uma linha, key `default`); reserva gravada ANTES do enviar.
+*   **Config**: painel → Conexões → "Alertas de operação" (`GET/POST
+    /admin/alerts`, teste em `POST /admin/alerts/test` sem cooldown). O número
+    aceita com/sem código do país; só celular BR válido (55+DDD+9).
+*   **Núcleo puro**: `notify/admin-alerts.ts` (regras/mensagens) é coberto pela
+    seção 19 do `check:notify`; `notify/admin-alerts-send.ts` é o I/O.
+
 - Toda tentativa vira linha em `whatsapp_messages` + log em `mikweb_audit_log`.
 - Nunca logar token, nunca retornar token ao frontend (só `ab12...ef90`, como já é feito
   com o token da MikWeb).
@@ -735,6 +757,7 @@ adapter novo — não um segundo pipeline.
 | 1 | ✅ Adapter WhatsApp + outbox + botão "enviar lembrete" com prévia | envio sob demanda, sem automação |
 | 2 | Sync de faturas → eventos (régua persistida) + dispatcher agendado + cota diária de novas conversas imposta no envio | lembrete automático |
 | 3 | Webhook (status, opt-out) + painel unificado de entregas | operação visível |
+| 3.5 | ✅ **Painel do operador** (régua, mensagens com motivo, conexões) + **alertas de operação** ao admin (WhatsApp/push, cooldown 4h) | o admin descobre o problema sem abrir o painel |
 | 4 | PDF/mídia, Pix, botões interativos, múltiplas instâncias | refinamento |
 
 ## 17. Decisões em aberto 🔸

@@ -25,6 +25,7 @@
 
 import { DEFAULT_RULES, type ReminderRule } from "./rules.ts";
 import { DEFAULT_TEMPLATES, type ChannelTemplate } from "./templates.ts";
+import { DEFAULT_ADMIN_ALERTS, normalizeAdminAlerts, type AdminAlertsConfig } from "./admin-alerts.ts";
 
 // ---------------------------------------------------------------------------
 // Local da configuração (usado por settings-store e template-store)
@@ -85,6 +86,8 @@ export interface SettingsDocument {
   skipInactiveCustomers: boolean;
   portalBaseUrl: string;
   companyName: string;
+  /** Alertas ao admin (canal parado, falhas) — WhatsApp do admin + gatilhos. */
+  adminAlerts: AdminAlertsConfig;
 }
 
 export interface NotificationSettings extends SettingsDocument {
@@ -110,6 +113,7 @@ const BASE_DOCUMENT: SettingsDocument = {
   skipInactiveCustomers: true,
   portalBaseUrl: "https://minhasupernet.com",
   companyName: "MinhaSuperNet",
+  adminAlerts: { ...DEFAULT_ADMIN_ALERTS },
 };
 
 const BASE_WHATSAPP: WhatsAppSettings = {
@@ -154,6 +158,7 @@ export function documentOf(settings: NotificationSettings): SettingsDocument {
     skipInactiveCustomers: settings.skipInactiveCustomers,
     portalBaseUrl: settings.portalBaseUrl,
     companyName: settings.companyName,
+    adminAlerts: { ...settings.adminAlerts },
   };
 }
 
@@ -310,6 +315,8 @@ export function normalizeDocument(raw: unknown, base?: SettingsDocument): Normal
         typeof record.skipInactiveCustomers === "boolean" ? record.skipInactiveCustomers : fallback.skipInactiveCustomers,
       portalBaseUrl,
       companyName,
+      // Ausente → mantém o que está em vigor (documento parcial); presente → normaliza.
+      adminAlerts: normalizeAdminAlerts(record.adminAlerts, fallback.adminAlerts),
     },
     notes,
   };

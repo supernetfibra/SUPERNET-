@@ -26,18 +26,28 @@ import {
   Search,
   FlaskConical,
   Send,
+  MessageSquareText,
+  CalendarClock,
+  PlugZap,
 } from "lucide-react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
 import { useBranding } from "@/lib/branding-context";
 import { useTheme } from "@/lib/theme-provider";
 
+/**
+ * Menu do painel admin, na ordem do fluxo do operador:
+ * entrar → conectar provedor (Conexões) → definir a régua → ver as mensagens.
+ * `short` é o rótulo da barra inferior no celular (largura limitada).
+ */
 const adminNavigation = [
-  { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { name: "Solicitações", href: "/admin/install-requests", icon: Home },
-  { name: "Outbox (Fila)", href: "/admin/outbox", icon: Send },
-  { name: "Simulador", href: "/admin/simulator", icon: FlaskConical },
-  { name: "Configurações", href: "/admin/settings", icon: Settings },
+  { name: "Dashboard", short: "Início", href: "/admin/dashboard", icon: LayoutDashboard },
+  { name: "Solicitações", short: "Pedidos", href: "/admin/install-requests", icon: Home },
+  { name: "Conexões", short: "Conexões", href: "/admin/connections", icon: PlugZap },
+  { name: "Régua de lembretes", short: "Régua", href: "/admin/rules", icon: CalendarClock },
+  { name: "Mensagens", short: "Mensagens", href: "/admin/messages", icon: MessageSquareText },
+  { name: "Simulador", short: "Prévia", href: "/admin/simulator", icon: FlaskConical },
+  { name: "Configurações", short: "Ajustes", href: "/admin/settings", icon: Settings },
 ];
 
 export default function AdminLayout() {
@@ -237,7 +247,7 @@ export default function AdminLayout() {
                   <item.icon className="h-5 w-5" />
                 </div>
                 <span className="text-[10px] font-medium leading-none">
-                  {item.name}
+                  {item.short}
                 </span>
               </button>
             );

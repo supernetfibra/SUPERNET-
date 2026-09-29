@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   CircleAlert,
   Compass,
   FlaskConical,
@@ -67,6 +68,8 @@ interface FlowStatus {
   pausedUntil: number | null;
   timeLock: number | null;
   sendGapSeconds: number | null;
+  /** Alertas de operação configurados? (número do admin salvo) */
+  adminAlerts?: { configured: boolean };
   /** Timestamp do cliente capturado no load — comparações de pausa ficam puras no render. */
   nowAt: number;
 }
@@ -79,6 +82,9 @@ interface FlowStep {
   detail: string;
   state: StepState;
   action?: { label: string; onClick: () => void; icon?: typeof Send };
+  /** Link para a página que resolve o passo (rota do painel admin). */
+  href?: string;
+  hrefLabel?: string;
 }
 
 /** Chave do localStorage: o tour mostra só uma vez por navegador. */
@@ -127,8 +133,10 @@ function buildSteps(status: FlowStatus, dispatch: () => void, dispatching: boole
       detail:
         (status.rules.active ?? 0) > 0
           ? `${status.rules.active} de ${status.rules.total} regras da régua ativas.`
-          : "Nenhuma regra da régua ativa — ligue pelo menos uma em \"Régua de lembretes\".",
+          : "Nenhuma regra da régua ativa — ligue pelo menos uma.",
       state: (status.rules.active ?? 0) > 0 ? "ok" : "todo",
+      href: "/admin/rules",
+      hrefLabel: "Abrir a Régua",
     },
     {
       n: 4,
@@ -143,13 +151,15 @@ function buildSteps(status: FlowStatus, dispatch: () => void, dispatching: boole
       n: 5,
       title: "Avisos na fila",
       detail: `${status.queue.ready} prontos para sair agora · ${status.queue.scheduled} agendados${
-        status.queue.failed ? ` · ${status.queue.failed} falharam (reenviar na Fila)` : ""
+        status.queue.failed ? ` · ${status.queue.failed} falharam (reenviar em Mensagens)` : ""
       }`,
       state: status.queue.failed > 0 ? "warn" : status.queue.ready > 0 ? "todo" : "ok",
       action:
         status.queue.ready > 0 || status.queue.failed > 0
           ? { label: "Enviar agora", onClick: dispatch, icon: Send }
           : undefined,
+      href: "/admin/messages",
+      hrefLabel: "Ver mensagens",
       ...(dispatching ? {} : {}),
     },
   ];
@@ -385,21 +395,34 @@ export function SendFlowCard() {
               <p className="text-xs font-medium text-foreground">{step.title}</p>
               <p className="text-[11px] text-muted-foreground">{step.detail}</p>
             </div>
-            {step.action ? (
-              <Button
-                size="sm"
-                className="h-8 text-xs cursor-pointer shrink-0"
-                onClick={step.action.onClick}
-                disabled={dispatching}
-              >
-                {dispatching ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : step.action.icon ? (
-                  <step.action.icon className="h-3.5 w-3.5 mr-1.5" />
-                ) : null}
-                {step.action.label}
-              </Button>
-            ) : null}
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              {step.action ? (
+                <Button
+                  size="sm"
+                  className="h-8 text-xs cursor-pointer"
+                  onClick={step.action.onClick}
+                  disabled={dispatching}
+                >
+                  {dispatching ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  ) : step.action.icon ? (
+                    <step.action.icon className="h-3.5 w-3.5 mr-1.5" />
+                  ) : null}
+                  {step.action.label}
+                </Button>
+              ) : null}
+              {step.href ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px] cursor-pointer text-muted-foreground"
+                  onClick={() => navigate(step.href!)}
+                >
+                  {step.hrefLabel ?? "Abrir"}
+                  <ChevronRight className="h-3 w-3 ml-0.5" />
+                </Button>
+              ) : null}
+            </div>
           </div>
         ))}
 
@@ -442,6 +465,16 @@ export function SendFlowCard() {
               ? `Ritmo atual: 1 mensagem a cada ${status.sendGapSeconds}s.`
               : "Ritmo atual: padrão humano."}
           </span>
+          {status.adminAlerts && !status.adminAlerts.configured ? (
+            <button
+              type="button"
+              onClick={() => navigate("/admin/connections")}
+              className="text-[10px] text-amber-600 dark:text-amber-400 cursor-pointer hover:underline"
+              title="Configure em Conexões → Alertas de operação"
+            >
+              🔔 Receba avisos quando o canal parar — configurar alertas
+            </button>
+          ) : null}
         </div>
       </CardContent>
 

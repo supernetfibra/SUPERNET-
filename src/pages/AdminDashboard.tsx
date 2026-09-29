@@ -282,20 +282,9 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
 
-  // Config form
-  const [apiUrl, setApiUrl] = useState("https://api.mikweb.com.br/v1/admin/");
-  const [apiToken, setApiToken] = useState("");
-  const [showToken, setShowToken] = useState(false);
-  const [configSaved, setConfigSaved] = useState(false);
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
-
-  // Test connection
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [connectionResult, setConnectionResult] = useState<{
-    success: boolean;
-    message: string;
-  } | null>(null);
+  // Config da API MikWeb: a edição vive na página Conexões (/admin/connections).
+  // Aqui só sincronizamos o localStorage com o que o servidor tem, para os
+  // handlers de consulta rápida continuarem funcionando sem duplicar UI.
 
   // Branding
   const [providerName, setProviderName] = useState("");
@@ -412,45 +401,18 @@ export default function AdminDashboard() {
     if (!isVerified) return;
 
     try {
-      // Try loading API config from the server
-      let loadedConfig = false;
+      // Config da API MikWeb: espelha o que o servidor tem no localStorage.
+      // A edição vive em /admin/connections — aqui não há formulário.
       try {
         const configRes = await adminFetch("/api/admin/config");
         if (configRes.ok) {
           const config = await configRes.json();
-          if (config.apiUrl) {
-            setApiUrl(config.apiUrl);
-          }
-          // Token comes masked from server (only first/last 4 chars)
-          // Restore the full token from localStorage (preserve it)
-          if (config.hasToken) {
-            const stored = getStoredConfig();
-            if (stored?.apiToken) {
-              setApiToken(stored.apiToken);
-            }
-          } else {
-            // Server has no token saved — try to restore from localStorage anyway
-            const stored = getStoredConfig();
-            if (stored?.apiToken) {
-              setApiToken(stored.apiToken);
-            }
-          }
           // Sync URL to localStorage without erasing token
           const stored = getStoredConfig();
-          storeConfig(config.apiUrl, stored?.apiToken || apiToken);
-          loadedConfig = true;
+          storeConfig(config.apiUrl, stored?.apiToken || "");
         }
       } catch {
-        // Server unavailable — fall through to localStorage
-      }
-
-      // Fallback to localStorage if server failed
-      if (!loadedConfig) {
-        const stored = getStoredConfig();
-        if (stored) {
-          setApiUrl(stored.apiUrl);
-          setApiToken(stored.apiToken);
-        }
+        // Server unavailable — localStorage segue como está
       }
 
       // Try loading branding from the server
@@ -530,87 +492,6 @@ export default function AdminDashboard() {
     // loadAuditLogs é recriada a cada render: listá-la rearmaria o polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logFilter, isVerified, auditCpf, auditScope]);
-
-  const handleSaveConfig = async () => {
-    setConfigSaving(true);
-    setConfigError(null);
-    setConfigSaved(false);
-
-    // Always save to localStorage first for immediate persistence
-    storeConfig(apiUrl, apiToken);
-    setConfigSaved(true);
-
-    // Then try the server — if it fails, the data is still persisted locally
-    try {
-      const res = await adminFetch("/api/admin/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiUrl, apiToken }),
-      });
-
-      if (!res.ok) {
-        console.warn("API config saved to localStorage only; server rejected:", await res.text());
-      } else {
-        setConnectionResult(null);
-      }
-    } catch {
-      console.warn("API config saved to localStorage only; server unavailable.");
-    } finally {
-      setConfigSaving(false);
-      setTimeout(() => setConfigSaved(false), 3000);
-    }
-  };
-
-  const handleTestConnection = async () => {
-    setTestingConnection(true);
-    setConnectionResult(null);
-
-    try {
-      if (!apiUrl) {
-        setConnectionResult({
-          success: true,
-          message: "Token salvo. A URL será usada das variáveis de ambiente (MIKWEB_API_URL) para as conexões reais.",
-        });
-        return;
-      }
-
-      const baseUrl = apiUrl.replace(/\/$/, "");
-
-      // 1. Try directly from browser first (works when CORS allows)
-      const browserResult = await testApiFromBrowser(baseUrl, apiToken);
-      if (browserResult) {
-        setConnectionResult(browserResult);
-        return;
-      }
-
-      // 2. Fallback: try via Supabase Edge Function (server-side, sem CORS)
-      try {
-        const res = await adminFetch("/api/admin/test-connection", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiUrl, apiToken }),
-        });
-        const data = await res.json();
-        setConnectionResult(data);
-        return;
-      } catch {
-        // Supabase Edge Function unavailable
-      }
-
-      // Both methods failed
-      setConnectionResult({
-        success: false,
-        message: `Não foi possível conectar em "${baseUrl}". Verifique se a URL e o token estão corretos.`,
-      });
-    } catch (err) {
-      setConnectionResult({
-        success: false,
-        message: "Não foi possível conectar à API. Verifique se a URL está correta e se o servidor está acessível.",
-      });
-    } finally {
-      setTestingConnection(false);
-    }
-  };
 
   /** Test API directly from the browser */
   async function testApiFromBrowser(baseUrl: string, token: string) {
@@ -1007,7 +888,8 @@ export default function AdminDashboard() {
             Administração
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure a integração com a API MikWeb e acompanhe o histórico de acessos.
+            Acompanhe acessos, consulte clientes e opere o envio de lembretes. Credenciais
+            em <strong className="font-medium text-foreground">Conexões</strong>.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -1033,10 +915,10 @@ export default function AdminDashboard() {
             variant="ghost"
             size="sm"
             className="text-xs h-9 gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/admin/outbox")}
+            onClick={() => navigate("/admin/messages")}
           >
             <Activity className="h-3.5 w-3.5" />
-            Ver outbox ao vivo
+            Ver mensagens ao vivo
           </Button>
         </div>
       </div>

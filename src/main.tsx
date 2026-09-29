@@ -88,8 +88,10 @@ const AdminLayout = lazy(() => import("./pages/AdminLayout"));
 const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const AdminInstallRequests = lazy(() => import("./pages/AdminInstallRequests"));
 const AdminSettings = lazy(() => import("./pages/AdminSettings"));
+const AdminReminderRules = lazy(() => import("./pages/AdminReminderRules"));
+const AdminConnections = lazy(() => import("./pages/AdminConnections"));
+const AdminMessages = lazy(() => import("./pages/AdminMessages"));
 const AdminSimulator = lazy(() => import("./pages/AdminSimulator"));
-const AdminOutbox = lazy(() => import("./pages/AdminOutbox"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Invoices = lazy(() => import("./pages/Invoices"));
@@ -171,7 +173,10 @@ createRoot(document.getElementById("root")!).render(
               >
                 <Route path="/admin/dashboard" element={<Suspense fallback={<DashboardSkeleton />}><AdminDashboard /></Suspense>} />
                 <Route path="/admin/install-requests" element={<Suspense fallback={<InvoicesSkeleton />}><AdminInstallRequests /></Suspense>} />
-                <Route path="/admin/outbox" element={<Suspense fallback={<DashboardSkeleton />}><AdminOutbox /></Suspense>} />
+                <Route path="/admin/messages" element={<Suspense fallback={<DashboardSkeleton />}><AdminMessages /></Suspense>} />
+                <Route path="/admin/outbox" element={<Navigate to="/admin/messages" replace />} />
+                <Route path="/admin/rules" element={<Suspense fallback={<DashboardSkeleton />}><AdminReminderRules /></Suspense>} />
+                <Route path="/admin/connections" element={<Suspense fallback={<DashboardSkeleton />}><AdminConnections /></Suspense>} />
                 <Route path="/admin/settings" element={<Suspense fallback={<DashboardSkeleton />}><AdminSettings /></Suspense>} />
                 <Route path="/admin/simulator" element={<Suspense fallback={<DashboardSkeleton />}><AdminSimulator /></Suspense>} />
               </Route>

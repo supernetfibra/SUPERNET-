@@ -1,17 +1,13 @@
 /**
- * AdminOutbox — Tela de monitoramento em tempo real da fila outbox de notificações.
+ * AdminMessages — "Qual mensagem foi enviada para qual cliente e por quê".
  *
- * Permite inspecionar todas as mensagens na fila e histórico com:
- * - Filtros por status (queued, sending, sent, delivered, read, failed, skipped, canceled)
- * - Filtros por canal (whatsapp, push)
- * - Busca textual por telefone (target), ID do cliente, CPF ou mensagem de erro
- * - Polling em tempo real com toggle (5s, 10s, 30s ou desligado)
- * - Ações em lote e individuais:
- *    * Seleção por checkbox (individual ou selecionar tudo)
- *    * Reenviar falhas (retry): reseta tentativas para 0, agenda para agora e dispara
- *    * Cancelar pendentes (cancel): altera status para canceled
- * - Botões de ação rápida para disparar lote imediato (AdminDispatchDialog) e sincronizar cobranças (AdminSyncDialog)
- * - Inspeção do payload renderizado e detalhes técnicos de cada entrega.
+ * Página de operação do operador (evolução da antiga AdminOutbox):
+ * - Cada linha responde o PORQUÊ em português: régua de origem ("10 dias de atraso"),
+ *   motivo de agendamento ("fora da janela 10h–16h"), erro ou cancelamento.
+ * - Filtros por status, canal e régua; busca por nome, telefone, CPF, ID ou erro.
+ * - Polling em tempo real (5s/10s/30s/off), ações em lote (reenviar/cancelar)
+ *   e sincronizar/disparar (AdminSyncDialog/AdminDispatchDialog).
+ * - Detalhes da entrega incluem mensagem renderizada, motivo e payload técnico.
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -133,11 +129,22 @@ export interface OutboxDelivery {
   sentAt: number | null;
   statusAt: number | null;
   createdAt: number;
+  // ── Enriquecimento do backend (deliveries-view): o "porquê" legível ──
+  /** Chave da régua de origem (ex.: late_10); "manual" para envios manuais/teste. */
+  ruleKey?: string | null;
+  /** Rótulo da régua igual ao da página Régua (ex.: "10 dias de atraso"). */
+  ruleLabel?: string | null;
+  /** Nome do cliente (whatsapp_contacts) quando conhecido. */
+  customerName?: string | null;
+  /** Frase que responde por que a mensagem está neste estado. */
+  reasonLabel?: string | null;
 }
 
 interface OutboxApiResponse {
   deliveries: OutboxDelivery[];
   stats: Record<string, number>;
+  /** Chaves de régua conhecidas pelo backend (para o filtro). */
+  ruleKeys?: string[];
   migrationPending: boolean;
   error?: string;
 }
@@ -223,7 +230,7 @@ const STATUS_CONFIG: Record<
   },
 };
 
-export default function AdminOutbox() {
+export default function AdminMessages() {
   const navigate = useNavigate();
 
   // Estados principais
@@ -236,6 +243,8 @@ export default function AdminOutbox() {
   // Filtros
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [channelFilter, setChannelFilter] = useState<string>("all");
+  const [ruleFilter, setRuleFilter] = useState<string>("all");
+  const [ruleKeys, setRuleKeys] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [limit, setLimit] = useState<number>(100);
 
@@ -265,6 +274,7 @@ export default function AdminOutbox() {
     try {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
+      if (ruleFilter !== "all") params.set("rule", ruleFilter);
       if (searchQuery.trim()) params.set("search", searchQuery.trim());
       params.set("limit", String(limit));
 
@@ -280,6 +290,7 @@ export default function AdminOutbox() {
       const data = (await res.json()) as OutboxApiResponse;
       setDeliveries(data.deliveries || []);
       setStats(data.stats || {});
+      if (Array.isArray(data.ruleKeys)) setRuleKeys(data.ruleKeys);
       setMigrationPending(Boolean(data.migrationPending));
       setLastRefreshedAt(Date.now());
     } catch (err) {
@@ -289,7 +300,7 @@ export default function AdminOutbox() {
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, [statusFilter, searchQuery, limit, navigate]);
+  }, [statusFilter, ruleFilter, searchQuery, limit, navigate]);
 
   // Carregamento inicial e ao mudar filtros
   useEffect(() => {
@@ -312,6 +323,19 @@ export default function AdminOutbox() {
       return true;
     });
   }, [deliveries, channelFilter]);
+
+  /** Rótulo do filtro de régua — usa o mesmo texto da página Régua. */
+  const ruleFilterLabel = (key: string): string => {
+    if (key === "manual") return "Envio manual/teste";
+    const labels: Record<string, string> = {
+      d_minus_3: "3 dias antes do vencimento",
+      due_day: "No dia do vencimento",
+      late_1: "1 dia de atraso",
+      late_5: "5 dias de atraso",
+      late_10: "10 dias de atraso",
+    };
+    return labels[key] ?? `Régua: ${key}`;
+  };
 
   // Limpa seleções inválidas quando a lista mudar
   useEffect(() => {
@@ -435,7 +459,7 @@ export default function AdminOutbox() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-medium tracking-tight text-foreground">
-              Monitoramento da Fila Outbox
+              Mensagens enviadas
             </h1>
             <Badge
               variant="outline"
@@ -450,7 +474,7 @@ export default function AdminOutbox() {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Acompanhe em tempo real as mensagens na fila, histórico de envios, confirmações de leitura e retries.
+            Qual mensagem foi enviada para qual cliente — e o motivo de cada uma. Fila, histórico e retries em tempo real.
           </p>
         </div>
 
@@ -617,6 +641,20 @@ export default function AdminOutbox() {
                 </SelectContent>
               </Select>
 
+            {/* Filtro de Régua (origem da mensagem) */}
+              <Select value={ruleFilter} onValueChange={setRuleFilter}>
+                <SelectTrigger className="h-9 text-xs w-[190px]">
+                  <SelectValue placeholder="Régua" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as réguas</SelectItem>
+                  {ruleKeys.map((key) => (
+                    <SelectItem key={key} value={key} className="text-xs">Régua: {ruleFilterLabel(key)}</SelectItem>
+                  ))}
+                  <SelectItem value="manual" className="text-xs">Envio manual/teste</SelectItem>
+                </SelectContent>
+              </Select>
+
               {/* Filtro de Canal */}
               <Select value={channelFilter} onValueChange={setChannelFilter}>
                 <SelectTrigger className="h-9 text-xs w-[140px]">
@@ -774,6 +812,7 @@ export default function AdminOutbox() {
                     </th>
                     <th className="py-2.5 px-4">Status</th>
                     <th className="py-2.5 px-4">Destino / Cliente</th>
+                    <th className="py-2.5 px-4">Motivo</th>
                     <th className="py-2.5 px-4">Canal</th>
                     <th className="py-2.5 px-4">Tentativas</th>
                     <th className="py-2.5 px-4">Horário / Agendado</th>
@@ -838,9 +877,38 @@ export default function AdminOutbox() {
                               <span>{item.target}</span>
                             </div>
                             <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                              {item.customerName ? (
+                                <span className="flex items-center gap-1 font-medium text-foreground">
+                                  <User className="h-3 w-3 shrink-0" />
+                                  {item.customerName}
+                                </span>
+                              ) : null}
                               {item.customerId && <span>ID: {item.customerId}</span>}
                               {item.cpf && <span>CPF: {formatCpfMask(item.cpf)}</span>}
                             </div>
+                          </div>
+                        </td>
+
+                        {/* Motivo — régua de origem + estado legível, a resposta direta a "por que esta mensagem" */}
+                        <td className="py-3 px-4 max-w-[260px]">
+                          <div className="space-y-1">
+                            {item.ruleLabel ? (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] font-medium gap-1 px-2 py-0.5 border-violet-500/30 text-violet-700 dark:text-violet-400 bg-violet-500/10"
+                              >
+                                <Sparkles className="h-3 w-3" />
+                                {item.ruleLabel}
+                              </Badge>
+                            ) : null}
+                            {item.reasonLabel ? (
+                              <p className="text-[11px] text-muted-foreground leading-snug" title={item.errorMessage ?? undefined}>
+                                {item.reasonLabel}
+                              </p>
+                            ) : null}
+                            {!item.ruleLabel && !item.reasonLabel ? (
+                              <span className="text-[10px] text-muted-foreground">—</span>
+                            ) : null}
                           </div>
                         </td>
 
@@ -1015,10 +1083,30 @@ export default function AdminOutbox() {
                 <div>
                   <span className="text-[10px] text-muted-foreground block">Cliente ID / CPF</span>
                   <span className="text-xs mt-1 block text-muted-foreground">
+                    {selectedDelivery.customerName ? `${selectedDelivery.customerName} · ` : ""}
                     {selectedDelivery.customerId || "—"} / {formatCpfMask(selectedDelivery.cpf)}
                   </span>
                 </div>
               </div>
+
+              {/* Motivo — a resposta direta a "por que esta mensagem" */}
+              {selectedDelivery.reasonLabel ? (
+                <div className="p-3 rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 text-violet-800 dark:text-violet-300 space-y-1">
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <Sparkles className="h-4 w-4 text-violet-600" />
+                    <span>Motivo</span>
+                    {selectedDelivery.ruleLabel ? (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] font-medium px-2 py-0 border-violet-500/30 bg-white/50 dark:bg-black/20"
+                      >
+                        {selectedDelivery.ruleLabel}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <p className="text-[11px] leading-relaxed">{selectedDelivery.reasonLabel}</p>
+                </div>
+              ) : null}
 
               {/* Erro ou Falha */}
               {selectedDelivery.errorMessage && (
@@ -1095,6 +1183,7 @@ export default function AdminOutbox() {
                 <span className="text-[11px] font-semibold text-foreground">Metadados Técnicos:</span>
                 <div className="p-2.5 rounded border border-border bg-card font-mono text-[10px] space-y-1 text-muted-foreground">
                   <p>Event ID: {selectedDelivery.eventId}</p>
+                  {selectedDelivery.ruleKey && <p>Régua de origem: {selectedDelivery.ruleKey}</p>}
                   {selectedDelivery.providerId && <p>Provider ID: {selectedDelivery.providerId}</p>}
                   <p>Tentativas efetuadas: {selectedDelivery.attempts}</p>
                   <p>Criado em: {formatEpochTime(selectedDelivery.createdAt)}</p>

@@ -47,6 +47,16 @@ import { handleUazapiWebhook, parseWebhookPayload } from "../supabase/functions/
 import { aggregateFunnel, buildFunnelWeeks, formatWeekLabel, funnelTotals, weekStartOf, weekStartToMs } from "../supabase/functions/api/notify/engagement.ts";
 import { resolveSimulationSettings, runSimulation } from "../supabase/functions/api/notify/simulate.ts";
 import { generateDemoBase } from "../supabase/functions/api/notify/demo-data.ts";
+import { buildReasonLabel, toDeliveryView, RULE_KEY_LABELS } from "../supabase/functions/api/notify/deliveries-view.ts";
+import {
+  normalizeAdminAlerts,
+  shouldSendAlert,
+  sanitizeAlertsState,
+  buildChannelDownMessage,
+  buildDispatchFailuresMessage,
+  buildQuotaPausedMessage,
+  ALERT_COOLDOWN_MS,
+} from "../supabase/functions/api/notify/admin-alerts.ts";
 import * as ui from "../src/lib/simulator-report.ts";
 
 let pass = 0;
@@ -1324,6 +1334,119 @@ eq(
   ),
   { ready: 1, scheduled: 1, sending: 1 }
 );
+
+// 18. Motivo legível: "qual mensagem, para qual cliente, por quê" (página Mensagens)
+// ---------------------------------------------------------------------------
+
+section("18. Motivo legível — página Mensagens");
+
+// Régua de origem: extraída da dedupe_key do evento — mesma chave que o sync usou
+// para criar, então a tela não pode divergir do que o dispatcher executou.
+const viewOf = (over) =>
+  toDeliveryView(
+    {
+      id: "d1",
+      eventId: "e1",
+      channel: "whatsapp",
+      customerId: "c1",
+      cpf: "12345678900",
+      target: "5511999990000",
+      status: "sent",
+      attempts: 1,
+      scheduledFor: VIEW_NOW - 60000,
+      createdAt: VIEW_NOW - 120000,
+      sentAt: VIEW_NOW - 30000,
+      errorKey: null,
+      errorMessage: null,
+      ...over,
+    },
+    { customerName: "Maria da Silva", now: VIEW_NOW }
+  );
+const VIEW_NOW = Date.parse("2026-09-28T15:30:00Z");
+/** Mesmo fuso do formato do motivo: o teste não pode depender do fuso da máquina. */
+const VIEW_FMT = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "America/Sao_Paulo" });
+
+eq(
+  "dedupe_key da régua vira ruleKey/ruleLabel",
+  [viewOf({ dedupeKey: "billing:1234:late_10" }).ruleKey, viewOf({ dedupeKey: "billing:1234:late_10" }).ruleLabel],
+  ["late_10", "10 dias de atraso"]
+);
+eq("todas as 5 chaves padrão têm rótulo", Object.keys(RULE_KEY_LABELS).length, 5);
+check(
+  "rótulos da tela batem com as regras default",
+  Object.entries(RULE_KEY_LABELS).every(([key, label]) => (RULE_KEY_LABELS[key] ?? "") === label)
+);
+eq("envio manual tem rótulo próprio", viewOf({ dedupeKey: "manual:test:abc" }).ruleLabel, "Envio manual/teste");
+eq("dedupe desconhecida não quebra a visão", viewOf({ dedupeKey: "outra:coisa" }).ruleLabel, null);
+eq("nome do cliente entra na visão", viewOf({}).customerName, "Maria da Silva");
+
+// Frases de motivo por estado — o mesmo error_message muda de papel conforme o status.
+eq(
+  "enviado cita o horário",
+  buildReasonLabel({ status: "sent", sentAt: VIEW_NOW - 30000, scheduledFor: 0, errorMessage: null }, VIEW_NOW),
+  `Enviado em ${VIEW_FMT.format(VIEW_NOW - 30000)} pelo lembrete automático`
+);
+eq(
+  "lido é declarado como lido",
+  buildReasonLabel({ status: "read", sentAt: VIEW_NOW - 30000, scheduledFor: 0, errorMessage: null }, VIEW_NOW).startsWith("Enviado"),
+  true
+);
+eq(
+  "agendado futuro mostra quando e o motivo da espera",
+  buildReasonLabel({ status: "queued", sentAt: null, scheduledFor: VIEW_NOW + 3600000, errorMessage: "fora da janela de envio (10h–16h) — volta sozinho quando abrir" }, VIEW_NOW),
+  `Agendado para ${VIEW_FMT.format(VIEW_NOW + 3600000)} — fora da janela de envio (10h–16h) — volta sozinho quando abrir`
+);
+eq(
+  "pronto na fila sem espera explicada",
+  buildReasonLabel({ status: "queued", sentAt: null, scheduledFor: VIEW_NOW - 1000, errorMessage: null }, VIEW_NOW),
+  "Pronto para enviar agora"
+);
+eq(
+  "falha abre com 'Falhou' e a primeira frase do erro",
+  buildReasonLabel({ status: "failed", sentAt: null, scheduledFor: 0, errorMessage: "número inválido. Verifique o DDD." }, VIEW_NOW),
+  "Falhou o envio — número inválido"
+);
+eq(
+  "cancelado não vira erro",
+  buildReasonLabel({ status: "canceled", sentAt: null, scheduledFor: 0, errorMessage: "Cancelamento em lote pelo painel admin" }, VIEW_NOW),
+  "Cancelado pelo admin antes do envio"
+);
+eq(
+  "skipped explica o que impediu",
+  buildReasonLabel({ status: "skipped", sentAt: null, scheduledFor: 0, errorMessage: "sem template ativo para whatsapp/billing.late" }, VIEW_NOW),
+  "Não foi enviado — sem template ativo para whatsapp/billing.late"
+);
+
+// 19. Alertas de operação — o sistema avisa o ADMIN (WhatsApp/push)
+// ---------------------------------------------------------------------------
+
+section("19. Alertas de operação — admin avisado por WhatsApp");
+
+// Normalização do número: só celular BR válido (55 + DDD + 9 dígitos). Qualquer
+// outra coisa vira "" — alerta mal endereçado é pior que alerta ausente.
+eq("celular válido é aceito", normalizeAdminAlerts({ phone: "(11) 98765-4321" }).phone, "5511987654321");
+eq("fixo/curto é recusado", normalizeAdminAlerts({ phone: "1123456789" }).phone, "");
+eq("lixo vira vazio sem lançar", normalizeAdminAlerts({ phone: "abc", failureThreshold: -5 }).failureThreshold, 1);
+eq("documento ausente mantém base", normalizeAdminAlerts(undefined, { phone: "5511999990000", alertChannelDown: false, alertDispatchFailures: true, failureThreshold: 7 }).phone, "5511999990000");
+
+// Anti-spam: primeira vez dispara; dentro do cooldown silencia; depois do cooldown dispara.
+const NOW = Date.parse("2026-09-29T12:00:00Z");
+eq("primeiro alerta dispara", shouldSendAlert({ key: "channel-down", enabled: true, cooldownMs: ALERT_COOLDOWN_MS, lastSentAt: null, now: NOW }), true);
+eq("dentro do cooldown silencia", shouldSendAlert({ key: "channel-down", enabled: true, cooldownMs: ALERT_COOLDOWN_MS, lastSentAt: NOW - 3600_000, now: NOW }), false);
+eq("depois do cooldown reavisa", shouldSendAlert({ key: "channel-down", enabled: true, cooldownMs: ALERT_COOLDOWN_MS, lastSentAt: NOW - ALERT_COOLDOWN_MS, now: NOW }), true);
+eq("alerta desligado nunca dispara", shouldSendAlert({ key: "quota-paused", enabled: false, cooldownMs: ALERT_COOLDOWN_MS, lastSentAt: null, now: NOW }), false);
+
+// Memória sanitizada: timestamps velhos (>30 dias) saem, futuros/lixo também.
+eq("estado velho expira", sanitizeAlertsState({ "channel-down": NOW - 31 * 24 * 3600_000 }, NOW), {});
+eq("estado recente persiste", sanitizeAlertsState({ "dispatch-failures": NOW - 1000 }, NOW), { "dispatch-failures": NOW - 1000 });
+eq("estado futuro é descartado", sanitizeAlertsState({ "channel-down": NOW + 999_999_999 }, NOW), {});
+
+// Mensagens: o admin precisa saber O QUÊ aconteceu e O QUE fazer.
+check("canal parado cita o motivo", buildChannelDownMessage({ reason: "instância disconnected" }).includes("instância disconnected"));
+check("canal parado aponta o caminho no painel", buildChannelDownMessage({ reason: "x" }).includes("Conexões"));
+check("falhas trazem contagem e exemplo", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: "número inválido", at: NOW }).includes("7 falha"));
+check("falhas apontam o filtro da página Mensagens", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: null, at: NOW }).includes("Mensagens"));
+check("time-lock diz que volta sozinho", buildQuotaPausedMessage({ until: NOW + 3600_000 }).includes("sozinho"));
 
 // ---------------------------------------------------------------------------
 
