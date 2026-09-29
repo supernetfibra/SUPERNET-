@@ -55,6 +55,11 @@ import {
   buildChannelDownMessage,
   buildDispatchFailuresMessage,
   buildQuotaPausedMessage,
+  buildDailySummaryMessage,
+  aggregateBillings,
+  resolveButtons,
+  shouldSendDailySummary,
+  civilDayBr,
   ALERT_COOLDOWN_MS,
 } from "../supabase/functions/api/notify/admin-alerts.ts";
 import * as ui from "../src/lib/simulator-report.ts";
@@ -1440,6 +1445,59 @@ eq("alerta desligado nunca dispara", shouldSendAlert({ key: "quota-paused", enab
 eq("estado velho expira", sanitizeAlertsState({ "channel-down": NOW - 31 * 24 * 3600_000 }, NOW), {});
 eq("estado recente persiste", sanitizeAlertsState({ "dispatch-failures": NOW - 1000 }, NOW), { "dispatch-failures": NOW - 1000 });
 eq("estado futuro é descartado", sanitizeAlertsState({ "channel-down": NOW + 999_999_999 }, NOW), {});
+
+// Botões de ação rápida: saneamento e resolução de URL.
+eq(
+  "botão com URL vazia herda o portal + atalho contextual",
+  resolveButtons([{ label: "Abrir painel", url: "" }], "https://minhasupernet.com", "/admin/messages"),
+  [{ label: "Abrir painel", url: "https://minhasupernet.com/admin/messages" }]
+);
+eq(
+  "URL explícita vence o portal",
+  resolveButtons([{ label: "ERP", url: "https://api.mikweb.com.br" }], "https://minhasupernet.com", "/admin"),
+  [{ label: "ERP", url: "https://api.mikweb.com.br" }]
+);
+eq(
+  "sem portal e sem URL não há botão",
+  resolveButtons([{ label: "X", url: "" }], "", "/admin"),
+  []
+);
+const alertsWithButtons = normalizeAdminAlerts({ phone: "11999999999", buttons: [{ label: "Portal", url: "" }, { label: "sem url e sem esquema", url: "ftp://x" }] });
+eq("normalização descarta botão com URL inválida", alertsWithButtons.buttons, [{ label: "Portal", url: "" }]);
+eq("máximo 3 botões", normalizeAdminAlerts({ buttons: Array.from({ length: 5 }, () => ({ label: "B", url: "" })) }).buttons.length, 3);
+
+// Resumo diário: uma vez por dia civil de São Paulo (não "a cada 24h").
+const TEN_BR = Date.parse("2026-09-29T13:00:00Z"); // 10h de Brasília
+eq("primeiro resumo dispara", shouldSendDailySummary(null, TEN_BR), true);
+eq("mesmo dia civil não repete", shouldSendDailySummary(TEN_BR - 3600_000, TEN_BR), false);
+eq("dia seguinte dispara de novo", shouldSendDailySummary(TEN_BR - 24 * 3600_000 - 1, TEN_BR), true);
+eq("dia civil é o de São Paulo", civilDayBr(TEN_BR), "2026-09-29");
+
+// Agregação em baldes — o operador decide o dia pelo "vencem hoje".
+eq(
+  "baldes do resumo separam hoje/atraso/próximas",
+  aggregateBillings(
+    [
+      { due_day: "2026-09-29", value: 100 },
+      { due_day: "2026-09-28", value: 50 },
+      { due_day: "2026-09-25", value: 70 },
+      { due_day: "2026-09-20", value: 30 },
+      { due_day: "2026-10-02", value: 200 },
+      { due_day: "lixo", value: 999 },
+    ],
+    "2026-09-29"
+  ),
+  {
+    dueToday: { count: 1, value: 100 },
+    late1to5: { count: 2, value: 120 },
+    late6plus: { count: 1, value: 30 },
+    upcoming: { count: 1, value: 200 },
+  }
+);
+check(
+  "resumo diário traz vencem hoje com valor",
+  /Vencem hoje: 1 fatura\(s\) — R\$\u00A0150,50/.test(buildDailySummaryMessage({ buckets: aggregateBillings([{ due_day: "2026-09-29", value: 150.5 }], "2026-09-29"), at: TEN_BR }))
+);
 
 // Mensagens: o admin precisa saber O QUÊ aconteceu e O QUE fazer.
 check("canal parado cita o motivo", buildChannelDownMessage({ reason: "instância disconnected" }).includes("instância disconnected"));

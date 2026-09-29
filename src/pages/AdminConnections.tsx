@@ -226,6 +226,8 @@ export default function AdminConnections() {
   const [alertChannelDown, setAlertChannelDown] = useState(true);
   const [alertDispatchFailures, setAlertDispatchFailures] = useState(true);
   const [alertThreshold, setAlertThreshold] = useState(5);
+  const [alertDailySummary, setAlertDailySummary] = useState(false);
+  const [alertButtons, setAlertButtons] = useState<Array<{ label: string; url: string }>>([{ label: "Abrir painel", url: "" }]);
   const [alertLastSentAt, setAlertLastSentAt] = useState<Record<string, number>>({});
   const [alertLoading, setAlertLoading] = useState(true);
   const [alertSaving, setAlertSaving] = useState(false);
@@ -484,6 +486,12 @@ export default function AdminConnections() {
       setAlertChannelDown(data.alerts?.alertChannelDown !== false);
       setAlertDispatchFailures(data.alerts?.alertDispatchFailures !== false);
       setAlertThreshold(Number(data.alerts?.failureThreshold ?? 5));
+      setAlertDailySummary(data.alerts?.dailySummary === true);
+      setAlertButtons(
+        Array.isArray(data.alerts?.buttons) && data.alerts.buttons.length
+          ? data.alerts.buttons.slice(0, 3)
+          : [{ label: "Abrir painel", url: "" }]
+      );
       setAlertLastSentAt(data.lastSentAt && typeof data.lastSentAt === "object" ? data.lastSentAt : {});
     } catch {
       // card segue com defaults; o botão salvar corrige
@@ -510,6 +518,8 @@ export default function AdminConnections() {
           alertChannelDown,
           alertDispatchFailures,
           failureThreshold: alertThreshold,
+          dailySummary: alertDailySummary,
+          buttons: alertButtons,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1511,6 +1521,69 @@ export default function AdminConnections() {
                 </label>
               </div>
 
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <Switch checked={alertDailySummary} onCheckedChange={setAlertDailySummary} className="cursor-pointer mt-0.5" />
+                <span className="text-xs leading-relaxed">
+                  <span className="font-medium text-foreground">Resumo diário de cobranças</span>
+                  <span className="block text-[10px] text-muted-foreground">
+                    Uma vez por dia, junto da sincronização: vencem hoje, vencidas até 5 dias,
+                    vencidas há mais de 5 e próximas — com valores.
+                  </span>
+                </span>
+              </label>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Botões de ação rápida <span className="text-muted-foreground/50">(máx. 3, vão nos alertas)</span>
+                </Label>
+                {alertButtons.map((button, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      placeholder="Rótulo (ex: Abrir painel)"
+                      value={button.label}
+                      onChange={(e) => {
+                        const next = [...alertButtons];
+                        next[index] = { ...next[index], label: e.target.value };
+                        setAlertButtons(next);
+                      }}
+                      className="h-9 flex-1 text-xs"
+                    />
+                    <Input
+                      placeholder="URL (vazio = portal + atalho do alerta)"
+                      value={button.url}
+                      onChange={(e) => {
+                        const next = [...alertButtons];
+                        next[index] = { ...next[index], url: e.target.value };
+                        setAlertButtons(next);
+                      }}
+                      className="h-9 flex-[1.6] text-xs font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setAlertButtons(alertButtons.filter((_, i) => i !== index))}
+                      className="px-2 text-xs text-muted-foreground hover:text-destructive cursor-pointer shrink-0"
+                      title="Remover botão"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                {alertButtons.length < 3 ? (
+                  <button
+                    type="button"
+                    onClick={() => setAlertButtons([...alertButtons, { label: "", url: "" }])}
+                    className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    + Adicionar botão
+                  </button>
+                ) : null}
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  URL vazia abre o portal com o atalho contextual (falhas → Mensagens, canal →
+                  Conexões, resumo → Prévia). Sobre login direto no portal: o link abriria a
+                  sessão de quem clicar — o login do cliente é individual, por segurança.
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <Label className="text-[10px] font-medium text-muted-foreground">
                   Falhas para disparar o aviso
@@ -1538,7 +1611,13 @@ export default function AdminConnections() {
                   Últimos disparos:{" "}
                   {Object.entries(alertLastSentAt).map(([key, ts]) => (
                     <span key={key} className="mr-2">
-                      {key === "channel-down" ? "canal" : key === "dispatch-failures" ? "falhas" : "pausa"}{" "}
+                      {key === "channel-down"
+                        ? "canal"
+                        : key === "dispatch-failures"
+                          ? "falhas"
+                          : key === "daily-summary"
+                            ? "resumo"
+                            : "pausa"}{" "}
                       {new Date(ts).toLocaleString("pt-BR")};{" "}
                     </span>
                   ))}

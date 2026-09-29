@@ -43,6 +43,11 @@ import {
   buildChannelDownMessage,
   buildDispatchFailuresMessage,
   buildQuotaPausedMessage,
+  buildDailySummaryMessage,
+  aggregateBillings,
+  civilDayBr,
+  shouldSendDailySummary,
+  resolveButtons,
   normalizeAdminAlerts,
 } from "./notify/admin-alerts.ts";
 import { sendAdminAlert } from "./notify/admin-alerts-send.ts";
@@ -1355,6 +1360,19 @@ async function sendPushToAdmins(payload: { title: string; body: string }): Promi
 }
 
 /**
+ * Botões do alerta: resolve URL vazia para o portal + caminho do contexto.
+ * Best-effort: falha aqui não derruba o alerta (segue sem botões).
+ */
+function adminAlertButtons(config: ReturnType<typeof normalizeAdminAlerts>, portalBaseUrl: string, fallbackPath: string): Array<{ label: string; url: string }> | undefined {
+  try {
+    const buttons = resolveButtons(config.buttons ?? [], portalBaseUrl, fallbackPath);
+    return buttons.length ? buttons : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Avalia os gatilhos de alerta após uma rodada de dispatch e avisa o admin.
  * Best-effort por design: NENHUM erro aqui pode derrubar o cron de envio.
  *
@@ -1368,6 +1386,7 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
     const runtime = whatsappRuntime();
     const loaded = await runtime.getSettings();
     const config = loaded.settings.adminAlerts;
+    const portal = loaded.settings.portalBaseUrl;
     const nowMs = Date.now();
     const alertDeps = {
       db,
@@ -1386,6 +1405,7 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
         message: buildDispatchFailuresMessage({ failed: summary.failed, sent: summary.sent, sample, at: nowMs }),
         phone: config.phone,
         now: nowMs,
+        buttons: adminAlertButtons(config, portal, "/admin/messages"),
       });
       return;
     }
@@ -1404,6 +1424,7 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
           message: buildQuotaPausedMessage({ until: cfg.pausedUntil }),
           phone: config.phone,
           now: nowMs,
+          buttons: adminAlertButtons(config, portal, "/admin/messages"),
         });
       }
       return;
@@ -1425,6 +1446,7 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
               message: buildChannelDownMessage({ reason: `instância ${status.state}` }),
               phone: config.phone,
               now: nowMs,
+              buttons: adminAlertButtons(config, portal, "/admin/connections"),
             });
           }
         } catch {
@@ -1439,6 +1461,7 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
           message: buildChannelDownMessage({ reason: "credenciais da UazAPI ausentes" }),
           phone: config.phone,
           now: nowMs,
+          buttons: adminAlertButtons(config, portal, "/admin/connections"),
         });
       }
     }
@@ -2108,7 +2131,7 @@ app.get("/admin/alerts", async (c) => {
     const runtime = whatsappRuntime();
     const loaded = await runtime.getSettings();
     const alerts = loaded.settings.adminAlerts;
-    let lastSentAt: Record<string, number> = {};
+    const lastSentAt: Record<string, number> = {};
     try {
       const { data } = await db().from("admin_alerts_state").select("state").eq("key", "default").maybeSingle();
       const raw = (data as { state?: Record<string, unknown> } | null)?.state ?? {};
@@ -2823,13 +2846,16 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
   if (from !== undefined && !isCivilDate(from)) return jsonError("`from` deve estar no formato YYYY-MM-DD.", 400);
 
   try {
+    const dryRunRequested = raw("dryRun") === "1" || raw("dryRun") === true;
+    /** A base que o sync carregou — o resumo diário agrega sobre ela, sem re-ler a MikWeb. */
+    let loadedBase: LoadedBase | null = null;
     const summary = await whatsappRuntime().sync({
       from,
       days: Math.min(Math.max(int("days", 1), 1), 60),
-      dryRun: raw("dryRun") === "1" || raw("dryRun") === true,
+      dryRun: dryRunRequested,
       itemLimit: Math.min(Math.max(int("item-limit", 50), 1), 500),
-      loadBase: (window) =>
-        loadSyncBase(
+      loadBase: async (window) => {
+        const base = await loadSyncBase(
           { db, getConfig: getMikWebConfig, apiGetFull: mikwebApiGetFull },
           {
             dueFrom: window.dueFrom,
@@ -2839,10 +2865,54 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
             // 10 páginas não cobriam a base — os avisos caíam em `no_customer`.
             maxPages: Math.min(Math.max(int("max-pages", 50), 1), 50),
           }
-        ),
+        );
+        loadedBase = base;
+        return base;
+      },
     });
 
     console.log(`[NOTIFY_SYNC] ${describeSync(summary)}`);
+
+    // Resumo diário de cobranças para o admin — a mesma varredura que enfileirou
+    // os lembretes agrega vencem hoje / vencidas 1–5 / vencidas 6+ / próximos dias.
+    // Uma vez por dia civil; best-effort: nunca derruba o sync.
+    if (!dryRunRequested && loadedBase?.billings?.length) {
+      try {
+        {
+          const runtime = whatsappRuntime();
+          const loaded = await runtime.getSettings();
+          const alerts = loaded.settings.adminAlerts;
+          if (alerts.dailySummary && alerts.phone) {
+            const state = await db().from("admin_alerts_state").select("state").eq("key", "default").maybeSingle();
+            const lastAt = Number((state.data as { state?: Record<string, unknown> } | null)?.state?.["daily-summary"] ?? 0);
+            const nowMs = Date.now();
+            if (shouldSendDailySummary(lastAt > 0 ? lastAt : null, nowMs)) {
+              const buckets = aggregateBillings(loadedBase.billings, civilDayBr(nowMs));
+              await sendAdminAlert(
+                {
+                  db,
+                  getWhatsAppConfig: () => runtime.getConfig(),
+                  sendPushToAdmins,
+                  log: (message, extra) => console.log(`[ADMIN_ALERT] ${message}`, extra ?? ""),
+                },
+                {
+                  key: "daily-summary",
+                  config: { ...alerts, alertDispatchFailures: true },
+                  title: "Resumo de cobranças",
+                  message: buildDailySummaryMessage({ buckets, at: nowMs }),
+                  phone: alerts.phone,
+                  now: nowMs,
+                  buttons: adminAlertButtons(alerts, loaded.settings.portalBaseUrl, "/admin/simulator"),
+                }
+              );
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[ADMIN_DAILY_SUMMARY_ERROR]", error);
+      }
+    }
+
     return json(summary);
   } catch (error) {
     if (error instanceof MikWebNotConfigured) return jsonError(error.message, 400);

@@ -81,6 +81,8 @@ export async function sendAdminAlert(
     /** WhatsApp do admin já normalizado; vazio = não tenta WhatsApp. */
     phone: string;
     now: number;
+    /** Botões de ação rápida (já resolvidos com URL final) — UazAPI aceita até 3. */
+    buttons?: Array<{ label: string; url: string }>;
   }
 ): Promise<AlertSendResult> {
   const state = await readState(deps, input.now);
@@ -106,7 +108,11 @@ export async function sendAdminAlert(
           token: config.instanceToken,
           adminToken: config.adminToken,
         });
-        await client.sendText({ number: input.phone, text: input.message });
+        await client.sendText({
+          number: input.phone,
+          text: input.message,
+          ...(input.buttons?.length ? { actions: input.buttons } : {}),
+        });
         deps.log?.("alerta de operação enviado por WhatsApp", { key: input.key });
         return { triggered: true, via: "whatsapp" };
       }
