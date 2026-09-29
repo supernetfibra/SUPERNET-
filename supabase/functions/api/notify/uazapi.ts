@@ -117,6 +117,17 @@ export interface UazapiClient {
   createInstance(name: string): Promise<{ token: string | null; raw: unknown }>;
 }
 
+/**
+ * Eventos que o nosso `/webhooks/uazapi` sabe traduzir — e o default do setWebhook.
+ * `messages` traz acks de entrega/leitura E respostas de clientes (é por ele que o
+ * opt-out "SAIR" chega); `messages_update` traz a evolução de status do envio;
+ * `connection` é opcional (mudanças de conexão da instância).
+ * `wasSentByApi` é EXCLUÍDO para o canal não enxergar o próprio eco.
+ * A página check:notify trava esta lista: painel e servidor precisam concordar.
+ */
+export const UAZAPI_WEBHOOK_EVENTS = ["messages", "messages_update", "connection"] as const;
+export const UAZAPI_WEBHOOK_EXCLUDE = ["wasSentByApi"] as const;
+
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -382,8 +393,8 @@ export function createUazapiClient(options: UazapiOptions): UazapiClient {
       await request("POST", "/webhook", {
         enabled: input.enabled ?? true,
         url: input.url,
-        events: input.events ?? ["messages", "messages_update", "connection"],
-        excludeMessages: input.excludeMessages ?? ["wasSentByApi"],
+        events: input.events ?? [...UAZAPI_WEBHOOK_EVENTS],
+        excludeMessages: input.excludeMessages ?? [...UAZAPI_WEBHOOK_EXCLUDE],
       });
     },
 

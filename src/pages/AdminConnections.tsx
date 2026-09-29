@@ -51,6 +51,7 @@ import {
   ChevronDown,
   PlugZap,
   BellRing,
+  Webhook,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
@@ -229,6 +230,7 @@ export default function AdminConnections() {
   const [alertLoading, setAlertLoading] = useState(true);
   const [alertSaving, setAlertSaving] = useState(false);
   const [alertTesting, setAlertTesting] = useState(false);
+  const [webhookApplying, setWebhookApplying] = useState(false);
 
   // ── WhatsApp handlers ──
   /** Aplica a resposta da API no estado da tela (usado pelo efeito e pelos handlers). */
@@ -586,6 +588,31 @@ export default function AdminConnections() {
       // para o admin copiar com Ctrl+C sem caçar o campo na tela.
       (document.getElementById("wa-webhook") as HTMLInputElement | null)?.select();
       toast.info("Selecione o texto e copie manualmente (Ctrl+C).");
+    }
+  };
+
+  /** Registra a URL do webhook na UazAPI sem sair do painel (POST /webhook deles). */
+  const handleApplyWebhook = async () => {
+    setWebhookApplying(true);
+    try {
+      const res = await adminFetch("/api/admin/whatsapp/webhook-apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "A UazAPI recusou o registro do webhook.");
+        return;
+      }
+      toast.success("Webhook registrado na UazAPI!", {
+        description: "Eventos: mensagens, atualizações de status e conexão.",
+      });
+      if (data.warning) toast.warning(data.warning);
+    } catch {
+      toast.error("Erro ao aplicar o webhook.");
+    } finally {
+      setWebhookApplying(false);
     }
   };
 
@@ -1016,6 +1043,25 @@ export default function AdminConnections() {
                     </span>
                   </p>
                 ) : null}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 cursor-pointer"
+                    onClick={handleApplyWebhook}
+                    disabled={webhookApplying || !waBaseUrl}
+                  >
+                    {webhookApplying ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Webhook className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Aplicar webhook automaticamente
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground">
+                    Registra a URL acima na UazAPI (mensagens, status e conexão) — sem entrar no painel deles.
+                  </span>
+                </div>
               </div>
             ) : null}
           </CardContent>

@@ -35,7 +35,7 @@ import { applyOverrides } from "./notify/settings-store.ts";
 import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
 import { maskToken } from "./notify/config.ts";
 import type { ChannelTemplate } from "./notify/templates.ts";
-import { createUazapiClient } from "./notify/uazapi.ts";
+import { createUazapiClient, UAZAPI_WEBHOOK_EVENTS, UAZAPI_WEBHOOK_EXCLUDE } from "./notify/uazapi.ts";
 import { createWhatsAppRuntime } from "./notify/runtime.ts";
 import { handleUazapiWebhook } from "./notify/webhook.ts";
 import { toDeliveryView, RULE_KEY_LABELS } from "./notify/deliveries-view.ts";
@@ -2051,6 +2051,49 @@ app.get("/admin/whatsapp/flow-status", async (c) => {
     // Alerta de operação: configurado = número do admin salvo (o card mostra dica se não).
     adminAlerts: { configured: adminAlertsConfigured },
   });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/whatsapp/webhook-apply — registra a URL do webhook na UazAPI
+//
+// O operador não precisa entrar no painel da UazAPI para colar a URL: este
+// endpoint monta a URL com o secret (buildWebhookUrl) e chama POST /webhook da
+// UazAPI com os eventos que o nosso handler sabe traduzir (messages,
+// messages_update, connection; excluindo wasSentByApi — o eco do próprio canal).
+// Idempotente: reaplicar sobrescreve a config do webhook com a mesma verdade.
+// ---------------------------------------------------------------------------
+app.post("/admin/whatsapp/webhook-apply", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const runtime = whatsappRuntime();
+  const config = await runtime.getConfig();
+  if (!config.baseUrl || !config.instanceToken) {
+    return jsonError("Credenciais da UazAPI ausentes — salve a Server URL e o token da instância primeiro.", 400);
+  }
+
+  const webhookUrl = buildWebhookUrl(c.req.raw);
+  const warning = env("UAZAPI_WEBHOOK_SECRET")
+    ? null
+    : "Sem UAZAPI_WEBHOOK_SECRET configurado, o webhook aceita chamadas de qualquer origem. Configure o secret e reaplique.";
+
+  try {
+    const client = uazapiClientFrom(config);
+    await client.setWebhook({ url: webhookUrl });
+    await logEvent({
+      type: "notification_config",
+      metadata: { action: "webhook-apply", hasSecret: Boolean(env("UAZAPI_WEBHOOK_SECRET")) },
+    });
+    return json({
+      success: true,
+      webhookUrl,
+      events: [...UAZAPI_WEBHOOK_EVENTS],
+      excludeMessages: [...UAZAPI_WEBHOOK_EXCLUDE],
+      warning,
+    });
+  } catch (error) {
+    console.error("[WEBHOOK_APPLY_ERROR]", error);
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonError(`A UazAPI recusou o registro do webhook: ${message}`, 502);
+  }
 });
 
 // ---------------------------------------------------------------------------
