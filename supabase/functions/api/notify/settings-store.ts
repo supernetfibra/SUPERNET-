@@ -241,7 +241,7 @@ export function applyOverrides(
   }
   if (overrides.perCustomerCapPerDay !== undefined && overrides.perCustomerCapPerDay !== base.whatsapp.perCustomerCapPerDay) {
     whatsapp.perCustomerCapPerDay = overrides.perCustomerCapPerDay;
-    applied.push(`cota por cliente ${base.whatsapp.perCustomerCapPerDay} → ${overrides.perCustomerCapPerDay}`);
+    applied.push(`avisos por cliente/dia ${base.whatsapp.perCustomerCapPerDay} → ${overrides.perCustomerCapPerDay}`);
   }
   if (overrides.whatsappEnabled !== undefined && overrides.whatsappEnabled !== base.whatsapp.enabled) {
     whatsapp.enabled = overrides.whatsappEnabled;

@@ -175,8 +175,19 @@ export interface OutboxApi {
    */
   findDelivery(input: { eventId: string; channel: Channel; target: string }): Promise<DeliveryRow | null>;
   updateContactOutcome(input: { customerId: string | null; target: string; error: string | null }): Promise<void>;
-  /** Envios já registrados para o cliente desde `since` (cota por cliente). */
-  countRecentForCustomer(input: { customerId: string; channel: Channel; since: number }): Promise<number>;
+  /**
+   * Envios já COMPROMETIDOS (sent/delivered/read) para o cliente desde `since` — a
+   * base da cota por cliente. Não conta `sending`: a entrega em curso pode ser a
+   * PRÓPRIA que está sendo checada (o claim a marca antes da checagem), e contar o
+   * que ainda não saiu fazia cap 1 se barrar sozinha — deadlock visto em produção.
+   */
+  countRecentForCustomer(input: {
+    customerId: string;
+    channel: Channel;
+    since: number;
+    /** Entrega em avaliação — nunca entra na própria contagem. */
+    excludeDeliveryId?: string;
+  }): Promise<number>;
   /**
    * Reserva uma vaga na cota diária de NOVAS CONVERSAS do canal, de forma atômica
    * (`reserve_new_chat_slot`, migration 005). Chamada imediatamente antes de enviar;
@@ -361,14 +372,20 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
       await query;
     },
 
-    async countRecentForCustomer({ customerId, channel, since }) {
-      const { count, error } = await db()
+    async countRecentForCustomer({ customerId, channel, since, excludeDeliveryId }) {
+      // Só o que já comprometeu o canal (sent/delivered/read) conta. `sending` ficou
+      // fora de propósito: além de ainda não ter saído, a entrega em avaliação ESTÁ
+      // em `sending` neste exato momento — contá-la era a entrega se barrar sozinha
+      // (cap 1 = nenhum cliente recebia nada; 57 entregas presas em 30/09/2026).
+      let query = db()
         .from("notification_deliveries")
         .select("id", { count: "exact", head: true })
         .eq("customer_id", customerId)
         .eq("channel", channel)
         .gte("created_at", since)
-        .in("status", ["sent", "delivered", "read", "sending"]);
+        .in("status", ["sent", "delivered", "read"]);
+      if (excludeDeliveryId) query = query.neq("id", excludeDeliveryId);
+      const { count, error } = await query;
       if (error) return 0;
       return Number(count ?? 0);
     },

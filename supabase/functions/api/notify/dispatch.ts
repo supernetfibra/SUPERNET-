@@ -48,7 +48,7 @@ export interface DispatchDeps {
   now?: () => number;
   /** Tentativas máximas antes de desistir (falha permanente). */
   maxAttempts?: number;
-  /** Cota de mensagens por cliente por dia, quando `policy: "automated"`. */
+  /** Cota de mensagens ENVIADAS por cliente por dia (1 = um lembrete por dia), quando `policy: "automated"`. */
   perCustomerCap?: () => Promise<number> | number;
   /**
    * Cota de NOVAS CONVERSAS por dia do canal (a mesma que o simulador projeta).
@@ -381,12 +381,20 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
     }
 
     if (Number.isFinite(cap) && delivery.customerId) {
-      const recent = await deps.outbox.countRecentForCustomer({ customerId: delivery.customerId, channel, since: dayStart });
+      // O próprio envio em avaliação fica FORA da contagem (e `sending` não conta):
+      // sem isto, cap 1 se barrava sozinha — a entrega já estava em `sending` quando
+      // a checagem rodava e virava a 1ª mensagem "do dia" para o próprio cliente.
+      const recent = await deps.outbox.countRecentForCustomer({
+        customerId: delivery.customerId,
+        channel,
+        since: dayStart,
+        excludeDeliveryId: delivery.id,
+      });
       if (recent >= cap) {
         const retryAt = await nextWindowOpenMs(deps, channel, now());
         summary.released++;
-        push({ ok: false, status: "queued", reason: `cota de ${cap}/dia do cliente atingida — reagendado` });
-        await deps.outbox.release({ deliveryId: delivery.id, scheduledFor: retryAt, reason: `cota por cliente (${cap}/dia)` });
+        push({ ok: false, status: "queued", reason: `limite de ${cap} aviso(s)/dia por cliente atingido — reagendado` });
+        await deps.outbox.release({ deliveryId: delivery.id, scheduledFor: retryAt, reason: `limite por cliente (${cap}/dia)` });
         continue;
       }
     }
