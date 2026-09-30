@@ -122,7 +122,7 @@ eq("url do portal e marca são limpas", [limits.portalBaseUrl, limits.companyNam
 const channelInvalid = normalizeWhatsApp({ enabled: false, windowStart: 30, windowEnd: 5, newChatCapPerDay: -3 });
 eq("janela inválida mantém a anterior", [channelInvalid.whatsapp.windowStart, channelInvalid.whatsapp.windowEnd], [9, 20]);
 const channelValid = normalizeWhatsApp({ windowStart: 8, windowEnd: 22, newChatCapPerDay: 0, perCustomerCapPerDay: 0 });
-eq("cota 0 é aceita (sem teto) e cota por cliente tem piso 1", [channelValid.whatsapp.newChatCapPerDay, channelValid.whatsapp.perCustomerCapPerDay], [0, 1]);
+eq("cota 0 é aceita (sem teto) e avisos por cliente/dia tem piso 1", [channelValid.whatsapp.newChatCapPerDay, channelValid.whatsapp.perCustomerCapPerDay], [0, 1]);
 
 // ---------------------------------------------------------------------------
 // 2. Fingerprint
@@ -402,7 +402,7 @@ function quotaHarness(options = {}) {
     windowStart = 9,
   } = options;
 
-  const calls = { reserve: [], release: [], delivered: [], markedSent: [], trace: [] };
+  const calls = { reserve: [], release: [], delivered: [], markedSent: [], trace: [], quotaChecks: [] };
   const state = { used: usedBefore };
   const rows = targets.map((target, index) => ({
     id: `d${index + 1}`,
@@ -435,7 +435,19 @@ function quotaHarness(options = {}) {
   const outbox = {
     async claim() { return rows; },
     async eventsByIds() { return events; },
-    async countRecentForCustomer() { return 0; },
+    // Contagem COMPORTADA como a outbox real: só o que já saiu (sent/delivered/
+    // read) conta, a própria entrega é excluída e a janela é a mesma que o
+    // dispatcher passa. O stub antigo (return 0) escondia o auto-bloqueio.
+    async countRecentForCustomer({ customerId, channel: ch, since, excludeDeliveryId }) {
+      calls.quotaChecks.push(customerId);
+      return rows.filter((row) =>
+        row.customerId === customerId &&
+        row.channel === ch &&
+        row.id !== excludeDeliveryId &&
+        ["sent", "delivered", "read"].includes(row.status) &&
+        row.createdAt >= since
+      ).length;
+    },
     async reserveNewChatSlot({ deliveryId, cap: value, dayStart }) {
       const row = rows.find((item) => item.id === deliveryId);
       const isNew = !existing.includes(row.target);
@@ -447,7 +459,7 @@ function quotaHarness(options = {}) {
       return { allowed, isNewChat: isNew, usedToday: state.used, cap: value };
     },
     async release(input) { calls.release.push(input); },
-    async markSent(id) { calls.markedSent.push(id); },
+    async markSent(id) { calls.markedSent.push(id); const row = rows.find((item) => item.id === id); if (row) row.status = "sent"; },
     async markFailed() {},
     async markSkipped() {},
     async updateContactOutcome() {},
@@ -533,6 +545,28 @@ check("…e o resumo DECLARA que a cota não foi aplicada", /does not exist/.tes
 const lateWindow = quotaHarness({ cap: 1, targets: ["5511900000060", "5511900000061"], windowStart: 8 });
 await dispatchQueue(lateWindow.deps, { policy: "automated" });
 eq("o adiamento usa o início da janela configurada", lateWindow.calls.release.map((r) => r.scheduledFor), [NEXT_WINDOW_8]);
+
+// --- auto-bloqueio da cota por cliente (regressão 30/09/2026) ----------------
+// O claim marca a entrega como `sending` ANTES da decisão da cota. A contagem
+// antiga incluía `sending` e a própria entrega — cap 1 se barrava sozinho e a
+// mensagem voltava para a fila para sempre ("cota por cliente (1/dia)", 57
+// entregas presas em produção).
+const selfBlock = quotaHarness({ targets: ["5511900000070", "5511900000071"] });
+const selfSummary = await dispatchQueue(selfBlock.deps, { policy: "automated" });
+eq("cap 1: a entrega em avaliação não se conta — os dois avisos saem", selfSummary.sent, 2);
+eq("cap 1: a cota é consultada uma vez por entrega", selfBlock.calls.quotaChecks, ["c1", "c2"]);
+
+const repeated = quotaHarness({ targets: ["5511900000080"] });
+repeated.deps.outbox.countRecentForCustomer = async () => 1; // cap 1 já atingido por aviso anterior
+const repeatedSummary = await dispatchQueue(repeated.deps, { policy: "automated" });
+eq("cap 1 já atingido: adia sem enviar, não descarta", repeatedSummary.sent, 0);
+check("…o adiamento cita o limite e não come como tentativa", /limite por cliente \(1\/dia\)/.test(repeated.calls.release[0]?.reason ?? ""), repeated.calls.release[0]?.reason);
+eq("…a entrega volta para a fila", repeatedSummary.results[0]?.status, "queued");
+
+const manualBypass = quotaHarness({ targets: ["5511900000090"] });
+manualBypass.deps.outbox.countRecentForCustomer = async () => 5;
+const manualBypassSummary = await dispatchQueue(manualBypass.deps, { policy: "manual" });
+eq("modo manual passa por cima da cota por cliente (decisão humana)", manualBypassSummary.sent, 1);
 
 // --- o admin precisa VER o adiamento, não um silêncio -----------------------
 // Botão "Lembrar" sobre um cliente com opt-in, com a cota do dia já estourada: o

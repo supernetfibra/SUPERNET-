@@ -11,6 +11,8 @@
  *     mais curto para o número ser restringido de vez;
  *   - 401/403 → `permanent`: token inválido não melhora com retry, precisa de gente;
  *   - timeout → `uncertain`, e o dispatcher NÃO repete: o envio pode ter saído.
+ *     O envio usa `async: true`, então a pausa humana roda na fila da UazAPI e
+ *     timeout de resposta virou evento raro (só queda real de rede).
  */
 
 import { humanDelayMs, createUazapiClient, UazapiError, type UazapiClient } from "../uazapi.ts";
@@ -99,9 +101,15 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
       try {
         const minDelay = typeof deps.minDelayMs === "function" ? await deps.minDelayMs() : deps.minDelayMs;
         const maxDelay = typeof deps.maxDelayMs === "function" ? await deps.maxDelayMs() : deps.maxDelayMs;
+        // `async: true`: a pausa humana ("digitando...") fica na FILA da UazAPI
+        // e a resposta volta imediata. Sem isso, um delay de 30–60s estourava o
+        // timeout do nosso fetch (20s) → abort → "resultado incerto" para uma
+        // mensagem que SAIRIA mesmo assim (reproduzido em 30/09/2026). Se a fila
+        // falhar depois, o webhook `messages_update` marca `failed` e corrige.
         const sent = await client.sendText({
           number: target,
           text: rendered.body,
+          async: true,
           delay: humanDelayMs(seedFrom(ctx.eventId, ctx.now), minDelay, maxDelay),
           linkPreview: true,
           trackId: ctx.eventId,

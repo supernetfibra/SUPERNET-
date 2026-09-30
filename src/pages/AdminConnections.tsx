@@ -1344,6 +1344,9 @@ export default function AdminConnections() {
                 onChange={(e) => setWaCaps({ ...waCaps, perCustomerCap: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
+              <p className="text-[10px] text-muted-foreground">
+                Quantas mensagens UM cliente pode receber por dia. Mudou de valor? A fila antiga se ajusta no próximo envio.
+              </p>
             </div>
             <div className="space-y-2">
               <Label className="text-[10px] font-medium text-muted-foreground">

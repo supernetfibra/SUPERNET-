@@ -419,7 +419,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Cota por cliente</Label>
+              <Label className="text-[10px] font-medium text-muted-foreground">Avisos por cliente/dia</Label>
               <Input
                 type="number"
                 min={1}
@@ -427,6 +427,9 @@ export default function AdminSimulator() {
                 onChange={(e) => setParams({ ...params, perCustomerCap: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
+              <p className="text-[10px] text-muted-foreground">
+                Quantas mensagens UM cliente pode receber por dia. O envio real usa o valor salvo em Conexões → Ajustes avançados.
+              </p>
             </div>
 
             <div className="space-y-2">

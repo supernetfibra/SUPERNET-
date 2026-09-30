@@ -795,3 +795,49 @@ adapter novo — não um segundo pipeline.
 3. **Conteúdo**: texto + link, ou texto + PDF anexo, ou texto + Pix copia-e-cola?
 4. **Instâncias**: um único número para toda a base, ou um por filial/grupo de clientes?
 5. **Regra `late_5`**: existe aviso de bloqueio ao cliente hoje? O texto precisa alinhar.
+
+## 18. Incidentes resolvidos — 30/09/2026
+
+### "cota por cliente (1/dia)" — ninguém recebia nada
+
+O `claim` marca a entrega como `sending` ANTES da decisão de cota, e a contagem
+(`countRecentForCustomer`) incluía `sending` desde o início do dia — a entrega contava
+**a si mesma** (1 ≥ cap 1) e voltava para a fila para sempre. 57 entregas presas na
+fila, todas com o mesmo motivo, `attempts` sempre 0 (o `release()` desfaz a tentativa:
+nunca houve tentativa real). Fix: a contagem só considera o que já comprometeu o canal
+(`sent`/`delivered`/`read`) e exclui a própria entrega (`excludeDeliveryId`). Regressão
+coberta no `check:notify` (harness com contagem real, não mais `return 0`).
+
+### `NETWORK_UNCERTAIN` com a mensagem ENTREGA no WhatsApp
+
+O adapter aplicava o delay humano (`delay: 30–60s`, mostrando "digitando...") e
+esperava a resposta síncrona da UazAPI — que só responde depois do delay. O fetch do
+hub aborta em 20s (`DEFAULT_TIMEOUT_MS`) → status 0 → `uncertain` → `markFailed`
+permanente, **mas a mensagem saía mesmo assim** depois do delay. Reproduzido em
+produção: erro no painel, mensagem na tela do cliente. Fix: `async: true` no
+`sendText` — a pausa humana roda na FILA da UazAPI e a resposta volta imediata
+(escolha que a própria spec recomenda para lote: "Use `async=true` for bulk sends").
+Rede de segurança: se a fila da UazAPI falhar depois, o webhook `messages_update`
+reporta `failed` e o hub corrige o status via `markStatusByProviderId` — por isso o
+`messageid` continua sendo capturado da resposta. A mensagem de TESTE dos alertas de
+operação nunca sofreu disso porque não aplica delay humano.
+
+### Os dois controles (nomes que não se confundem)
+
+| Controle (rótulo no painel) | Config | O que é | Valor salvo |
+| --- | --- | --- | --- |
+| **Avisos por cliente/dia** | `per_customer_cap` | quantas mensagens **UM cliente** pode receber por dia | 1 |
+| **Teto diário de novas conversas (proteção do número)** | `daily_new_chat_cap` | quantas **conversas NOVAS** o número inicia por dia (proteção contra time-lock/bloqueio do WhatsApp) | 200 |
+
+Ambos ficam em **Admin → Conexões → card WhatsApp → Ajustes avançados** (colapsado —
+por isso pareciam "existentes só no simulador"). O simulador usa os mesmos rótulos e
+avisa quando a rodada usa override: `avisos por cliente/dia 1 → 3`. O `manual` passa
+por cima do primeiro (decisão humana) e respeita o segundo (risco é do número).
+
+### Estado da produção na data
+
+56 entregas `queued` (agendadas 01/10 10:00) saem sozinhas no primeiro cron dentro da
+janela com o código novo — `markSent` limpa o `error_message` antigo. As 3 `failed` do
+dia são os testes manuais (`NETWORK_UNCERTAIN`): a mensagem chegou, mas sem
+`provider_id` não há como conciliar automaticamente — se incomodar na lista, apagar o
+registro.
