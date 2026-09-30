@@ -101,6 +101,11 @@ export function eventKeyForRule(ruleKey: string, rules: ReminderRule[] = DEFAULT
   return "billing.due_soon";
 }
 
+/**
+ * `billing:<id>:<regra>` — com o id PREFIXADO pela conta na era multi-conta:
+ * `dedupeKeyFor("a:123", "manual")` → `billing:a:123:manual`. O prefixo é o que
+ * impede a fatura 123 da Conta A de deduplicar contra a fatura 123 da Conta B.
+ */
 export function dedupeKeyFor(billingId: string | number, ruleKey: string): string {
   return `billing:${billingId}:${ruleKey}`;
 }

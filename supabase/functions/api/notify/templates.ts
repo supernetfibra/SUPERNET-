@@ -31,6 +31,7 @@ import {
   type RawBilling,
   type RawCustomer,
 } from "./model.ts";
+import { parsePrefixedCustomerId } from "./connections.ts";
 
 export interface ChannelTemplate {
   channel: Channel;
@@ -180,7 +181,10 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
   const pix = findPixRaw(billing);
   const boleto = boletoUrl(billing);
   const overdue = diffDays(referenceDate, dueDate);
-  const billingId = String(billing.id ?? "");
+  // MULTI-CONTA: `billing.id` pode vir PREFIXADO pela conta (`a:123`). O id que
+  // vai no LINK do portal é o id CRU da MikWeb — o roteamento por conta é feito
+  // pela sessão do cliente, não pelo link (que é público).
+  const { rawId: rawBillingId } = parsePrefixedCustomerId(String(billing.id ?? ""));
 
   const payload: TemplatePayload = {
     nome: fullName || "cliente",
@@ -189,7 +193,7 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
     valor: formatBRL(value.base),
     valor_atualizado: formatBRL(value.total),
     vencimento: formatBR(dueDate),
-    link: `${input.portalBaseUrl.replace(/\/+$/, "")}/faturas/${encodeURIComponent(billingId)}`,
+    link: `${input.portalBaseUrl.replace(/\/+$/, "")}/faturas/${encodeURIComponent(rawBillingId)}`,
     empresa: input.companyName,
   };
 

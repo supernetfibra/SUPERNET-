@@ -344,7 +344,33 @@ src/pages/AdminSimulator.tsx  → a tela do simulador (§14b)
 
 ## 13. Observabilidade e segurança
 
-### 13a. Alertas de operação ao admin — implementado 🔸
+### 13b. Multi-conta MikWeb — implementado 🔸
+
+O provedor tem **duas contas MikWeb** (bases de clientes distintas, sem sobreposição de
+CPF) e **um único canal** (um número UazAPI, uma régua, uma outbox). O sistema varre
+todas as contas ativas e marca a ORIGEM de cada cliente/fatura:
+
+*   **Convenção central**: o id do cliente/fatura trafega PREFIXADO pelo slug da conta —
+    `a:123` (Conta A), `b:456` (Conta B). Daí decorrem, sem esforço extra: dedupe sem
+    colisão (`billing:a:123:late_5`), contatos únicos por conta e sessão do portal que
+    só consulta a conta certa.
+*   **Tabela `mikweb_connections`** (migration 010): slug, label, url, token, active,
+    resultado do último teste. A credencial antiga de `mikweb_config` virou a conexão
+    `a` ("Conta A"); secrets `MIKWEB_API_URL/TOKEN` seguem como respaldo da conexão `a`.
+*   **Varredura**: `notify/sources.ts` itera as conexões ativas em sequência e agrega
+    numa base só — mesma régua/janela/templates. Falha de UMA conta não derruba o sync:
+    segue com as outras e dispara alerta de operação ("Conta B falhou") com o mesmo
+    canal/cooldown dos alertas (§13a).
+*   **Login do portal**: procura o CPF em TODAS as contas (primeira que responde, bases
+    distintas) e grava `connection_slug` + id prefixado na sessão. Faturas, boleto e PIX
+    consultam a conta da sessão.
+*   **Painel**: Conexões → lista de contas (adicionar/editar/testar/ativar/remover; a
+    última ativa não sai). Dashboard etiqueta a conta no resultado da busca por CPF e o
+    envio sob demanda (`send-now`) valida a fatura na conta informada.
+*   **Parser de dedupe** (`deliveries-view.ts`/`connections.ts`) aceita os dois formatos
+    durante a transição: `billing:a:123:rule` (novo) e `billing:123:rule` (antigo).
+*   **Núcleo puro**: `notify/connections.ts` é coberto pela seção 20 do `check:notify`;
+    a migration 010 entra no `check:sql` (seção 9 — idempotência do backfill).
 
 O sistema avisa o ADMIN quando a operação precisa dele (o lembrete do cliente tem
 outro dono — este é o do dono do sistema):
@@ -353,7 +379,8 @@ outro dono — este é o do dono do sistema):
     1. rodada com `failed >= adminAlerts.failureThreshold` (default 5);
     2. time-lock imposto pelo WhatsApp;
     3. fila pronta que não anda + instância UazAPI desconectada (ou credenciais
-       ausentes com canal ligado).
+       ausentes com canal ligado);
+    4. conta MikWeb que falhou na varredura do sync (cron notify-sync, ver §13b).
 *   **Canal**: WhatsApp direto do número (`adminAlerts.phone`), FORA da outbox —
     o alerta não compete com janela/cota do cliente e não aparece em Mensagens.
     Fallback: push para as assinaturas do painel (o alerta sobre o canal não pode

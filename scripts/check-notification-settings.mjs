@@ -63,6 +63,19 @@ import {
   ALERT_COOLDOWN_MS,
 } from "../supabase/functions/api/notify/admin-alerts.ts";
 import * as ui from "../src/lib/simulator-report.ts";
+import {
+  sanitizeConnection,
+  sanitizeConnections,
+  activeConnections,
+  nextSlug,
+  prefixedCustomerId,
+  parsePrefixedCustomerId,
+  dedupeKeyForBilling,
+  extractRuleKeyFromDedupe,
+  gatherPerConnection,
+  describePerConnection,
+  failedSlugs,
+} from "../supabase/functions/api/notify/connections.ts";
 
 let pass = 0;
 const failures = [];
@@ -1505,6 +1518,61 @@ check("canal parado aponta o caminho no painel", buildChannelDownMessage({ reaso
 check("falhas trazem contagem e exemplo", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: "número inválido", at: NOW }).includes("7 falha"));
 check("falhas apontam o filtro da página Mensagens", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: null, at: NOW }).includes("Mensagens"));
 check("time-lock diz que volta sozinho", buildQuotaPausedMessage({ until: NOW + 3600_000 }).includes("sozinho"));
+
+// 20. Multi-conta MikWeb — duas contas, um canal, ids inequívocos
+// ---------------------------------------------------------------------------
+
+section("20. Multi-conta MikWeb (mikweb_connections, migration 010)");
+
+// Sanitização: linha quebrada não derruba a varredura; slug é a identidade.
+const connA = sanitizeConnection({ slug: "a", label: "Conta A", api_url: "https://api.mikweb.com.br/v1/admin/", api_token: "tok-aaaa", active: true, sort_order: 0 });
+check("conexão válida é saneada com URL sem barra final", connA !== null && connA.apiUrl === "https://api.mikweb.com.br/v1/admin");
+check("conexão sem credencial fica inativa (preservada, não descartada)", sanitizeConnection({ slug: "b", label: "B", api_url: "https://x", api_token: "", active: true })?.active === false);
+check("slug inválido é recusado", sanitizeConnection({ slug: "SLUG GRANDE DEMAIS", api_url: "u", api_token: "t" }) === null);
+const multiRead = sanitizeConnections([
+  { slug: "b", label: "B", api_url: "https://b", api_token: "tb", active: true, sort_order: 1 },
+  null,
+  { slug: "a", label: "A", api_url: "https://a", api_token: "ta", active: true, sort_order: 0 },
+]);
+eq("ordenação estável: sort_order e depois slug", multiRead.connections.map((c) => c.slug), ["a", "b"]);
+eq("linha quebrada é declarada em skipped, não lançada", multiRead.skipped.length, 1);
+eq("activeConnections filtra inativas", activeConnections(sanitizeConnections([
+  { slug: "a", api_url: "https://a", api_token: "t", active: true, sort_order: 0 },
+  { slug: "b", api_url: "https://b", api_token: "t", active: false, sort_order: 1 },
+])).map((c) => c.slug), ["a"]);
+eq("nextSlug devolve o primeiro slug livre", [nextSlug([]), nextSlug(["a"]), nextSlug(["a", "b"])], ["a", "b", "c"]);
+
+// O ID PREFIXADO é a convenção que atravessa dedupe/contatos/sessões.
+eq("prefixedCustomerId prefixa id cru", prefixedCustomerId("a", "123"), "a:123");
+eq("prefixedCustomerId é idempotente", prefixedCustomerId("b", "a:123"), "a:123");
+eq("parsePrefixedCustomerId separa slug e id", parsePrefixedCustomerId("b:456"), { slug: "b", rawId: "456" });
+eq("id sem prefixo (formato antigo) vira slug null", parsePrefixedCustomerId("456"), { slug: null, rawId: "456" });
+
+// Dedupe com conta: a colisão entre contas era o risco nº 1 do pedido.
+eq("dedupeKey para a fatura prefixada inclui a conta", dedupeKeyForBilling("a:123", "late_5"), "billing:a:123:late_5");
+check(
+  "faturas de MESMO id em contas distintas têm chaves DIFERENTES",
+  dedupeKeyForBilling("a:123", "due_day") !== dedupeKeyForBilling("b:123", "due_day")
+);
+eq("extractRuleKey entende o formato novo (com conta)", extractRuleKeyFromDedupe("billing:a:1234:late_10"), "late_10");
+eq("extractRuleKey entende o formato antigo (sem conta)", extractRuleKeyFromDedupe("billing:1234:late_10"), "late_10");
+eq("manual continua mapeando para manual", extractRuleKeyFromDedupe("manual:a:123"), "manual");
+
+// Varredura por conta tolerante a falha: uma conta fora não derruba as outras.
+const gathered = await gatherPerConnection(
+  [
+    { slug: "a", label: "Conta A", apiUrl: "https://a", apiToken: "t", active: true, sortOrder: 0, lastTestOk: null, lastTestAt: null, lastTestError: null },
+    { slug: "b", label: "Conta B", apiUrl: "https://b", apiToken: "t", active: true, sortOrder: 1, lastTestOk: null, lastTestAt: null, lastTestError: null },
+  ],
+  async (connection) => {
+    if (connection.slug === "b") throw new Error("MikWeb API error (503): down");
+    return { billings: [{ id: "1", customer_id: "7" }] };
+  }
+);
+eq("conta ok carrega o valor", [gathered[0].ok, gathered[0].slug], [true, "a"]);
+eq("conta que falhou declara o erro", [gathered[1].ok, gathered[1].value, String(gathered[1].error).includes("503")], [false, null, true]);
+check("describePerConnection diz qual conta falhou", describePerConnection(gathered).includes("b: FALHOU"));
+eq("failedSlugs lista os slugs fora do ar", failedSlugs(gathered), ["b"]);
 
 // ---------------------------------------------------------------------------
 

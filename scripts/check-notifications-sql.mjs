@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS = ["003_notifications.sql", "004_notification_settings.sql", "005_new_chat_quota.sql"];
+const MIGRATIONS = ["003_notifications.sql", "004_notification_settings.sql", "005_new_chat_quota.sql", "010_mikweb_connections.sql"];
 
 let PGlite;
 try {
@@ -61,6 +61,40 @@ await db.exec(`
   CREATE SCHEMA IF NOT EXISTS auth;
   CREATE OR REPLACE FUNCTION uuid_generate_v4() RETURNS UUID AS $$ SELECT gen_random_uuid() $$ LANGUAGE sql;
   CREATE TABLE mikweb_audit_log (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), type TEXT, created_at BIGINT);
+  CREATE TABLE mikweb_config (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    key TEXT UNIQUE NOT NULL DEFAULT 'default',
+    api_url TEXT NOT NULL DEFAULT '',
+    api_token TEXT NOT NULL DEFAULT '',
+    provider_name TEXT,
+    logo_url TEXT,
+    updated_at BIGINT,
+    updated_by TEXT
+  );
+  INSERT INTO mikweb_config (key, api_url, api_token) VALUES ('default', 'https://api.mikweb.com.br/v1/admin', 'tok-antigo');
+  CREATE TABLE mikweb_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_token TEXT UNIQUE NOT NULL,
+    cpf TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    contacts JSONB NOT NULL DEFAULT '[]',
+    selected_contact_id TEXT,
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    last_activity_at BIGINT NOT NULL
+  );
+  CREATE TABLE push_subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    endpoint TEXT UNIQUE NOT NULL,
+    keys JSONB NOT NULL,
+    session_token TEXT NOT NULL,
+    cpf TEXT NOT NULL,
+    customer_id TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    user_agent TEXT,
+    created_at BIGINT NOT NULL
+  );
 `);
 
 section("1. As migrations aplicam");
@@ -210,6 +244,34 @@ const nullCap = await slot(n6.delivery_id, null);
 eq("cota nula também é sem teto, não bloqueio total", [nullCap.allowed, nullCap.cap], [true, 0]);
 const ghost = await slot("00000000-0000-0000-0000-000000000000", 1);
 eq("entrega inexistente não bloqueia (nem explode)", ghost.allowed, true);
+
+// ---------------------------------------------------------------------------
+section("9. Multi-conta (010): migração da credencial e backfill de origem");
+
+// Cenário pré-multi-conta: credencial única + dados sem prefixo já gravados.
+await db.exec(`
+  INSERT INTO mikweb_sessions (session_token, cpf, customer_id, customer_name, created_at, expires_at, last_activity_at)
+  VALUES ('st-backfill', '12345678900', '77', 'Cliente 77', ${T0}, ${T0 + 86400000}, ${T0});
+  INSERT INTO push_subscriptions (endpoint, keys, session_token, cpf, customer_id, customer_name, created_at)
+  VALUES ('https://push/77', '{}', 'st-backfill', '12345678900', '77', 'Cliente 77', ${T0});
+  INSERT INTO whatsapp_contacts (customer_id, phone_e164, opt_in, created_at, updated_at)
+  VALUES ('77', '5511900000077', true, ${T0}, ${T0});
+`);
+// Migration 010 já rodou no bloco 1 (MIGRATIONS) — os INSERTS acima simulam o estado
+// ANTERIOR, então rodamos a 010 de novo aqui: é o teste de IDEMPOTÊNCIA do backfill.
+await db.exec(readFileSync(join(HERE, "..", "supabase", "migrations", "010_mikweb_connections.sql"), "utf8"));
+
+const connRows = (await db.query(`SELECT slug, label, api_url, api_token FROM mikweb_connections ORDER BY slug`)).rows;
+eq("credencial única virou a conexão 'a'", [connRows[0]?.slug, connRows[0]?.api_token], ["a", "tok-antigo"]);
+eq("reexecutar a migration NÃO duplica conexões", connRows.length, 1);
+const oldEvents = (await db.query(`SELECT dedupe_key FROM notification_events WHERE dedupe_key LIKE '%:due_day' ORDER BY dedupe_key LIMIT 3`)).rows.map((r) => r.dedupe_key);
+check("eventos antigos foram re-prefixados com a conta 'a'", oldEvents.every((key) => /^billing:a:\d+:[a-z0-9_-]+$/.test(key)), oldEvents);
+const prefixedContact = (await db.query(`SELECT customer_id FROM whatsapp_contacts WHERE phone_e164='5511900000077'`)).rows[0]?.customer_id;
+eq("contato antigo ganhou o prefixo 'a:'", prefixedContact, "a:77");
+const prefixedPush = (await db.query(`SELECT customer_id FROM push_subscriptions WHERE cpf='12345678900'`)).rows[0]?.customer_id;
+eq("push antigo ganhou o prefixo 'a:'", prefixedPush, "a:77");
+const sessionSlug = (await db.query(`SELECT connection_slug FROM mikweb_sessions WHERE session_token='st-backfill'`)).rows[0]?.connection_slug;
+eq("sessão antiga aponta para a conta 'a'", sessionSlug, "a");
 
 // ---------------------------------------------------------------------------
 

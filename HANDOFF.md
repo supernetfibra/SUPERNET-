@@ -1,7 +1,7 @@
 # HANDOFF — Área do Cliente Supernet Fibra
 
 > Documento de continuidade do projeto. Qualquer pessoa (ou sessão de agente) deve
-> conseguir retomar o trabalho daqui. Última atualização: **2026-09-28**, commit `56d04fe`.
+> conseguir retomar o trabalho daqui. Última atualização: **2026-09-29** — multi-conta MikWeb (§5/§6, `LEMBRETES-WHATSAPP.md` §13b).
 >
 > Docs complementares: `DEPLOY-SUPABASE.md` (passo a passo de deploy),
 > `LEMBRETES-WHATSAPP.md` (design completo da régua de lembretes), `NOTIFICACOES-HUB.md` (hub de notificações).
@@ -113,6 +113,9 @@ Aplicadas e registradas (Local = Remote). Ordem cronológica:
 | `005_new_chat_quota.sql` | Cota diária de NOVAS conversas (`reserve_new_chat_slot`) — falha aberta, declarada no resumo |
 | `20260927120000_message_actions.sql` | Coluna `actions` JSONB em `notification_deliveries` (espelho dos botões enviados) |
 | `20260927130000_button_clicks.sql` | `whatsapp_button_clicks` (apêndice, idempotente por `message_id`) + view `whatsapp_button_click_stats` |
+| `20260928100000_send_gap.sql` | Ritmo configurável de envio (`send_gap_seconds`) |
+| `009_admin_alerts_state.sql` | Estado dos alertas de operação (`admin_alerts_state`, key `default`) |
+| `010_mikweb_connections.sql` | **Multi-conta MikWeb**: tabela `mikweb_connections` + migração da credencial única para a conexão `a` + backfill de origem (`billing:a:<id>:<regra>`, contatos/push `a:<id>`) + `mikweb_sessions.connection_slug` (idempotente) |
 
 Datas são **epoch ms** (`created_at`, `sent_at`, `status_at`). Cuidado com overflow int4 em
 literais SQL (`30 * 86400 * 1000` estoura — usar `(extract(epoch from now()) - 30*86400) * 1000`).
@@ -122,9 +125,10 @@ literais SQL (`30 * 86400 * 1000` estoura — usar `(extract(epoch from now()) -
 ## 6. Endpoints (resumo de superfície)
 
 - **Cliente MikWeb**: `login`, `logout`, `me`, `customer`, `select-contact`, `billings`, `billings/:id/download`, `action`.
-- **Admin geral**: `login/logout/verify`, `branding`, `config` (MikWeb), `test-connection`, `audit-logs`, `sessions` (+ revoke), `customer`, `push`, `install-requests` (+ status).
-- **Notificações**: `GET/POST /admin/notifications/templates`, `settings` (régua), `simulate` (dry-run),
-  `deliveries` (outbox), `deliveries/retry`, `deliveries/cancel`, `send-now` (envio sob demanda com payload realista).
+- **Admin geral**: `login/logout/verify`, `branding`, `config` (MikWeb, só branding+legado), `test-connection`, `audit-logs`, `sessions` (+ revoke), `customer` (busca multi-conta, devolve `connection`), `push`, `install-requests` (+ status).
+- **Multi-conta MikWeb**: `GET/POST /admin/connections`, `POST /admin/connections/:id/update|test|toggle`, `DELETE /admin/connections/:id` (token nunca volta na resposta; última ativa não sai).
+- **Notificações**: `GET/POST /admin/notifications/templates`, `settings` (régua), `simulate` (dry-run multi-conta),
+  `deliveries` (outbox), `deliveries/retry`, `deliveries/cancel`, `send-now` (aceita `connection` para validar a fatura na conta de origem).
 - **WhatsApp**: `GET/POST /admin/whatsapp/config`, `connect` (QR/pairing), `test` (sonda ou evento da régua),
   `import-contacts` (dry-run opcional), `button-stats` (cliques 30d), `engagement-funnel` (funil semanal).
 - **Públicos**: `POST /webhooks/uazapi` (status/opt-out/cliques), `POST /public/install-request`, `POST /push/subscribe|unsubscribe|test`.
@@ -192,7 +196,10 @@ O webhook da instância na UazAPI precisa ter o evento **`messages` inscrito** (
 3. Decidir `daily_new_chat_cap` (hoje 1) — limita drasticamente o alcance diário da régua.
 4. Frontend: deploy na Vercel do build atual (o funil só aparece no painel depois disso).
 5. `README.md` está desatualizado (fala de Convex/stack antiga) — substituir pelo resumo deste handoff.
-6. Ideias em aberto: taxas de conversão (%) no funil (com guarda para amostra pequena);
+6. **Multi-conta MikWeb (29/09)**: cadastre a segunda conta em Conexões → "Adicionar conta"
+   (a Conta A já foi migrada automaticamente). O sync varre as duas; falha de uma alerta o
+   admin e segue com a outra. Ver `LEMBRETES-WHATSAPP.md` §13b.
+7. Ideias em aberto: taxas de conversão (%) no funil (com guarda para amostra pequena);
    reengajamento de quem clicou no Pix mas não pagou; relatório semanal consolidado; rate-limit/observabilidade do webhook.
 
 ---

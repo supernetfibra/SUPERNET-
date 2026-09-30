@@ -306,6 +306,8 @@ export default function AdminDashboard() {
   const [lookupResult, setLookupResult] = useState<{
     customer: any;
     billings: any[];
+    /** MULTI-CONTA: conta de origem do cliente (slug + label). */
+    connection?: { slug: string; label: string };
   } | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -605,7 +607,13 @@ export default function AdminDashboard() {
       const res = await adminFetch("/api/admin/notifications/send-now", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cpf, billingId: String(billing.id), dryRun: true }),
+        body: JSON.stringify({
+          cpf,
+          billingId: String(billing.id),
+          dryRun: true,
+          // MULTI-CONTA: valida a fatura na conta de origem da busca.
+          connection: lookupResult?.connection?.slug,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -633,6 +641,8 @@ export default function AdminDashboard() {
           cpf: lookupCpf.replace(/\D/g, ""),
           billingId: String(reminderBilling.id),
           force: reminderForce,
+          // MULTI-CONTA: mesma conta da prévia — a fatura é validada onde foi encontrada.
+          connection: lookupResult?.connection?.slug,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1168,9 +1178,19 @@ export default function AdminDashboard() {
             {lookupResult && (
               <div className="space-y-3">
                 <div className="p-3 rounded-sm border border-border bg-secondary/30 text-xs">
-                  <p className="text-foreground font-medium">
-                    {lookupResult.customer.full_name}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-foreground font-medium">
+                      {lookupResult.customer.full_name}
+                    </p>
+                    {lookupResult.connection ? (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground shrink-0"
+                        title={`Este cliente pertence à conta MikWeb "${lookupResult.connection.label}"`}
+                      >
+                        {lookupResult.connection.label}
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-muted-foreground mt-0.5">
                     {lookupResult.customer.plan?.name || "Plano não informado"}
                     {lookupResult.customer.due_day

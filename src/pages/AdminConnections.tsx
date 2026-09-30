@@ -52,6 +52,10 @@ import {
   PlugZap,
   BellRing,
   Webhook,
+  Plus,
+  Trash2,
+  Power,
+  Building2,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
@@ -64,30 +68,12 @@ import type { FunnelTotalsView, FunnelWeekView } from "@/lib/engagement-types";
 // ---------------------------------------------------------------------------
 
 const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-const CONFIG_STORAGE_KEY = "mikweb_api_config";
 
 function getAdminToken(): string | null {
   try {
     return localStorage.getItem(ADMIN_TOKEN_KEY);
   } catch {
     return null;
-  }
-}
-
-function getStoredConfig(): { apiUrl: string; apiToken: string } | null {
-  try {
-    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeConfigData(apiUrlValue: string, apiToken: string) {
-  try {
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ apiUrl: apiUrlValue, apiToken }));
-  } catch {
-    // localStorage indisponível: segue só com o servidor.
   }
 }
 
@@ -100,24 +86,6 @@ function withAdminToken(url: string): string {
 
 function adminFetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
-
-/** Test API connection from browser (for CORS-enabled APIs) */
-async function testApiFromBrowser(
-  baseUrl: string,
-  token: string
-): Promise<{ success: boolean; message: string } | null> {
-  try {
-    const res = await fetch(`${baseUrl}/admin/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      return { success: true, message: `Conexão OK! Status ${res.status}.` };
-    }
-    return { success: false, message: `Erro HTTP ${res.status}: ${res.statusText}` };
-  } catch {
-    return null; // CORS blocked — fallback to server-side test
-  }
 }
 
 /** Resposta de `GET /api/admin/whatsapp/config` — só os campos que a tela usa. */
@@ -153,24 +121,22 @@ interface WhatsAppConfigView {
   cronSecretConfigured: boolean;
 }
 
+/** Conexão MikWeb como o backend devolve (token NUNCA vem — só mascarado). */
+interface MikWebConnectionView {
+  id: string;
+  slug: string;
+  label: string;
+  apiUrl: string;
+  tokenMasked: string;
+  hasToken: boolean;
+  active: boolean;
+  lastTestOk: boolean | null;
+  lastTestAt: number | null;
+  lastTestError: string | null;
+}
+
 export default function AdminConnections() {
   const navigate = useNavigate();
-
-  // ── API Config state (MikWeb) ──
-  const storedConfig = getStoredConfig();
-  const [apiUrlState, setApiUrl] = useState(storedConfig?.apiUrl || "https://api.mikweb.com.br/v1/admin/");
-  const [apiToken, setApiToken] = useState(storedConfig?.apiToken || "");
-  const [showToken, setShowToken] = useState(false);
-  const [configSaved, setConfigSaved] = useState(false);
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
-
-  // ── Test connection state ──
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [connectionResult, setConnectionResult] = useState<{
-    success: boolean;
-    message: string;
-  } | null>(null);
 
   // ── WhatsApp (UazAPI) state ──
   const [waConfig, setWaConfig] = useState<WhatsAppConfigView | null>(null);
@@ -220,6 +186,20 @@ export default function AdminConnections() {
   const [waButtonStats, setWaButtonStats] = useState<Array<{ label: string; clicks: number; uniquePhones: number; matched: number; lastClickAt: number | null }> | null>(null);
   /** Funil de engajamento semanal (enviado → entregue → lido → Pix). */
   const [waFunnel, setWaFunnel] = useState<{ weeks: FunnelWeekView[]; totals: FunnelTotalsView; pending?: string } | null>(null);
+
+  // ── Multi-conta MikWeb (migration 010) ──
+  const [connections, setConnections] = useState<MikWebConnectionView[]>([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(true);
+  const [connectionsMigrationPending, setConnectionsMigrationPending] = useState(false);
+  const [connectionsEnvFallback, setConnectionsEnvFallback] = useState(false);
+  /** Formulário inline: null = lista; "new" = criar; id = editar existente. */
+  const [editingConnection, setEditingConnection] = useState<string | "new" | null>(null);
+  const [connectionForm, setConnectionForm] = useState({ label: "", apiUrl: "", apiToken: "" });
+  const [connectionSaving, setConnectionSaving] = useState(false);
+  const [testingSlug, setTestingSlug] = useState<string | null>(null);
+  const [togglingSlug, setTogglingSlug] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [removeDialogOpen, setRemoveDialogOpen] = useState(false);
 
   // ── Alertas de operação (o sistema avisa o admin por WhatsApp) ──
   const [alertPhone, setAlertPhone] = useState("");
@@ -626,81 +606,134 @@ export default function AdminConnections() {
     }
   };
 
-  // ── Config handlers (MikWeb) ──
-  const handleSaveConfig = async () => {
-    setConfigSaving(true);
-    setConfigError(null);
-    setConfigSaved(false);
-
-    storeConfigData(apiUrlState, apiToken);
-    setConfigSaved(true);
-
+  // ── Multi-conta MikWeb: carregamento e ações ──
+  const loadConnections = useCallback(async () => {
+    setConnectionsLoading(true);
     try {
-      const res = await adminFetch("/api/admin/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiUrl: apiUrlState, apiToken }),
-      });
-      if (!res.ok) {
-        toast.warning("Configuração salva localmente. Servidor indisponível.");
-      } else {
-        toast.success("Configuração da API salva!");
+      const res = await adminFetch("/api/admin/connections");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setConnections(Array.isArray(data.connections) ? data.connections : []);
+        setConnectionsEnvFallback(data.envFallback === true);
+        setConnectionsMigrationPending(data.migrationPending === true);
       }
     } catch {
-      toast.warning("Configuração salva localmente. Servidor indisponível.");
+      // card segue com a lista vazia; recarregar corrige
     } finally {
-      setConfigSaving(false);
-      setTimeout(() => setConfigSaved(false), 3000);
+      setConnectionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // IIFE assíncrona: os setState só acontecem DEPOIS do fetch (sem cascata).
+    void (async () => {
+      await loadConnections();
+    })();
+  }, [loadConnections]);
+
+  const openNewConnection = () => {
+    setConnectionForm({ label: "", apiUrl: "https://api.mikweb.com.br/v1/admin/", apiToken: "" });
+    setEditingConnection("new");
+  };
+
+  const openEditConnection = (connection: MikWebConnectionView) => {
+    // Token NUNCA volta do servidor: o campo fica vazio e vazio = manter o atual.
+    setConnectionForm({ label: connection.label, apiUrl: connection.apiUrl, apiToken: "" });
+    setEditingConnection(connection.id);
+  };
+
+  const handleSaveConnection = async () => {
+    setConnectionSaving(true);
+    try {
+      const isEdit = editingConnection !== "new" && editingConnection !== null;
+      const res = await adminFetch(isEdit ? `/api/admin/connections/${editingConnection}/update` : "/api/admin/connections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: connectionForm.label,
+          apiUrl: connectionForm.apiUrl,
+          // Na edição, token vazio = manter o atual (o backend ignora vazio).
+          apiToken: connectionForm.apiToken,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao salvar a conta.");
+        return;
+      }
+      toast.success(isEdit ? "Conta atualizada!" : `Conta salva (identificador ${data.slug}).`);
+      if (!isEdit && data.tested === false && data.testError) {
+        toast.warning(`Salva, mas o teste falhou: ${data.testError}`);
+      }
+      setEditingConnection(null);
+      await loadConnections();
+    } catch {
+      toast.error("Erro ao salvar a conta.");
+    } finally {
+      setConnectionSaving(false);
     }
   };
 
-  const handleTestConnection = async () => {
-    setTestingConnection(true);
-    setConnectionResult(null);
-
+  const handleTestConnectionById = async (id: string) => {
+    setTestingSlug(id);
     try {
-      if (!apiUrlState) {
-        setConnectionResult({
-          success: true,
-          message: "Token salvo. A URL será usada das variáveis de ambiente.",
-        });
-        return;
-      }
-
-      const baseUrl = apiUrlState.replace(/\/$/, "");
-
-      // 1. Try from browser first (works when CORS allows)
-      const browserResult = await testApiFromBrowser(baseUrl, apiToken);
-      if (browserResult) {
-        setConnectionResult(browserResult);
-        return;
-      }
-
-      // 2. Fallback: try via Supabase Edge Function (server-side)
-      try {
-        const res = await adminFetch("/api/admin/test-connection", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiUrl: apiUrlState, apiToken }),
-        });
-        const data = await res.json();
-        setConnectionResult(data);
-        return;
-      } catch {
-        // Supabase Edge Function unavailable
-      }
-
-      setConnectionResult({
-        success: false,
-        message: `Não foi possível conectar em "${baseUrl}". Verifique a URL e o token.`,
+      const res = await adminFetch(`/api/admin/connections/${id}/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Falha no teste.");
+        return;
+      }
+      if (data.success) toast.success(data.message || "Conexão OK!");
+      else toast.error(data.message || "A conta não respondeu.");
+      await loadConnections();
     } catch {
-      setConnectionResult({
-        success: false,
-        message: "Erro ao testar conexão.",
-      });
+      toast.error("Falha no teste de conexão.");
     } finally {
-      setTestingConnection(false);
+      setTestingSlug(null);
+    }
+  };
+
+  const handleToggleConnection = async (id: string) => {
+    setTogglingSlug(id);
+    try {
+      const res = await adminFetch(`/api/admin/connections/${id}/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao ativar/desativar.");
+        return;
+      }
+      toast.success(data.active ? "Conta ativada." : "Conta desativada — sync e portal ignoram esta conta.");
+      await loadConnections();
+    } catch {
+      toast.error("Erro ao ativar/desativar a conta.");
+    } finally {
+      setTogglingSlug(null);
+    }
+  };
+
+  const handleDeleteConnection = async () => {
+    if (!deletingId) return;
+    try {
+      const res = await adminFetch(`/api/admin/connections/${deletingId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error || "Erro ao remover a conta.");
+        return;
+      }
+      toast.success("Conta removida.");
+      setRemoveDialogOpen(false);
+      setDeletingId(null);
+      await loadConnections();
+    } catch {
+      toast.error("Erro ao remover a conta.");
     }
   };
 
@@ -718,130 +751,214 @@ export default function AdminConnections() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* ── MikWeb (ERP) ── */}
+        {/* ── MikWeb (ERP) — MULTI-CONTA ── */}
         <Card className="border-border shadow-none">
           <CardHeader className="pb-4">
-            <div className="flex items-center gap-2">
-              <Settings className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">
-                MikWeb (ERP de faturas)
-              </CardTitle>
-            </div>
-            <CardDescription className="text-xs text-muted-foreground">
-              URL e token de acesso à API do MikWeb — é daqui que vêm as faturas para os
-              lembretes.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label
-                htmlFor="api-url"
-                className="text-xs font-medium text-muted-foreground"
-              >
-                URL da API <span className="text-muted-foreground/50">(opcional)</span>
-              </Label>
-              <Input
-                id="api-url"
-                type="url"
-                placeholder="https://api.mikweb.com.br/v1/admin/"
-                value={apiUrlState}
-                onChange={(e) => setApiUrl(e.target.value)}
-                className="h-9 text-xs font-mono"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label
-                htmlFor="api-token"
-                className="text-xs font-medium text-muted-foreground"
-              >
-                Token de autenticação
-              </Label>
-              <div className="relative">
-                <Input
-                  id="api-token"
-                  type={showToken ? "text" : "password"}
-                  placeholder="Bearer token"
-                  value={apiToken}
-                  onChange={(e) => setApiToken(e.target.value)}
-                  className="h-9 text-xs font-mono pr-9"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  tabIndex={-1}
-                >
-                  {showToken ? (
-                    <EyeOff className="h-3.5 w-3.5" />
-                  ) : (
-                    <Eye className="h-3.5 w-3.5" />
-                  )}
-                </button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">
+                  Contas MikWeb (ERP de faturas)
+                </CardTitle>
               </div>
-            </div>
-
-            {configError && (
-              <p className="flex items-start gap-2 text-xs text-destructive">
-                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                <span>{configError}</span>
-              </p>
-            )}
-
-            <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                className="flex-1 text-xs h-9"
-                onClick={handleTestConnection}
-                disabled={testingConnection || !apiToken}
+                className="text-xs h-8 cursor-pointer shrink-0"
+                onClick={openNewConnection}
+                disabled={editingConnection === "new"}
               >
-                {testingConnection ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : (
-                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                Testar conexão
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                className="flex-1 text-xs h-9"
-                onClick={handleSaveConfig}
-                disabled={configSaving || !apiToken}
-              >
-                {configSaving ? (
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                ) : configSaved ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                ) : (
-                  <Settings className="h-3.5 w-3.5 mr-1.5" />
-                )}
-                {configSaved ? "Salvo!" : "Salvar"}
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                Adicionar conta
               </Button>
             </div>
-
-            {/* Connection test result */}
-            {connectionResult && (
-              <div
-                className={`flex items-start gap-2 text-xs p-3 rounded-sm border ${
-                  connectionResult.success
-                    ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300"
-                    : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/20 text-red-700 dark:text-red-300"
-                }`}
-              >
-                {connectionResult.success ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                ) : (
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                )}
-                <span>{connectionResult.message}</span>
+            <CardDescription className="text-xs text-muted-foreground">
+              Duas contas do ERP alimentam o mesmo canal: o sync varre todas as ativas e
+              cada cliente/fatura guarda de qual conta veio.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {connectionsLoading ? (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Carregando contas…
+              </div>
+            ) : connectionsMigrationPending ? (
+              <div className="flex items-start gap-2 text-xs text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>
+                  A migration 010 ainda não foi aplicada — o sistema está usando a credencial
+                  única antiga como "Conta A".
+                </span>
+              </div>
+            ) : connections.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">
+                Nenhuma conta cadastrada ainda. Adicione a primeira — ou confirme que os
+                secrets MIKWEB_API_URL/MIKWEB_API_TOKEN estão configurados (elas atuam como a
+                "Conta A").
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {connections.map((connection) => (
+                  <div
+                    key={connection.id}
+                    className={`rounded-sm border px-3 py-2.5 space-y-1.5 ${
+                      connection.active ? "border-border" : "border-border/50 opacity-70"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">
+                          {connection.label}{" "}
+                          <span className="text-[10px] font-mono text-muted-foreground">({connection.slug})</span>
+                          {!connection.active ? (
+                            <span className="ml-1.5 text-[10px] text-muted-foreground">· inativa</span>
+                          ) : null}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground font-mono truncate">
+                          {connection.apiUrl || "URL nos secrets"} · token {connection.hasToken ? connection.tokenMasked : "nos secrets"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {connection.lastTestOk === true ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        ) : connection.lastTestOk === false ? (
+                          <span title={connection.lastTestError ?? "Último teste falhou"} className="inline-flex">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                          </span>
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-[10px] cursor-pointer"
+                          onClick={() => handleTestConnectionById(connection.id)}
+                          disabled={testingSlug === connection.id}
+                        >
+                          {testingSlug === connection.id ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <ExternalLink className="h-3 w-3 mr-1" />
+                          )}
+                          Testar
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-[10px] cursor-pointer"
+                          onClick={() => openEditConnection(connection)}
+                        >
+                          <Settings className="h-3 w-3 mr-1" />
+                          Editar
+                        </Button>
+                        <button
+                          type="button"
+                          title={connection.active ? "Desativar conta" : "Ativar conta"}
+                          onClick={() => handleToggleConnection(connection.id)}
+                          disabled={togglingSlug === connection.id}
+                          className="p-1.5 text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                        >
+                          {togglingSlug === connection.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Power className={`h-3.5 w-3.5 ${connection.active ? "text-emerald-600 dark:text-emerald-400" : ""}`} />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          title="Remover conta"
+                          onClick={() => {
+                            setDeletingId(connection.id);
+                            setRemoveDialogOpen(true);
+                          }}
+                          className="p-1.5 text-muted-foreground hover:text-destructive cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    {connection.lastTestOk === false && connection.lastTestError ? (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 truncate" title={connection.lastTestError}>
+                        {connection.lastTestError}
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+                {connectionsEnvFallback ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    Os secrets MIKWEB_API_URL/MIKWEB_API_TOKEN servem como respaldo da conexão
+                    "a" quando ela não tem token próprio.
+                  </p>
+                ) : null}
               </div>
             )}
 
+            {/* Formulário inline (nova conta / edição) */}
+            {editingConnection !== null ? (
+              <div className="space-y-3 rounded-sm border border-border p-3 bg-secondary/20">
+                <p className="text-xs font-medium text-foreground">
+                  {editingConnection === "new" ? "Nova conta MikWeb" : "Editar conta"}
+                </p>
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-medium text-muted-foreground">Nome da conta</Label>
+                  <Input
+                    placeholder="Ex.: Conta B (filial)"
+                    value={connectionForm.label}
+                    onChange={(e) => setConnectionForm({ ...connectionForm, label: e.target.value })}
+                    className="h-9 text-xs"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-medium text-muted-foreground">URL da API</Label>
+                  <Input
+                    type="url"
+                    placeholder="https://api.mikweb.com.br/v1/admin/"
+                    value={connectionForm.apiUrl}
+                    onChange={(e) => setConnectionForm({ ...connectionForm, apiUrl: e.target.value })}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-medium text-muted-foreground">
+                    Token {editingConnection !== "new" ? <span className="text-muted-foreground/50">(vazio = manter atual)</span> : ""}
+                  </Label>
+                  <Input
+                    type="password"
+                    placeholder="Bearer token"
+                    value={connectionForm.apiToken}
+                    onChange={(e) => setConnectionForm({ ...connectionForm, apiToken: e.target.value })}
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 text-xs h-9 cursor-pointer"
+                    onClick={() => setEditingConnection(null)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1 text-xs h-9 cursor-pointer"
+                    onClick={handleSaveConnection}
+                    disabled={
+                      connectionSaving ||
+                      !connectionForm.label.trim() ||
+                      !connectionForm.apiUrl.trim() ||
+                      (editingConnection === "new" && !connectionForm.apiToken.trim())
+                    }
+                  >
+                    {connectionSaving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : null}
+                    Salvar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
             <p className="text-[10px] text-muted-foreground leading-relaxed">
-              As variáveis de ambiente MIKWEB_API_URL e MIKWEB_API_TOKEN têm
-              prioridade sobre a configuração salva aqui.
+              Desativar NÃO apaga nada: a conta só sai do sync, das consultas e do portal.
+              A última conta ativa não pode ser desativada nem removida.
             </p>
           </CardContent>
         </Card>
@@ -1703,6 +1820,23 @@ export default function AdminConnections() {
             Uma mensagem de teste será enviada e aparecerá no histórico de notificações.
           </p>
         </div>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={removeDialogOpen}
+        onOpenChange={(open) => {
+          setRemoveDialogOpen(open);
+          if (!open) setDeletingId(null);
+        }}
+        title="Remover esta conta MikWeb?"
+        description="A conta sai do sync, das consultas e do portal. Os lembretes já enviados continuam no histórico."
+        confirmLabel="Remover conta"
+        onConfirm={handleDeleteConnection}
+      >
+        <p className="text-xs text-muted-foreground">
+          Se esta for a última conta ativa, a remoção será recusada — desative ou remova
+          outra antes.
+        </p>
       </ConfirmDialog>
 
       <AdminSyncDialog

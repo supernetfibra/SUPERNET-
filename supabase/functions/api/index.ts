@@ -40,6 +40,17 @@ import { createWhatsAppRuntime } from "./notify/runtime.ts";
 import { handleUazapiWebhook } from "./notify/webhook.ts";
 import { toDeliveryView, RULE_KEY_LABELS } from "./notify/deliveries-view.ts";
 import {
+  activeConnections,
+  describePerConnection,
+  failedSlugs,
+  nextSlug,
+  parsePrefixedCustomerId,
+  prefixedCustomerId,
+  sanitizeConnections,
+  type ConnectionsRead,
+  type MikWebConnection,
+} from "./notify/connections.ts";
+import {
   buildChannelDownMessage,
   buildDispatchFailuresMessage,
   buildQuotaPausedMessage,
@@ -482,16 +493,97 @@ async function getMikWebConfig(): Promise<{ baseUrl: string; token: string } | n
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// MULTI-CONTA: credenciais por conexão (tabela mikweb_connections, migration 010)
+// ---------------------------------------------------------------------------
+// A conexão 'a' herda os SECRETS de ambiente quando a tabela ainda não tem a
+// credencial — o provedor que já usa env não precisa reconfigurar nada.
+async function connectionWithEnvFallback(connection: MikWebConnection): Promise<MikWebConnection> {
+  if (connection.apiToken) return connection;
+  const envUrl = env("MIKWEB_API_URL");
+  const envToken = env("MIKWEB_API_TOKEN");
+  if (connection.slug === "a" && envUrl && envToken) {
+    return { ...connection, apiUrl: connection.apiUrl || envUrl.replace(/\/+$/, ""), apiToken: envToken, active: true };
+  }
+  return connection;
+}
+
+/**
+ * Contas MikWeb cadastradas (ativas em primeiro lugar, na ordem de uso).
+ * A tabela ainda não existir (migration 010 pendente) NÃO é erro: cai para a
+ * credencial única antiga (env → mikweb_config) como conexão 'a' — deploy do
+ * código antes da migration não quebra o sync.
+ */
+async function listMikWebConnections(): Promise<ConnectionsRead> {
+  try {
+    const { data } = await db().from("mikweb_connections").select("*").order("sort_order").order("slug");
+    if (data && data.length) {
+      const read = sanitizeConnections(data);
+      const withFallback = await Promise.all(read.connections.map((connection) => connectionWithEnvFallback(connection)));
+      return { connections: withFallback, skipped: read.skipped };
+    }
+  } catch {
+    // migration 010 pendente — segue para o fallback legado
+  }
+
+  // Fallback legado: credencial única → conexão 'a' (mesma origem do backfill).
+  const legacy = await getMikWebConfig();
+  if (legacy) {
+    return {
+      connections: [
+        {
+          slug: "a",
+          label: "Conta A",
+          apiUrl: legacy.baseUrl.replace(/\/+$/, ""),
+          apiToken: legacy.token,
+          active: true,
+          sortOrder: 0,
+          lastTestOk: null,
+          lastTestAt: null,
+          lastTestError: null,
+        },
+      ],
+      skipped: [],
+    };
+  }
+  return { connections: [], skipped: [] };
+}
+
+/** Conexões ativas na ordem de varredura — a porta de entrada das rotas. */
+async function activeMikWebConnections(): Promise<MikWebConnection[]> {
+  const read = await listMikWebConnections();
+  return activeConnections(read);
+}
+
+/**
+ * Conexão da SESSÃO do portal. Fallback deliberado: sessão sem prefixo (criada
+ * antes do deploy multi-conta) ou com slug desativado cai na primeira conta
+ * ativa — o cliente continua vendo as faturas dele em vez de erro 503.
+ */
+async function connectionForSession(slug: string | null): Promise<MikWebConnection | null> {
+  const connections = await activeMikWebConnections();
+  if (!connections.length) return null;
+  if (slug) {
+    const found = connections.find((connection) => connection.slug === slug);
+    if (found) return found;
+  }
+  return connections[0];
+}
+
+function mikwebErrorDetails(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function mikwebApiGet<T>(path: string, override?: { baseUrl?: string; token?: string }): Promise<T> {
   const config = override?.baseUrl && override?.token
     ? { baseUrl: override.baseUrl, token: override.token }
-    : await getMikWebConfig();
+    : (await activeMikWebConnections())[0];
   if (!config) throw new Error("MikWeb API não configurada.");
 
-  const url = `${config.baseUrl.replace(/\/$/, "")}${path}`;
+  const url = `${config.apiUrl.replace(/\/$/, "")}${path}`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${config.token}`,
+      Authorization: `Bearer ${config.apiToken}`,
       "Content-Type": "application/json",
     },
   });
@@ -504,16 +596,15 @@ async function mikwebApiGet<T>(path: string, override?: { baseUrl?: string; toke
   return (dataKey ? parsed[dataKey] : parsed) as T;
 }
 
-async function mikwebApiGetFull<T>(
+/** GET autenticado numa CONTA específica — a forma da era multi-conta. */
+async function mikwebApiGetFullFor<T>(
+  connection: MikWebConnection,
   path: string
 ): Promise<{ data: T; meta?: { pages?: { total_pages?: number } } }> {
-  const config = await getMikWebConfig();
-  if (!config) throw new Error("MikWeb API não configurada.");
-
-  const url = `${config.baseUrl.replace(/\/$/, "")}${path}`;
+  const url = `${connection.apiUrl.replace(/\/$/, "")}${path}`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${config.token}`,
+      Authorization: `Bearer ${connection.apiToken}`,
       "Content-Type": "application/json",
     },
   });
@@ -525,6 +616,14 @@ async function mikwebApiGetFull<T>(
   const meta = parsed.meta as { pages?: { total_pages?: number } } | undefined;
   const dataKey = Object.keys(parsed).find((k) => k !== "meta");
   return { data: (dataKey ? parsed[dataKey] : parsed) as T, meta };
+}
+
+async function mikwebApiGetFull<T>(
+  path: string
+): Promise<{ data: T; meta?: { pages?: { total_pages?: number } } }> {
+  const connection = (await activeMikWebConnections())[0];
+  if (!connection) throw new Error("MikWeb API não configurada.");
+  return mikwebApiGetFullFor(connection, path);
 }
 
 // ---------------------------------------------------------------------------
@@ -672,19 +771,43 @@ app.post("/mikweb/login", async (c) => {
     }
 
     // ---- REAL USER ----
-    let customers: MikWebCustomer[];
-    try {
-      customers = await mikwebApiGet<MikWebCustomer[]>(`/customers?search=${cpf}`);
-    } catch (err) {
-      await logEvent({ type: "login_failure", cpf, ip_address: clientIp, user_agent: userAgent, error_message: String(err).slice(0, 200) });
-      return jsonError("CPF não encontrado. Verifique e tente novamente.", 404);
-    }
-    if (!customers?.length) {
-      await logEvent({ type: "login_failure", cpf, ip_address: clientIp, user_agent: userAgent, error_message: "CPF não encontrado" });
-      return jsonError("CPF não encontrado. Verifique e tente novamente.", 404);
+    // MULTI-CONTA: o CPF é procurado em TODAS as contas ativas, na ordem. As bases
+    // são distintas (decisão do provedor), então a primeira que responde é A conta
+    // do cliente — e a sessão passa a carregar essa origem (`connection_slug` e o
+    // customer_id PREFIXADO), para faturas/boleto consultarem sempre a conta certa.
+    const connections = await activeMikWebConnections();
+    if (!connections.length) {
+      await logEvent({ type: "login_failure", cpf, ip_address: clientIp, user_agent: userAgent, error_message: "Nenhuma conta MikWeb ativa" });
+      return jsonError("Serviço temporariamente indisponível. Tente mais tarde.", 503);
     }
 
-    const customer = customers[0];
+    let foundCustomer: MikWebCustomer | null = null;
+    let customerConnection: MikWebConnection | null = null;
+    let lastSearchError: string | null = null;
+    for (const connection of connections) {
+      try {
+        const found = await mikwebApiGetFullFor<MikWebCustomer[]>(connection, `/customers?search=${cpf}`);
+        const hit = (found.data ?? [])[0];
+        if (hit) {
+          foundCustomer = hit;
+          customerConnection = connection;
+          break;
+        }
+      } catch (err) {
+        // Conta fora do ar não impede o cliente de logar pela outra.
+        lastSearchError = mikwebErrorDetails(err);
+      }
+    }
+
+    if (!foundCustomer) {
+      if (lastSearchError) {
+        await logEvent({ type: "login_failure", cpf, ip_address: clientIp, user_agent: userAgent, error_message: String(lastSearchError).slice(0, 200) });
+      }
+      return jsonError("CPF não encontrado. Verifique e tente novamente.", 404);
+    }
+    const connection = customerConnection!;
+    const customer = foundCustomer;
+    const prefixedId = prefixedCustomerId(connection.slug, customer.id);
 
     const normalizedPassword = password.replace(/\D/g, "");
     if (normalizedPassword !== cpf.slice(0, 4)) {
@@ -699,7 +822,7 @@ app.post("/mikweb/login", async (c) => {
     // Collect contacts
     const contacts: Array<{ id: string; phone: string; label?: string }> = [];
     try {
-      const full = await mikwebApiGet<MikWebCustomer>(`/customers/${customer.id}`);
+      const full = await mikwebApiGetFullFor<MikWebCustomer>(connection, `/customers/${customer.id}`);
       if (full.phone_number) contacts.push({ id: `${customer.id}-phone`, phone: full.phone_number, label: "Telefone" });
       for (const key of ["cell_phone_number_1", "cell_phone_number_2", "cell_phone_number_3", "cell_phone_number_4"] as const) {
         const phone = full[key];
@@ -716,7 +839,10 @@ app.post("/mikweb/login", async (c) => {
     await insertOrThrow("mikweb_sessions", {
       session_token: sessionToken,
       cpf,
-      customer_id: String(customer.id),
+      // PREFIXADO (`a:123`): é o mesmo formato que sync/contatos/push usam — a
+      // sessão do portal nunca consulta a conta errada.
+      customer_id: prefixedId,
+      connection_slug: connection.slug,
       customer_name: customer.full_name,
       contacts: contacts.map((ct) => ({ id: ct.id, phone: ct.phone, label: ct.label })),
       selected_contact_id: null,
@@ -726,7 +852,7 @@ app.post("/mikweb/login", async (c) => {
     });
 
     await logEvent({
-      type: "login_success", cpf, customer_id: String(customer.id),
+      type: "login_success", cpf, customer_id: prefixedId,
       customer_name: customer.full_name, ip_address: clientIp, user_agent: userAgent,
       metadata: { duration: now() - startTime },
     });
@@ -807,7 +933,12 @@ app.get("/mikweb/customer", async (c) => {
   }
 
   try {
-    const customer = await mikwebApiGet<MikWebCustomer>(`/customers/${session.customer_id}`);
+    // MULTI-CONTA: a sessão sabe de qual conta o cliente veio (customer_id
+    // prefixado + connection_slug) — consulta exatamente na conta de origem.
+    const { slug, rawId } = parsePrefixedCustomerId(session.customer_id);
+    const connection = await connectionForSession(slug);
+    if (!connection) return jsonError("Conta MikWeb indisponível. Fale com o suporte.", 503);
+    const customer = await mikwebApiGetFullFor<MikWebCustomer>(connection, `/customers/${rawId}`);
     if (!customer) return jsonError("Cliente não encontrado na API MikWeb.", 404);
     return json({ customer });
   } catch (err) {
@@ -857,7 +988,11 @@ app.get("/mikweb/billings", async (c) => {
     const allBillings: MikWebBilling[] = [];
     let page = 1;
     let totalPages = 1;
-    const params = new URLSearchParams({ customer_id: session.customer_id });
+    // MULTI-CONTA: a fatura é buscada na CONTA da sessão (ver login).
+    const { slug, rawId } = parsePrefixedCustomerId(session.customer_id);
+    const connection = await connectionForSession(slug);
+    if (!connection) return jsonError("Conta MikWeb indisponível. Fale com o suporte.", 503);
+    const params = new URLSearchParams({ customer_id: rawId });
     if (yearFilter) {
       params.set("date_from", `${yearFilter}-01-01`);
       params.set("date_to", `${yearFilter}-12-31`);
@@ -865,7 +1000,8 @@ app.get("/mikweb/billings", async (c) => {
     const basePath = `/billings?${params.toString()}`;
 
     while (page <= totalPages && page <= 6) {
-      const { data, meta } = await mikwebApiGetFull<MikWebBilling[]>(
+      const { data, meta } = await mikwebApiGetFullFor<MikWebBilling[]>(
+        connection,
         page === 1 ? basePath : `${basePath}&page=${page}`
       );
       if (data?.length) allBillings.push(...data);
@@ -949,14 +1085,15 @@ startxref
     });
   }
 
-  // Real users: proxy to MikWeb
+  // Real users: proxy to MikWeb — na CONTA da sessão (ver login).
   try {
-    const config = await getMikWebConfig();
-    if (!config) return jsonError("MikWeb API não configurada.", 500);
+    const { slug } = parsePrefixedCustomerId(session.customer_id);
+    const connection = await connectionForSession(slug);
+    if (!connection) return jsonError("Conta MikWeb indisponível. Fale com o suporte.", 503);
 
-    const url = `${config.baseUrl.replace(/\/$/, "")}/billings/${billingId}/download?valid=true`;
+    const url = `${connection.apiUrl.replace(/\/$/, "")}/billings/${billingId}/download?valid=true`;
     const pdfResponse = await fetch(url, {
-      headers: { Authorization: `Bearer ${config.token}` },
+      headers: { Authorization: `Bearer ${connection.apiToken}` },
     });
     if (!pdfResponse.ok) {
       return jsonError("Boleto não disponível para esta fatura.", 404);
@@ -1173,6 +1310,203 @@ app.post("/admin/test-connection", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// MULTI-CONTA — CRUD de conexões MikWeb (tabela `mikweb_connections`, migration 010)
+//
+// O token NUNCA volta na resposta (só o formato mascarado). Desativar a ÚLTIMA
+// conexão ativa é recusado: sem ela o sync e o login do portal ficam cegos.
+// ---------------------------------------------------------------------------
+
+/** Linha da tabela → visão para o painel (token mascarado). */
+function connectionView(row: Record<string, unknown>) {
+  const token = String(row.api_token ?? "");
+  return {
+    id: String(row.id),
+    slug: String(row.slug ?? ""),
+    label: String(row.label ?? ""),
+    apiUrl: String(row.api_url ?? ""),
+    tokenMasked: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : "",
+    hasToken: Boolean(token),
+    active: row.active === true,
+    sortOrder: Number(row.sort_order ?? 0),
+    lastTestOk: row.last_test_ok === null || row.last_test_ok === undefined ? null : row.last_test_ok === true,
+    lastTestAt: row.last_test_at === null || row.last_test_at === undefined ? null : Number(row.last_test_at),
+    lastTestError: row.last_test_error ?? null,
+    updatedAt: Number(row.updated_at ?? 0),
+  };
+}
+
+/** Testa as credenciais contra a API da MikWeb (mesmos caminhos do test-connection). */
+async function testMikwebCredentials(
+  baseUrl: string,
+  token: string
+): Promise<{ ok: boolean; error?: string }> {
+  const paths = ["/customers?per_page=1", "/customers"];
+  for (const path of paths) {
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (response.ok) return { ok: true };
+    } catch {
+      // tenta o próximo caminho
+    }
+  }
+  return { ok: false, error: `Não foi possível conectar em "${baseUrl}". Verifique a URL e o token.` };
+}
+
+app.get("/admin/connections", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  try {
+    const { data } = await db()
+      .from("mikweb_connections")
+      .select("*")
+      .order("sort_order")
+      .order("slug");
+    return json({
+      connections: ((data ?? []) as Record<string, unknown>[]).map(connectionView),
+      /** A conexão 'a' também funciona via secrets (fallback legado no backend). */
+      envFallback: Boolean(env("MIKWEB_API_URL") && env("MIKWEB_API_TOKEN")),
+    });
+  } catch (error) {
+    // Tabela ausente = migration 010 pendente — o painel mostra o aviso certo.
+    return json({ connections: [], envFallback: Boolean(env("MIKWEB_API_URL") && env("MIKWEB_API_TOKEN")), migrationPending: true, error: mikwebErrorDetails(error) });
+  }
+});
+
+app.post("/admin/connections", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const label = String(body.label ?? "").trim().slice(0, 60);
+  const apiUrl = String(body.apiUrl ?? "").trim().replace(/\/+$/, "");
+  const apiToken = String(body.apiToken ?? "").trim();
+  if (!label) return jsonError("Nome da conta é obrigatório.");
+  if (!apiUrl) return jsonError("URL da API é obrigatória.");
+  if (!apiToken) return jsonError("Token é obrigatório.");
+
+  try {
+    const { data: existing } = await db().from("mikweb_connections").select("slug");
+    const slugs = ((existing ?? []) as Array<{ slug: unknown }>).map((row) => String(row.slug ?? ""));
+    const slug = nextSlug(slugs);
+    const test = await testMikwebCredentials(apiUrl, apiToken);
+    const ts = now();
+    const { error } = await db().from("mikweb_connections").insert({
+      slug,
+      label,
+      api_url: apiUrl,
+      api_token: apiToken,
+      active: true,
+      sort_order: slugs.length,
+      last_test_ok: test.ok,
+      last_test_at: ts,
+      last_test_error: test.ok ? null : (test.error ?? "").slice(0, 200),
+      created_at: ts,
+      updated_at: ts,
+      updated_by: "admin",
+    });
+    if (error) return jsonError(`Erro ao salvar a conexão: ${error.message}`, 500);
+    await logEvent({ type: "whatsapp_config", metadata: { action: "connection-created", slug } });
+    return json({ success: true, slug, tested: test.ok, testError: test.ok ? null : test.error });
+  } catch (error) {
+    return jsonError(mikwebErrorDetails(error), 500);
+  }
+});
+
+app.post("/admin/connections/:id/update", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  try {
+    const patch: Record<string, unknown> = { updated_at: now(), updated_by: "admin" };
+    if (typeof body.label === "string" && body.label.trim()) patch.label = body.label.trim().slice(0, 60);
+    if (typeof body.apiUrl === "string" && body.apiUrl.trim()) patch.api_url = body.apiUrl.trim().replace(/\/+$/, "");
+    // Token vazio = MANTER o atual (o painel envia só quando o admin digita um novo).
+    if (typeof body.apiToken === "string" && body.apiToken.trim()) patch.api_token = body.apiToken.trim();
+    if (!Object.keys(patch).length) return jsonError("Nada para atualizar.");
+
+    const { error } = await db().from("mikweb_connections").update(patch).eq("id", id);
+    if (error) return jsonError(`Erro ao atualizar: ${error.message}`, 500);
+    return json({ success: true });
+  } catch (error) {
+    return jsonError(mikwebErrorDetails(error), 500);
+  }
+});
+
+app.post("/admin/connections/:id/test", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  try {
+    const { data } = await db().from("mikweb_connections").select("*").eq("id", id).maybeSingle();
+    const row = (data ?? null) as Record<string, unknown> | null;
+    if (!row) return jsonError("Conexão não encontrada.", 404);
+
+    // Sem credencial salva, o teste usa o fallback de ambiente (conexão 'a').
+    const apiUrl = String(row.api_url ?? "") || env("MIKWEB_API_URL");
+    const apiToken = String(row.api_token ?? "") || (row.slug === "a" ? env("MIKWEB_API_TOKEN") : "");
+    if (!apiUrl || !apiToken) return json({ success: false, message: "Credenciais incompletas nesta conta." });
+
+    const test = await testMikwebCredentials(apiUrl, apiToken);
+    await db()
+      .from("mikweb_connections")
+      .update({
+        last_test_ok: test.ok,
+        last_test_at: now(),
+        last_test_error: test.ok ? null : (test.error ?? "").slice(0, 200),
+      })
+      .eq("id", id);
+    return json({ success: test.ok, message: test.ok ? "Conexão estabelecida com sucesso!" : (test.error ?? "Falha no teste.") });
+  } catch (error) {
+    return jsonError(mikwebErrorDetails(error), 500);
+  }
+});
+
+app.post("/admin/connections/:id/toggle", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  try {
+    const { data } = await db().from("mikweb_connections").select("active").eq("id", id).maybeSingle();
+    if (!data) return jsonError("Conexão não encontrada.", 404);
+    const nextActive = !(data as Record<string, unknown>).active;
+    if (!nextActive) {
+      // A última conexão ativa não pode ser desligada: sem ela o sistema fica cego.
+      const { data: actives } = await db()
+        .from("mikweb_connections")
+        .select("id")
+        .eq("active", true);
+      if (((actives ?? []) as unknown[]).length <= 1) {
+        return jsonError("Não é possível desativar a última conta ativa.");
+      }
+    }
+    const { error } = await db().from("mikweb_connections").update({ active: nextActive, updated_at: now() }).eq("id", id);
+    if (error) return jsonError(`Erro ao atualizar: ${error.message}`, 500);
+    return json({ success: true, active: nextActive });
+  } catch (error) {
+    return jsonError(mikwebErrorDetails(error), 500);
+  }
+});
+
+app.delete("/admin/connections/:id", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  try {
+    const { data } = await db().from("mikweb_connections").select("slug, active").eq("id", id).maybeSingle();
+    const row = (data ?? null) as Record<string, unknown> | null;
+    if (!row) return jsonError("Conexão não encontrada.", 404);
+    if (row.active === true) {
+      const { data: actives } = await db().from("mikweb_connections").select("id").eq("active", true);
+      if (((actives ?? []) as unknown[]).length <= 1) {
+        return jsonError("Não é possível remover a última conta ativa — desative outra antes.");
+      }
+    }
+    const { error } = await db().from("mikweb_connections").delete().eq("id", id);
+    if (error) return jsonError(`Erro ao remover: ${error.message}`, 500);
+    await logEvent({ type: "whatsapp_config", metadata: { action: "connection-deleted", slug: String(row.slug ?? "") } });
+    return json({ success: true });
+  } catch (error) {
+    return jsonError(mikwebErrorDetails(error), 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Eventos de OPERAÇÃO do sistema. Não são acessos de cliente: são gravações de
 // configuração salva, testes de envio do painel e crons. O histórico de acesso
 // do painel exclui por padrão (scope=customer); a aba "Operação" os mostra
@@ -1225,12 +1559,30 @@ app.get("/admin/customer", async (c) => {
   if (cpf.length !== 11) return jsonError("CPF inválido.");
 
   try {
-    const customers = await mikwebApiGet<MikWebCustomer[]>(`/customers?search=${cpf}`);
-    if (!customers?.length) return jsonError("Cliente não encontrado.", 404);
-    const customer = customers[0];
-    const billings = await mikwebApiGet<MikWebBilling[]>(`/billings?customer_id=${customer.id}`);
-    const { password: _pw, ...safeCustomer } = customer;
-    return json({ customer: safeCustomer, billings });
+    // MULTI-CONTA: procura o CPF em todas as contas ativas (bases distintas).
+    // Cada resultado carrega `connection` (slug + label) para o painel etiquetar
+    // a origem — e o botão "enviar lembrete" validar a fatura na conta certa.
+    const connections = await activeMikWebConnections();
+    if (!connections.length) return jsonError("Nenhuma conta MikWeb ativa — cadastre em Conexões.", 503);
+
+    for (const connection of connections) {
+      try {
+        const found = await mikwebApiGetFullFor<MikWebCustomer[]>(connection, `/customers?search=${cpf}`);
+        const customer = (found.data ?? [])[0];
+        if (!customer) continue;
+        const billingsResult = await mikwebApiGetFullFor<MikWebBilling[]>(connection, `/billings?customer_id=${customer.id}`);
+        const { password: _pw, ...safeCustomer } = customer;
+        return json({
+          customer: safeCustomer,
+          billings: billingsResult.data ?? [],
+          connection: { slug: connection.slug, label: connection.label },
+        });
+      } catch (error) {
+        // Conta fora do ar: tenta a próxima; se nenhuma responder, devolve o erro.
+        console.error("[ADMIN_CUSTOMER_ERROR]", connection.slug, error);
+      }
+    }
+    return jsonError("Cliente não encontrado.", 404);
   } catch (err) {
     console.error("[ADMIN_CUSTOMER_ERROR]", err);
     return jsonError("Erro ao buscar cliente.", 500);
@@ -1586,7 +1938,7 @@ app.get("/admin/notifications/simulate", async (c) => {
       };
     } else {
       base = await loadRealBase(
-        { db, getConfig: getMikWebConfig, apiGetFull: mikwebApiGetFull },
+        { db, listConnections: listMikWebConnections, apiGetFor: mikwebApiGetFullFor },
         {
           from: today,
           // Horizonte da configuração (ou do override) define a janela varrida.
@@ -2276,24 +2628,43 @@ app.post("/admin/whatsapp/connect", async (c) => {
  * Núcleo da importação de opt-ins, compartilhado pelo endpoint do admin e pelo
  * cron diário (`/cron/whatsapp-import-contacts`). Mesma política nos dois: opt-out
  * vence, registro existente preserva o consentimento, upsert idempotente.
+ *
+ * MULTI-CONTA: varre TODAS as contas ativas e grava cada cliente com o id
+ * PREFIXADO pela conta de origem — duas contas podem ter o mesmo `id` interno
+ * sem colidir em `whatsapp_contacts` (que é UNIQUE por customer_id).
  */
 async function importMikwebContacts(options: {
   dryRun: boolean;
   maxPages: number;
 }): Promise<Record<string, unknown>> {
-  // Varredura completa dos clientes da MikWeb (paginada).
+  const connections = await activeMikWebConnections();
+  if (!connections.length) throw new Error("Nenhuma conta MikWeb ativa — cadastre em Conexões.");
+
+  // Varredura completa dos clientes de CADA conta (paginada, em sequência).
   const customers: MikWebCustomer[] = [];
-  let page = 1;
-  let totalPages = 1;
-  while (page <= totalPages && page <= options.maxPages) {
-    const { data, meta } = await mikwebApiGetFull<MikWebCustomer[]>(
-      page === 1 ? "/customers?per_page=100" : `/customers?per_page=100&page=${page}`
-    );
-    if (data?.length) customers.push(...data);
-    const next = meta?.pages?.total_pages;
-    if (!next || !Number.isFinite(next)) break;
-    totalPages = next;
-    page++;
+  const perConnection: Array<{ slug: string; label: string; ok: boolean; scanned: number; error?: string }> = [];
+  for (const connection of connections) {
+    let page = 1;
+    let totalPages = 1;
+    let scanned = 0;
+    try {
+      while (page <= totalPages && page <= options.maxPages) {
+        const { data, meta } = await mikwebApiGetFullFor<MikWebCustomer[]>(
+          connection,
+          page === 1 ? "/customers?per_page=100" : `/customers?per_page=100&page=${page}`
+        );
+        if (data?.length) customers.push(...data);
+        scanned += data?.length ?? 0;
+        const next = meta?.pages?.total_pages;
+        if (!next || !Number.isFinite(next)) break;
+        totalPages = next;
+        page++;
+      }
+      perConnection.push({ slug: connection.slug, label: connection.label, ok: true, scanned });
+    } catch (error) {
+      // Uma conta fora do ar não impede a importação das outras.
+      perConnection.push({ slug: connection.slug, label: connection.label, ok: false, scanned, error: mikwebErrorDetails(error) });
+    }
   }
 
   const ts = Date.now();
@@ -2315,7 +2686,21 @@ async function importMikwebContacts(options: {
     if (typeof record.phone_e164 === "string" && record.phone_e164) existingByPhone.add(record.phone_e164);
   }
 
-  for (const customer of customers) {
+  // PREFIXO por conta: cada cliente coletado é re-emitido com o id da sua conta.
+  const prefixed: MikWebCustomer[] = [];
+  let cursor = 0;
+  for (const item of perConnection) {
+    const connection = connections.find((c) => c.slug === item.slug)!;
+    for (let index = 0; index < item.scanned; index++, cursor++) {
+      const customer = customers[cursor];
+      if (!customer) break;
+      prefixed.push({ ...customer, id: prefixedCustomerId(connection.slug, customer.id) });
+    }
+  }
+
+  // ORIGEM: itera a lista PREFIXADA (`prefixed`, montada acima por conta) — o
+  // customer_id gravado já carrega a conta de origem.
+  for (const customer of prefixed) {
     const customerId = String(customer.id ?? "");
     if (!customerId) continue;
     const phone = pickCustomerPhone(customer);
@@ -2355,6 +2740,7 @@ async function importMikwebContacts(options: {
     updates: toUpdate.length,
     keptOptOut: [...contacts.values()].filter((row) => row.opt_out_at !== null && row.opt_out_at !== undefined).length,
     phoneConflicts: [...contacts.values()].filter((row) => row.phone_e164 && existingByPhone.has(String(row.phone_e164)) && row.is_new).length,
+    perConnection,
   };
 
   if (options.dryRun) {
@@ -2548,22 +2934,49 @@ app.post("/admin/notifications/send-now", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const cpf = String(body.cpf || "").replace(/\D/g, "");
   const billingId = String(body.billingId || "");
+  /** Conta de origem da fatura (o Dashboard recebe de /admin/customer). */
+  const connectionSlug = typeof body.connection === "string" ? body.connection.trim() : "";
 
   if (cpf.length !== 11) return jsonError("CPF inválido.", 400);
   if (!billingId) return jsonError("billingId é obrigatório.", 400);
 
   try {
-    const customers = await mikwebApiGet<MikWebCustomer[]>(`/customers?search=${cpf}`);
-    if (!customers?.length) return jsonError("Cliente não encontrado.", 404);
-    const customer = customers[0]!;
+    // MULTI-CONTA: a busca e a validação acontecem na conta INFORMADA; sem ela,
+    // varre as ativas na ordem (compatível com chamadas antigas do painel).
+    const connections = await activeMikWebConnections();
+    if (!connections.length) return jsonError("Nenhuma conta MikWeb ativa — cadastre em Conexões.", 503);
+    const ordered = connectionSlug
+      ? [...connections].sort((a, b) => (a.slug === connectionSlug ? -1 : b.slug === connectionSlug ? 1 : 0))
+      : connections;
 
-    const billings = await mikwebApiGet<MikWebBilling[]>(`/billings?customer_id=${customer.id}`);
-    const billing = (billings || []).find((item) => String(item.id) === billingId);
+    let customer: MikWebCustomer | null = null;
+    let customerConnection: MikWebConnection | null = null;
+    for (const connection of ordered) {
+      try {
+        const found = await mikwebApiGetFullFor<MikWebCustomer[]>(connection, `/customers?search=${cpf}`);
+        const hit = (found.data ?? [])[0];
+        if (hit) {
+          customer = hit;
+          customerConnection = connection;
+          break;
+        }
+      } catch {
+        // Conta fora do ar — tenta a próxima.
+      }
+    }
+    if (!customer || !customerConnection) return jsonError("Cliente não encontrado.", 404);
+    const connection = customerConnection;
+
+    const billings = await mikwebApiGetFullFor<MikWebBilling[]>(connection, `/billings?customer_id=${customer.id}`);
+    const billing = (billings.data ?? []).find((item) => String(item.id) === billingId);
     if (!billing) return jsonError("Fatura não encontrada para este cliente.", 404);
 
+    // O ID PREFIXADO conecta o envio manual ao mesmo universo do sync: dedupe,
+    // contatos e histórico ficam inequívocos entre contas.
+    const prefixedCustomerIdValue = prefixedCustomerId(connection.slug, customer.id);
     const result = await whatsappRuntime().sendBilling({
-      customer,
-      billing,
+      customer: { ...customer, id: prefixedCustomerIdValue } as MikWebCustomer & { id: string },
+      billing: { ...billing, customer_id: prefixedCustomerIdValue } as MikWebBilling & { customer_id: string },
       ruleKey: typeof body.ruleKey === "string" && body.ruleKey ? body.ruleKey : "manual",
       dryRun: body.dryRun === true,
       force: body.force === true,
@@ -2573,18 +2986,18 @@ app.post("/admin/notifications/send-now", async (c) => {
       await logEvent({
         type: "whatsapp_sent",
         cpf,
-        customer_id: String(customer.id),
+        customer_id: prefixedCustomerIdValue,
         customer_name: customer.full_name,
-        metadata: { billingId, reference: billing.reference, ruleKey: result.dedupeKey, forced: result.forced },
+        metadata: { billingId, reference: billing.reference, ruleKey: result.dedupeKey, forced: result.forced, connection: connection.slug },
       });
     } else if (result.status !== "preview") {
       await logEvent({
         type: "whatsapp_skipped",
         cpf,
-        customer_id: String(customer.id),
+        customer_id: prefixedCustomerIdValue,
         customer_name: customer.full_name,
         error_message: result.reason,
-        metadata: { billingId, status: result.status },
+        metadata: { billingId, status: result.status, connection: connection.slug },
       });
     }
 
@@ -2856,7 +3269,7 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
       itemLimit: Math.min(Math.max(int("item-limit", 50), 1), 500),
       loadBase: async (window) => {
         const base = await loadSyncBase(
-          { db, getConfig: getMikWebConfig, apiGetFull: mikwebApiGetFull },
+          { db, listConnections: listMikWebConnections, apiGetFor: mikwebApiGetFullFor },
           {
             dueFrom: window.dueFrom,
             dueTo: window.dueTo,
@@ -2872,6 +3285,47 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
     });
 
     console.log(`[NOTIFY_SYNC] ${describeSync(summary)}`);
+
+    // MULTI-CONTA: uma conta que falhou na varredura é um problema de operação
+    // (faturas dela não entraram na régua de hoje) — o admin é avisado pelo
+    // mesmo canal dos outros alertas, com cooldown/anti-spam já embutido.
+    const failedConnections = (loadedBase?.connections ?? []).filter((item) => !item.ok);
+    if (!dryRunRequested && failedConnections.length) {
+      try {
+        const runtime = whatsappRuntime();
+        const loaded = await runtime.getSettings();
+        const alerts = loaded.settings.adminAlerts;
+        if (alerts.phone) {
+          const detail = failedConnections
+            .map((item) => `${item.label || item.slug}: ${(item.error ?? "erro").slice(0, 120)}`)
+            .join(" | ");
+          await sendAdminAlert(
+            {
+              db,
+              getWhatsAppConfig: () => runtime.getConfig(),
+              sendPushToAdmins,
+              log: (message, extra) => console.log(`[ADMIN_ALERT] ${message}`, extra ?? ""),
+            },
+            {
+              key: "channel-down",
+              config: alerts,
+              title: "Conta MikWeb falhou",
+              message: [
+                `⚠️ Conta MikWeb falhou na sincronização de hoje.`,
+                `Conta(s): ${detail}`,
+                `Os lembretes das OUTRAS contas saíram normalmente.`,
+                `Abra o painel → Conexões → verifique a conta (botão Testar).`,
+              ].join("\n"),
+              phone: alerts.phone,
+              now: Date.now(),
+              buttons: resolveButtons(alerts.buttons, loaded.settings.portalBaseUrl, "/admin/connections"),
+            }
+          );
+        }
+      } catch (alertError) {
+        console.error("[ADMIN_ALERT_ERROR]", alertError);
+      }
+    }
 
     // Resumo diário de cobranças para o admin — a mesma varredura que enfileirou
     // os lembretes agrega vencem hoje / vencidas 1–5 / vencidas 6+ / próximos dias.

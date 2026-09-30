@@ -77,12 +77,17 @@ function firstSentence(detail: string | null | undefined): string | null {
   return (cut || text).slice(0, 120);
 }
 
-/** `billing:1234:late_10` → `late_10`; `manual:test:…` → `manual`; resto → null. */
+/**
+ * Chave de dedupe → regra, aceitando os DOIS formatos durante a transição multi-conta:
+ *   `billing:a:1234:late_10` (novo, com conta) → `late_10`
+ *   `billing:1234:late_10`   (antigo)         → `late_10`
+ * `manual:test:…` → `manual`; resto → null.
+ */
 function extractRuleKey(dedupeKey: string | null | undefined): string | null {
   if (!dedupeKey) return null;
   if (dedupeKey.startsWith("manual:")) return "manual";
-  const match = /^billing:[^:]+:([a-z0-9_-]+)$/i.exec(dedupeKey);
-  return match ? match[1] : null;
+  const match = /^billing:(?:(.+):)?([a-z0-9_-]+)$/i.exec(dedupeKey);
+  return match ? (match[2] ?? null) : null;
 }
 
 /**

@@ -1,16 +1,23 @@
 /**
- * Fontes de dados para a simulação na Edge Function.
+ * Fontes de dados para a simulação e para o sync — agora MULTI-CONTA.
+ *
+ * O provedor tem duas contas MikWeb (bases de clientes distintas) e um único
+ * canal. Este módulo varre TODAS as conexões ativas em sequência e devolve uma
+ * base agregada, com os ids de cliente JÁ PREFIXADOS pelo slug da conta
+ * (`a:123`, `b:456`) — é isso que impede cliente/fatura de uma conta de colidir
+ * com os da outra no dedupe e nos contatos (ver `connections.ts`).
+ *
+ * Falha de UMA conta não derruba a varredura (decisão do provedor: seguir com a
+ * outra) — ela é declarada em `LoadedBase.connections` e vira alerta de operação
+ * no cron, nunca uma exceção silenciosa.
  *
  * Este é o único arquivo do diretório que faz I/O — e ainda assim só **lê**:
  * nenhuma escrita, nenhuma chamada à UazAPI. As dependências entram por injeção
  * (`SourcesDeps`) para não criar import circular com `../index.ts`, que é quem
- * possui `db()`, `getMikWebConfig()` e `mikwebApiGetFull()`.
+ * possui `db()`, `listMikWebConnections()` e o cliente HTTP da MikWeb.
  *
- * As tabelas de consentimento e de outbox (`whatsapp_contacts`,
- * `notification_preferences`, `notification_deliveries`) pertencem à migration 003
- * e ainda não existem. Toda leitura delas é best-effort: se a tabela faltar, o
- * simulador continua e **declara no relatório** o que assumiu — em vez de falhar.
- * É o que permite validar as regras hoje, antes de a migration existir.
+ * Toda leitura de tabelas de consentimento/outbox é best-effort: se a tabela
+ * faltar, o simulador continua e **declara no relatório** o que assumiu.
  */
 
 import type { RawBilling, RawCustomer } from "./model.ts";
@@ -19,13 +26,26 @@ import { syncDueWindow } from "./sync.ts";
 import type { ReminderRule } from "./rules.ts";
 import type { SimulationContact, SimulationSourceInfo } from "./simulate.ts";
 import type { SupabaseLike } from "./outbox.ts";
+import {
+  activeConnections,
+  describePerConnection,
+  gatherPerConnection,
+  prefixedCustomerId,
+  type ConnectionsRead,
+  type MikWebConnection,
+} from "./connections.ts";
 
 export type { SupabaseLike };
 
 export interface SourcesDeps {
   db: () => SupabaseLike;
-  getConfig: () => Promise<{ baseUrl: string; token: string } | null>;
-  apiGetFull: <T>(path: string) => Promise<{ data: T; meta?: { pages?: { total_pages?: number } } }>;
+  /** Conexões MikWeb disponíveis (saneadas) — quem lê a tabela é o chamador. */
+  listConnections: () => Promise<ConnectionsRead>;
+  /** HTTP GET numa CONTA específica — quem resolve credencial é o chamador. */
+  apiGetFor: <T>(
+    connection: MikWebConnection,
+    path: string
+  ) => Promise<{ data: T; meta?: { pages?: { total_pages?: number } } }>;
 }
 
 export interface LoadOptions {
@@ -45,6 +65,16 @@ export interface LoadOptions {
   rules?: ReminderRule[];
 }
 
+/** Estado de cada conta dentro da varredura — o relatório declara, não estima. */
+export interface PerConnectionScan {
+  slug: string;
+  label: string;
+  ok: boolean;
+  billings: number;
+  customers: number;
+  error?: string;
+}
+
 export interface LoadedBase {
   customers: RawCustomer[];
   billings: RawBilling[];
@@ -55,6 +85,11 @@ export interface LoadedBase {
   assumptions: string[];
   /** Contagens do que foi lido de fato (usadas pelo sync; o simulador tem as suas). */
   scanned?: { billings: number; customers: number; contacts: number };
+  /**
+   * Resultado por conta: quem respondeu e quem falhou. O cron usa para o alerta
+   * de operação ("Conta B fora do ar") sem re-derivar de strings.
+   */
+  connections?: PerConnectionScan[];
 }
 
 /**
@@ -87,7 +122,7 @@ export async function loadSyncBase(
 
 export class MikWebNotConfigured extends Error {
   constructor() {
-    super("MikWeb API não configurada — defina em Configurações ou nos secrets do Supabase.");
+    super("Nenhuma conta MikWeb ativa — cadastre em Conexões ou nos secrets do Supabase.");
     this.name = "MikWebNotConfigured";
   }
 }
@@ -109,9 +144,13 @@ async function tryRead(deps: SourcesDeps, table: string, columns: string, limit 
 }
 
 /** Busca o cadastro individual por ID (`/customers/{id}`, a rota do login/admin). */
-async function fetchCustomerById(deps: SourcesDeps, id: string): Promise<RawCustomer | null> {
+async function fetchCustomerById(
+  deps: SourcesDeps,
+  connection: MikWebConnection,
+  id: string
+): Promise<RawCustomer | null> {
   try {
-    const result = await deps.apiGetFull<RawCustomer | RawCustomer[]>(`/customers/${id}`);
+    const result = await deps.apiGetFor<RawCustomer | RawCustomer[]>(connection, `/customers/${id}`);
     const data = result.data;
     if (Array.isArray(data)) {
       // Algumas instalações devolvem lista mesmo para ID único.
@@ -125,6 +164,7 @@ async function fetchCustomerById(deps: SourcesDeps, id: string): Promise<RawCust
 
 async function readCustomers(
   deps: SourcesDeps,
+  connection: MikWebConnection,
   ids: Set<string>,
   maxPages: number
 ): Promise<RawCustomer[]> {
@@ -148,7 +188,7 @@ async function readCustomers(
   const BATCH = 5;
   for (let index = 0; index < wanted.length; index += BATCH) {
     const batch = wanted.slice(index, index + BATCH);
-    const results = await Promise.all(batch.map((id) => fetchCustomerById(deps, id)));
+    const results = await Promise.all(batch.map((id) => fetchCustomerById(deps, connection, id)));
     for (const customer of results) add(customer);
   }
   if (seen.size >= ids.size) return found;
@@ -157,7 +197,7 @@ async function readCustomers(
   for (let page = 1; page <= maxPages && seen.size < ids.size; page++) {
     let batch: RawCustomer[] = [];
     try {
-      const result = await deps.apiGetFull<RawCustomer[]>(`/customers?per_page=100&page=${page}`);
+      const result = await deps.apiGetFor<RawCustomer[]>(connection, `/customers?per_page=100&page=${page}`);
       batch = result.data ?? [];
       if (!batch.length) break;
     } catch {
@@ -168,20 +208,31 @@ async function readCustomers(
   return found;
 }
 
+/** O que a varredura de UMA conta produziu (ainda sem prefixar). */
+interface ConnectionScan {
+  billings: RawBilling[];
+  customers: RawCustomer[];
+  strategy: SimulationSourceInfo["strategy"];
+  truncated: boolean;
+  assumptions: string[];
+  note?: string;
+}
+
 /**
- * Carrega a base real. Duas estratégias, e o relatório sempre diz qual foi usada:
+ * Varredura de UMA conta — a lógica antiga de `loadRealBase`, isolada por conta.
+ * Duas estratégias (e o relatório diz qual foi usada):
  *
- *   bulk         → `/billings?date_from&date_to` (uma varredura, cobre toda a base)
- *   per-customer → varre N clientes e busca as faturas de cada um (N+1, só uma amostra)
+ *   bulk         → `/billings?start_date&end_date` (uma varredura, cobre a base)
+ *   per-customer → varre N clientes e busca as faturas de cada um (N+1, amostra)
  *
  * O fallback existe porque não é garantido que a MikWeb aceite `/billings` sem
- * `customer_id`. Quando cai no caminho caro, o resultado é **uma amostra** e o
- * relatório marca `truncated: true` — sem isso o admin acharia que viu a base toda.
+ * `customer_id`. Quando cai no caminho caro, o resultado é **uma amostra**.
  */
-export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Promise<LoadedBase> {
-  const config = await deps.getConfig();
-  if (!config) throw new MikWebNotConfigured();
-
+async function scanConnection(
+  deps: SourcesDeps,
+  connection: MikWebConnection,
+  options: LoadOptions
+): Promise<ConnectionScan> {
   const assumptions: string[] = [];
   const billings: RawBilling[] = [];
   let customers: RawCustomer[] = [];
@@ -192,9 +243,8 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
   // --- estratégia 1: varredura por janela de vencimento ---------------------
   // Filtros de data da MikWeb: `type_date=due_day` + `start_date`/`end_date` em
   // dd-MM-yyyy (docs oficiais, "Listando Cobranças"). Os antigos `date_from`/
-  // `date_to` (ISO) NÃO existem na API — eram ignorados silenciosamente e a
-  // varredura trazia o histórico inteiro, cortado antes das faturas em aberto.
-  // `situation_id=2` (Em Atraso) reduz o volume varrido; o núcleo descarta pago/cancelado.
+  // `date_to` (ISO) NÃO existem na API — eram ignorados silenciosamente.
+  // `situation_id=2` (Em Atraso) reduz o volume; o núcleo descarta pago/cancelado.
   try {
     const windowFrom = options.rules?.length ? syncDueWindow(options.rules, options.from, 1).from : options.from;
     const windowTo = options.rules?.length ? syncDueWindow(options.rules, options.to, 1).to : options.to;
@@ -203,7 +253,7 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
     let totalPages = 1;
     while (page <= totalPages && page <= options.maxPages) {
       const path = `/billings?${dateQuery}&situation_id=2&per_page=100${page > 1 ? `&page=${page}` : ""}`;
-      const result = await deps.apiGetFull<RawBilling[]>(path);
+      const result = await deps.apiGetFor<RawBilling[]>(connection, path);
       const batch = result.data ?? [];
       if (!batch.length) break;
       billings.push(...batch);
@@ -214,7 +264,9 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
     if (page > options.maxPages && totalPages > options.maxPages) {
       truncated = true;
       note = `varredura limitada a ${options.maxPages} páginas`;
-      assumptions.push(`a varredura em lote foi limitada a ${options.maxPages} páginas — pode haver faturas fora do relatório`);
+      assumptions.push(
+        `[${connection.slug}] a varredura em lote foi limitada a ${options.maxPages} páginas — pode haver faturas fora do relatório`
+      );
     }
   } catch {
     billings.length = 0;
@@ -227,14 +279,18 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
     strategy = "per-customer";
     truncated = true;
     try {
-      const firstPage = await deps.apiGetFull<RawCustomer[]>(`/customers?per_page=${options.limitCustomers}`);
+      const firstPage = await deps.apiGetFor<RawCustomer[]>(
+        connection,
+        `/customers?per_page=${options.limitCustomers}`
+      );
       const sample = (firstPage.data ?? []).slice(0, options.limitCustomers);
       for (const customer of sample) {
         const id = String(customer?.id ?? "");
         if (!id) continue;
         customers.push(customer);
         try {
-          const result = await deps.apiGetFull<RawBilling[]>(
+          const result = await deps.apiGetFor<RawBilling[]>(
+            connection,
             `/billings?customer_id=${id}&type_date=due_day&start_date=${toMikwebDate(addDays(options.from, -60))}&end_date=${toMikwebDate(options.to)}&per_page=50`
           );
           for (const billing of result.data ?? []) billings.push(billing);
@@ -245,20 +301,88 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
       ids.clear();
       for (const billing of billings) ids.add(String(billing.customer_id));
       note = `amostra de ${customers.length} clientes — NÃO é a base inteira`;
-      assumptions.push(`a MikWeb não retornou faturas por janela de vencimento; foi usada uma amostra de ${customers.length} clientes`);
+      assumptions.push(
+        `[${connection.slug}] a MikWeb não retornou faturas por janela de vencimento; foi usada uma amostra de ${customers.length} clientes`
+      );
     } catch (error) {
       note = error instanceof Error ? error.message : String(error);
     }
   }
 
   if (!customers.length && ids.size) {
-    customers = await readCustomers(deps, ids, options.maxPages);
+    customers = await readCustomers(deps, connection, ids, options.maxPages);
     if (customers.length < ids.size) {
       assumptions.push(
-        `apenas ${customers.length} de ${ids.size} clientes das faturas foram carregados — nome e telefone dos demais ficam indisponíveis`
+        `[${connection.slug}] apenas ${customers.length} de ${ids.size} clientes das faturas foram carregados — nome e telefone dos demais ficam indisponíveis`
       );
     }
   }
+
+  return { billings, customers, strategy, truncated, assumptions, note };
+}
+
+/**
+ * Carrega a base real de TODAS as contas ativas, agregada.
+ *
+ * A varredura é em sequência (não em paralelo): cada conta já é N+1 contra a API
+ * da MikWeb, e em paralelo as duas competiriam pelo orçamento de tempo da Edge
+ * Function. Uma conta que falha é registrada e o resto segue.
+ */
+export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Promise<LoadedBase> {
+  const read = await deps.listConnections();
+  const connections = activeConnections(read);
+  if (!connections.length) throw new MikWebNotConfigured();
+
+  // --- varredura por conta (sequencial, tolerante a falha) ------------------
+  const scans = await gatherPerConnection(connections, (connection) => scanConnection(deps, connection, options));
+
+  const billings: RawBilling[] = [];
+  const customers: RawCustomer[] = [];
+  const assumptions: string[] = [];
+  const perConnection: PerConnectionScan[] = [];
+  let anyBulk = false;
+  let anyTruncated = false;
+  const notes: string[] = [];
+
+  for (const scan of scans) {
+    if (!scan.ok || !scan.value) {
+      perConnection.push({ slug: scan.slug, label: scan.label, ok: false, billings: 0, customers: 0, error: scan.error });
+      assumptions.push(`[${scan.slug}] conta FALHOU na varredura: ${scan.error ?? "erro"}`);
+      continue;
+    }
+    const connection = connections.find((item) => item.slug === scan.slug)!;
+    // ORIGEM: cliente e FATURA ganham o prefixo da conta — daqui para frente o
+    // pipeline inteiro (dedupe, contatos, push, envio) é inequívoco. O id da
+    // fatura prefixado é o que evita `billing:123:…` colidir entre contas.
+    for (const billing of scan.value.billings) {
+      billings.push({
+        ...billing,
+        id: prefixedCustomerId(connection.slug, billing.id),
+        customer_id: prefixedCustomerId(connection.slug, billing.customer_id),
+      });
+    }
+    for (const customer of scan.value.customers) {
+      customers.push({ ...customer, id: prefixedCustomerId(connection.slug, customer.id) });
+    }
+    const label = connection.label || connection.slug;
+    perConnection.push({
+      slug: scan.slug,
+      label,
+      ok: true,
+      billings: scan.value.billings.length,
+      customers: scan.value.customers.length,
+    });
+    if (scan.value.strategy === "bulk") anyBulk = true;
+    else anyTruncated = true;
+    if (scan.value.truncated) anyTruncated = true;
+    if (scan.value.note) notes.push(`${connection.slug}: ${scan.value.note}`);
+    assumptions.push(...scan.value.assumptions);
+  }
+
+  const customersScanned = perConnection.reduce((total, item) => total + item.customers, 0);
+  const noteParts: string[] = [];
+  if (notes.length) noteParts.push(notes.join(" · "));
+  noteParts.push(describePerConnection(scans));
 
   // --- alcance por canal ----------------------------------------------------
   const pushRead = await tryRead(deps, "push_subscriptions", "customer_id");
@@ -346,12 +470,14 @@ export async function loadRealBase(deps: SourcesDeps, options: LoadOptions): Pro
     scanned: { billings: billings.length, customers: customers.length, contacts: contacts.size },
     source: {
       kind: "mikweb",
-      strategy,
-      customersScanned: customers.length,
+      // `bulk` se QUALQUER conta varreu por janela; amostra parcial é sinalizada.
+      strategy: anyBulk ? "bulk" : "per-customer",
+      customersScanned,
       billingsScanned: billings.length,
-      truncated,
-      note,
+      truncated: anyTruncated,
+      note: noteParts.join(" — ") || undefined,
     },
     assumptions,
+    connections: perConnection,
   };
 }
