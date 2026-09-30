@@ -836,6 +836,20 @@ por cima do primeiro (decisão humana) e respeita o segundo (risco é do número
 
 ### Estado da produção na data
 
+**Alerta de fila empacada (`stuck-queue`, §19):** a cada rodada de dispatch o sistema
+olha as entregas `queued` com `scheduled_for` no passado e avisa o admin quando:
+
+- o horário agendado passou há **mais de 12h** (deveria ter saído e não saiu), **ou**
+- a entrega está na fila há **mais de 48h** desde a criação (loop de re-agendamento —
+  o deadlock da cota abaixo re-agendava para o dia seguinte e só este sinal o pegaria).
+
+Dois sinais de propósito: nenhum sozinho é completo — o atraso é forte mas cego para
+loops que re-agendam antes de completar 12h; a idade é lenta mas pega qualquer loop (um
+pré-agendado legítimo nunca fica 2 dias na fila). Cooldown de 4h igual aos demais,
+toggle próprio no painel (Conexões → Alertas de operação → "Avisar quando a fila
+empacar", padrão ligado). O alerta cita a hora agendada do registro mais antigo e o
+motivo registrado — no incidente, "cota por cliente (1/dia)".
+
 56 entregas `queued` (agendadas 01/10 10:00) saem sozinhas no primeiro cron dentro da
 janela com o código novo — `markSent` limpa o `error_message` antigo. As 3 `failed` do
 dia são os testes manuais (`NETWORK_UNCERTAIN`): a mensagem chegou, mas sem

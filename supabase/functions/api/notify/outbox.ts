@@ -12,6 +12,7 @@
  */
 
 import type { Channel } from "./model.ts";
+import type { StuckQueueRow } from "./admin-alerts.ts";
 
 /**
  * Cliente Supabase em forma estrutural mínima. Tipar como `SupabaseClient`
@@ -188,6 +189,12 @@ export interface OutboxApi {
     /** Entrega em avaliação — nunca entra na própria contagem. */
     excludeDeliveryId?: string;
   }): Promise<number>;
+  /**
+   * Amostra das entregas `queued` cujo horário agendado JÁ passou — a matéria-prima
+   * do alerta de fila empacada (`classifyStuckQueue`, em admin-alerts.ts). Amostra
+   * limitada e colunas pequenas: roda a cada rodada de dispatch, sem custo.
+   */
+  inspectStuckQueue(input: { now: number; limit?: number }): Promise<StuckQueueRow[]>;
   /**
    * Reserva uma vaga na cota diária de NOVAS CONVERSAS do canal, de forma atômica
    * (`reserve_new_chat_slot`, migration 005). Chamada imediatamente antes de enviar;
@@ -388,6 +395,30 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
       const { count, error } = await query;
       if (error) return 0;
       return Number(count ?? 0);
+    },
+
+    async inspectStuckQueue({ now, limit = 50 }) {
+      try {
+        const { data, error } = await db()
+          .from("notification_deliveries")
+          .select("id, scheduled_for, created_at, error_message")
+          .eq("status", "queued")
+          .lte("scheduled_for", now)
+          .order("scheduled_for", { ascending: true })
+          .limit(limit);
+        if (error || !Array.isArray(data)) return [];
+        return data.map((row) => ({
+          id: String(row.id),
+          scheduledFor: Number(row.scheduled_for) || 0,
+          createdAt: Number(row.created_at) || 0,
+          errorMessage:
+            row.error_message === null || row.error_message === undefined ? null : String(row.error_message),
+        }));
+      } catch {
+        // A tabela pode nem existir (migration pendente): alerta de fila empacada
+        // não pode derrubar a rodada de envio — falha em silêncio, como o fail-open.
+        return [];
+      }
     },
 
     async reserveNewChatSlot({ deliveryId, channel, cap, dayStart }) {

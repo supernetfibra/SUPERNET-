@@ -29,6 +29,8 @@ export interface AdminAlertsConfig {
   /** Alertas ligados/desligados por gatilho. */
   alertChannelDown: boolean;
   alertDispatchFailures: boolean;
+  /** Fila empacada: avisos cujo horário agendado passou há 12h+ (ou presos há 48h+). */
+  alertStuckQueue: boolean;
   /** Quantas falhas numa mesma rodada disparam o aviso. */
   failureThreshold: number;
   /** Resumo diário de cobranças (vencem hoje, vencidas 1–5, vencidas 6+). */
@@ -41,6 +43,7 @@ export const DEFAULT_ADMIN_ALERTS: AdminAlertsConfig = {
   phone: "",
   alertChannelDown: true,
   alertDispatchFailures: true,
+  alertStuckQueue: true,
   failureThreshold: 5,
   dailySummary: false,
   buttons: [{ label: "Abrir painel", url: "" }],
@@ -77,6 +80,7 @@ export function normalizeAdminAlerts(raw: unknown, base: AdminAlertsConfig = DEF
     alertChannelDown: typeof record.alertChannelDown === "boolean" ? record.alertChannelDown : base.alertChannelDown,
     alertDispatchFailures:
       typeof record.alertDispatchFailures === "boolean" ? record.alertDispatchFailures : base.alertDispatchFailures,
+    alertStuckQueue: typeof record.alertStuckQueue === "boolean" ? record.alertStuckQueue : base.alertStuckQueue,
     failureThreshold: Math.min(Math.max(Number(record.failureThreshold) || base.failureThreshold, 1), 200),
     dailySummary: typeof record.dailySummary === "boolean" ? record.dailySummary : base.dailySummary,
     buttons: record.buttons === undefined ? base.buttons : sanitizeButtons(record.buttons, base.buttons),
@@ -87,7 +91,7 @@ export function normalizeAdminAlerts(raw: unknown, base: AdminAlertsConfig = DEF
 // Regras de disparo (puras — o index.ts só executa o que daqui sai)
 // ---------------------------------------------------------------------------
 
-export type AlertKey = "channel-down" | "dispatch-failures" | "quota-paused" | "daily-summary";
+export type AlertKey = "channel-down" | "dispatch-failures" | "quota-paused" | "daily-summary" | "stuck-queue";
 
 export interface AlertRuleInput {
   key: AlertKey;
@@ -222,6 +226,84 @@ export function buildDailySummaryMessage(input: { buckets: SummaryBuckets; at: n
 export const ALERT_COOLDOWN_MS = 4 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
+// Fila empacada (o incidente que motivou: "cota por cliente", 30/09/2026)
+// ---------------------------------------------------------------------------
+
+/** Horário agendado passou há mais de 12h sem sair: algo parou a fila. */
+export const STUCK_QUEUE_OVERDUE_MS = 12 * 60 * 60 * 1000;
+/** Na fila há mais de 48h: um pré-agendado legítimo nunca fica tanto tempo. */
+export const STUCK_QUEUE_AGE_MS = 48 * 60 * 60 * 1000;
+
+export interface StuckQueueRow {
+  id: string;
+  /** Horário agendado (passado — nunca olhamos futuro). */
+  scheduledFor: number;
+  /** Criação da entrega (o "quanto tempo está preso" dos dois sinais). */
+  createdAt: number;
+  /** Motivo registrado pela última passagem (ex.: "cota por cliente (1/dia)"). */
+  errorMessage: string | null;
+}
+
+export interface StuckQueueSignal {
+  /** O alerta deve disparar. */
+  stuck: boolean;
+  /** Quantos avisos estão empacados (os dois sinais somados). */
+  count: number;
+  /** Do sinal forte: agendada para X e nada até agora. */
+  overdue: number;
+  /** Do sinal lento: criada há 48h+ e ainda na fila. */
+  aged: number;
+  /** Hora agendada mais antiga entre os empacados (para a mensagem citar). */
+  oldestScheduledFor: number | null;
+  /** O registro mais empacado é overdue (mensagem destaca "agendada para"). */
+  worstIsOverdue: boolean;
+  /** Motivo do registro mais velho — é ele que diz O QUÊ parou (cota, release...). */
+  oldestReason: string | null;
+}
+
+/**
+ * Classifica a amostra de entregas `queued` com `scheduled_for` no passado.
+ * Duas portas de entrada, porque nenhum sinal sozinho é completo:
+ *
+ *   - **overdue (12h)** — deveria ter saído e não saiu. Forte, mas cego para um
+ *     loop que re-agenda para o dia seguinte ANTES de completar 12h de atraso;
+ *   - **age (48h)** — presa desde a criação. Lento, mas pega qualquer loop: um
+ *     pré-agendado legítimo nunca fica 2 dias na fila (o sync agenda no máximo
+ *     para o horizonte da régua, e o aviso SAI no dia dele).
+ *
+ * O incidente da cota (30/09/2026, 57 entregas re-agendadas dia após dia) não
+ * dispararia só pelo overdue — disparou pelos dois juntos.
+ */
+export function classifyStuckQueue(rows: StuckQueueRow[], now: number): StuckQueueSignal {
+  const signal: StuckQueueSignal = {
+    stuck: false,
+    count: 0,
+    overdue: 0,
+    aged: 0,
+    oldestScheduledFor: null,
+    worstIsOverdue: false,
+    oldestReason: null,
+  };
+  let oldestAt = Number.POSITIVE_INFINITY;
+  for (const row of rows) {
+    const isOverdue = row.scheduledFor <= now - STUCK_QUEUE_OVERDUE_MS;
+    const isAged = row.createdAt <= now - STUCK_QUEUE_AGE_MS;
+    if (!isOverdue && !isAged) continue;
+    signal.count += 1;
+    if (isOverdue) signal.overdue += 1;
+    if (isAged) signal.aged += 1;
+    if (row.createdAt < oldestAt) {
+      oldestAt = row.createdAt;
+      signal.oldestScheduledFor = row.scheduledFor;
+      signal.worstIsOverdue = isOverdue;
+      signal.oldestReason = row.errorMessage;
+    }
+  }
+  signal.stuck = signal.count > 0;
+  return signal;
+}
+
+// ---------------------------------------------------------------------------
 // Mensagens
 // ---------------------------------------------------------------------------
 
@@ -269,6 +351,21 @@ export function buildQuotaPausedMessage(input: { until: number }): string {
   ].join("\n");
 }
 
+/** Fila empacada: o alerta cita o QUANTO, o DESDE QUANDO e o motivo registrado. */
+export function buildStuckQueueMessage(input: { signal: StuckQueueSignal }): string {
+  const s = input.signal;
+  const head = s.worstIsOverdue && s.oldestScheduledFor !== null
+    ? `${s.count} aviso(s) na fila com horário agendado no passado — o mais antigo era para ${formatBr(s.oldestScheduledFor)}.`
+    : `${s.count} aviso(s) presos na fila há mais de 2 dias.`;
+  const lines = [
+    `🚨 Lembretes empacados: a fila não anda.`,
+    head,
+  ];
+  if (s.oldestReason) lines.push(`Motivo registrado: ${s.oldestReason.slice(0, 140)}.`);
+  lines.push(`Abra o painel → Mensagens para ver o motivo de cada aviso e reenviar manualmente se precisar.`);
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Anti-spam no documento (memória dos últimos envios)
 // ---------------------------------------------------------------------------
@@ -279,7 +376,7 @@ export type AdminAlertsState = Partial<Record<AlertKey, number>>;
 export function sanitizeAlertsState(raw: unknown, now: number): AdminAlertsState {
   const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const out: AdminAlertsState = {};
-  for (const key of ["channel-down", "dispatch-failures", "quota-paused", "daily-summary"] as AlertKey[]) {
+  for (const key of ["channel-down", "dispatch-failures", "quota-paused", "daily-summary", "stuck-queue"] as AlertKey[]) {
     const value = Number(record[key]);
     // Timestamp futuro (relógio adiantado/cold start) é descartado: liberaria o
     // alerta imediatamente e, pior, “congelaria” o cooldown por dias.

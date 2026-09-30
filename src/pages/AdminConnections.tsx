@@ -205,6 +205,7 @@ export default function AdminConnections() {
   const [alertPhone, setAlertPhone] = useState("");
   const [alertChannelDown, setAlertChannelDown] = useState(true);
   const [alertDispatchFailures, setAlertDispatchFailures] = useState(true);
+  const [alertStuckQueue, setAlertStuckQueue] = useState(true);
   const [alertThreshold, setAlertThreshold] = useState(5);
   const [alertDailySummary, setAlertDailySummary] = useState(false);
   const [alertButtons, setAlertButtons] = useState<Array<{ label: string; url: string }>>([{ label: "Abrir painel", url: "" }]);
@@ -465,6 +466,7 @@ export default function AdminConnections() {
       setAlertPhone(data.alerts?.phone || "");
       setAlertChannelDown(data.alerts?.alertChannelDown !== false);
       setAlertDispatchFailures(data.alerts?.alertDispatchFailures !== false);
+      setAlertStuckQueue(data.alerts?.alertStuckQueue !== false);
       setAlertThreshold(Number(data.alerts?.failureThreshold ?? 5));
       setAlertDailySummary(data.alerts?.dailySummary === true);
       setAlertButtons(
@@ -497,6 +499,7 @@ export default function AdminConnections() {
           phone: alertPhone,
           alertChannelDown,
           alertDispatchFailures,
+          alertStuckQueue,
           failureThreshold: alertThreshold,
           dailySummary: alertDailySummary,
           buttons: alertButtons,
@@ -1636,6 +1639,15 @@ export default function AdminConnections() {
                     <span className="font-medium text-foreground">Avisar quando uma rodada acumular falhas</span>
                     <span className="block text-[10px] text-muted-foreground">
                       Dispara a partir de {alertThreshold} falha(s) na mesma rodada de envio.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <Switch checked={alertStuckQueue} onCheckedChange={setAlertStuckQueue} className="cursor-pointer mt-0.5" />
+                  <span className="text-xs leading-relaxed">
+                    <span className="font-medium text-foreground">Avisar quando a fila empacar</span>
+                    <span className="block text-[10px] text-muted-foreground">
+                      Avisos com horário agendado passado há mais de 12h — ou presos na fila há mais de 2 dias.
                     </span>
                   </span>
                 </label>

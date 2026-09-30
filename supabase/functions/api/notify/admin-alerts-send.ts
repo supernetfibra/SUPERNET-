@@ -89,7 +89,11 @@ export async function sendAdminAlert(
   const gate = shouldSendAlert({
     key: input.key,
     enabled:
-      input.key === "channel-down" ? input.config.alertChannelDown : input.config.alertDispatchFailures,
+      input.key === "channel-down"
+        ? input.config.alertChannelDown
+        : input.key === "stuck-queue"
+          ? input.config.alertStuckQueue
+          : input.config.alertDispatchFailures,
     cooldownMs: ALERT_COOLDOWN_MS,
     lastSentAt: state[input.key] ?? null,
     now: input.now,

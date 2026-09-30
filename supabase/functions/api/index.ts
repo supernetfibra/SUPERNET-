@@ -56,6 +56,8 @@ import {
   buildDispatchFailuresMessage,
   buildQuotaPausedMessage,
   buildDailySummaryMessage,
+  buildStuckQueueMessage,
+  classifyStuckQueue,
   aggregateBillings,
   civilDayBr,
   shouldSendDailySummary,
@@ -1918,6 +1920,7 @@ function adminAlertButtons(config: ReturnType<typeof normalizeAdminAlerts>, port
  *
  * Gatilhos (com cooldown de 4h por tipo — ver admin-alerts.ts):
  *  - falhas >= adminAlerts.failureThreshold na rodada;
+ *  - fila empacada: avisos com hora agendada passada há 12h+ ou presos há 48h+;
  *  - time-lock (WhatsApp impôs pausa por volume);
  *  - pausa com fila parada E instância desconectada (verificação pontual na UazAPI).
  */
@@ -1948,6 +1951,31 @@ async function runOperationAlertChecks(summary: DispatchSummary): Promise<void> 
         buttons: adminAlertButtons(config, portal, "/admin/messages"),
       });
       return;
+    }
+
+    // 1b) Fila empacada: avisos cujo horário agendado passou há 12h+ (deveria
+    // ter saído e não saiu) ou criados há 48h+ (loop de re-agendamento — o
+    // deadlock da cota de 30/09/2026 se escondia do sinal de atraso porque
+    // re-agendava para o dia seguinte antes de completar 12h). Independente de
+    // `summary.paused`: fila presa por bug não vem acompanhada de pausa declarada.
+    if (config.alertStuckQueue) {
+      try {
+        const stuckRows = await runtime.outbox.inspectStuckQueue({ now: nowMs });
+        const stuckSignal = classifyStuckQueue(stuckRows, nowMs);
+        if (stuckSignal.stuck) {
+          await sendAdminAlert(alertDeps, {
+            key: "stuck-queue",
+            config,
+            title: "Lembretes: fila empacada",
+            message: buildStuckQueueMessage({ signal: stuckSignal }),
+            phone: config.phone,
+            now: nowMs,
+            buttons: adminAlertButtons(config, portal, "/admin/messages"),
+          });
+        }
+      } catch (error) {
+        console.warn("[ADMIN_ALERT] verificação de fila empacada falhou", error instanceof Error ? error.message : error);
+      }
     }
 
     // 2) Pausa com fila: ou é time-lock (avisa) ou o canal está fora (verifica).

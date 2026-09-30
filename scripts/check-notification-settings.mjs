@@ -56,6 +56,8 @@ import {
   buildDispatchFailuresMessage,
   buildQuotaPausedMessage,
   buildDailySummaryMessage,
+  buildStuckQueueMessage,
+  classifyStuckQueue,
   aggregateBillings,
   resolveButtons,
   shouldSendDailySummary,
@@ -1562,6 +1564,35 @@ check("canal parado aponta o caminho no painel", buildChannelDownMessage({ reaso
 check("falhas trazem contagem e exemplo", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: "número inválido", at: NOW }).includes("7 falha"));
 check("falhas apontam o filtro da página Mensagens", buildDispatchFailuresMessage({ failed: 7, sent: 2, sample: null, at: NOW }).includes("Mensagens"));
 check("time-lock diz que volta sozinho", buildQuotaPausedMessage({ until: NOW + 3600_000 }).includes("sozinho"));
+
+// Fila empacada: dois sinais — agendada há 12h+ (deveria ter saído) OU presa há
+// 48h+ (loop de re-agendamento: o incidente da cota de 30/09/2026 re-agendava
+// para o dia seguinte e só o sinal de idade o pegaria).
+const SQ_NOW = Date.parse("2026-09-30T12:00:00Z");
+const sqEmpty = { stuck: false, count: 0, overdue: 0, aged: 0, oldestScheduledFor: null, worstIsOverdue: false, oldestReason: null };
+eq("fila vazia não empaca", classifyStuckQueue([], SQ_NOW), sqEmpty);
+eq("agendada para o futuro não empaca (pré-agendado legítimo)", classifyStuckQueue([{ id: "a", scheduledFor: SQ_NOW + 3600_000, createdAt: SQ_NOW, errorMessage: null }], SQ_NOW), sqEmpty);
+eq("recente (menos de 12h) não empaca", classifyStuckQueue([{ id: "a2", scheduledFor: SQ_NOW - 3600_000, createdAt: SQ_NOW - 3600_000, errorMessage: null }], SQ_NOW), sqEmpty);
+eq(
+  "atrasada de 13h dispara (deveria ter saído)",
+  classifyStuckQueue([{ id: "b", scheduledFor: SQ_NOW - 13 * 3600_000, createdAt: SQ_NOW - 13 * 3600_000, errorMessage: "limite por cliente (1/dia)" }], SQ_NOW),
+  { stuck: true, count: 1, overdue: 1, aged: 0, oldestScheduledFor: SQ_NOW - 13 * 3600_000, worstIsOverdue: true, oldestReason: "limite por cliente (1/dia)" }
+);
+eq(
+  "presa há 49h com horário recente dispara (loop de re-agendamento)",
+  classifyStuckQueue([{ id: "c", scheduledFor: SQ_NOW - 3600_000, createdAt: SQ_NOW - 49 * 3600_000, errorMessage: "cota de novas conversas (20/20)" }], SQ_NOW),
+  { stuck: true, count: 1, overdue: 0, aged: 1, oldestScheduledFor: SQ_NOW - 3600_000, worstIsOverdue: false, oldestReason: "cota de novas conversas (20/20)" }
+);
+eq("os dois sinais somam no mesmo lote", classifyStuckQueue([{ id: "d", scheduledFor: SQ_NOW - 13 * 3600_000, createdAt: SQ_NOW - 13 * 3600_000, errorMessage: null }, { id: "e", scheduledFor: SQ_NOW - 3600_000, createdAt: SQ_NOW - 49 * 3600_000, errorMessage: null }], SQ_NOW).count, 2);
+const stuckMsgOverdue = buildStuckQueueMessage({
+  signal: classifyStuckQueue([{ id: "f", scheduledFor: Date.parse("2026-09-29T10:00:00Z"), createdAt: Date.parse("2026-09-29T10:00:00Z"), errorMessage: "cota por cliente (1/dia)" }], SQ_NOW),
+});
+check("mensagem cita a hora agendada (fuso de SP) e o motivo registrado", stuckMsgOverdue.includes("29/09, 07:00") && stuckMsgOverdue.includes("cota por cliente (1/dia)"), stuckMsgOverdue);
+check("mensagem diz o caminho no painel", buildStuckQueueMessage({ signal: { stuck: true, count: 3, overdue: 3, aged: 0, oldestScheduledFor: SQ_NOW, worstIsOverdue: true, oldestReason: null } }).includes("Mensagens"));
+check("mensagem destaca presas há 2 dias quando é o caso", buildStuckQueueMessage({ signal: classifyStuckQueue([{ id: "g", scheduledFor: SQ_NOW - 3600_000, createdAt: SQ_NOW - 49 * 3600_000, errorMessage: null }], SQ_NOW) }).includes("2 dias"));
+eq("toggle da fila empacada é normalizado", normalizeAdminAlerts({ alertStuckQueue: false }).alertStuckQueue, false);
+eq("toggle ausente mantém a fila empacada ligada", normalizeAdminAlerts({}).alertStuckQueue, true);
+eq("memória guarda a chave stuck-queue", sanitizeAlertsState({ "stuck-queue": NOW - 1000 }, NOW), { "stuck-queue": NOW - 1000 });
 
 // 20. Multi-conta MikWeb — duas contas, um canal, ids inequívocos
 // ---------------------------------------------------------------------------
