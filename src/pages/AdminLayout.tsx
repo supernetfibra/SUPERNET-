@@ -29,6 +29,7 @@ import {
   MessageSquareText,
   CalendarClock,
   PlugZap,
+  Gift,
 } from "lucide-react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
@@ -43,6 +44,7 @@ import { useTheme } from "@/lib/theme-provider";
 const adminNavigation = [
   { name: "Dashboard", short: "Início", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Solicitações", short: "Pedidos", href: "/admin/install-requests", icon: Home },
+  { name: "Indicações", short: "Indica", href: "/admin/referrals", icon: Gift },
   { name: "Conexões", short: "Conexões", href: "/admin/connections", icon: PlugZap },
   { name: "Régua de lembretes", short: "Régua", href: "/admin/rules", icon: CalendarClock },
   { name: "Mensagens", short: "Mensagens", href: "/admin/messages", icon: MessageSquareText },

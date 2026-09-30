@@ -33,8 +33,24 @@ export const TEMPLATE_CHANNELS = ["whatsapp", "push"] as const;
 export type TemplateChannel = (typeof TEMPLATE_CHANNELS)[number];
 
 /** Eventos que a régua pode gerar — um template por evento/canal. */
-export const TEMPLATE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late"] as const;
+export const TEMPLATE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late", "referral.approved"] as const;
 export type TemplateEventKey = (typeof TEMPLATE_EVENT_KEYS)[number];
+
+/**
+ * Pares canal:evento EDITÁVEIS no painel. O aviso de indicação existe só no
+ * WhatsApp (push do portal é para faturas; anunciar pontos por push exigiria
+ * título/deep link próprios — e o evento não nasce por push).
+ */
+const EDITABLE_PAIRS: Array<{ channel: TemplateChannel; eventKey: TemplateEventKey }> = [
+  ...(["whatsapp", "push"] as const).flatMap((channel) =>
+    (["billing.due_soon", "billing.due_today", "billing.late"] as const).map((eventKey) => ({ channel, eventKey } as const))
+  ),
+  { channel: "whatsapp", eventKey: "referral.approved" },
+];
+
+function isEditablePair(channel: string, eventKey: string): boolean {
+  return EDITABLE_PAIRS.some((pair) => pair.channel === channel && pair.eventKey === eventKey);
+}
 
 const TITLE_MAX = 120;
 const BODY_MAX = 4096;
@@ -95,10 +111,7 @@ export function sanitizeTemplates(raw: unknown, notes: string[], context: string
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const [channel, ...eventParts] = key.split(":");
     const eventKey = eventParts.join(":");
-    if (
-      !TEMPLATE_CHANNELS.includes(channel as TemplateChannel) ||
-      !TEMPLATE_EVENT_KEYS.includes(eventKey as TemplateEventKey)
-    ) {
+    if (!isEditablePair(channel, eventKey)) {
       notes.push(`${context}: template "${key}" descartado — canal/evento desconhecido`);
       continue;
     }
@@ -262,6 +275,10 @@ export interface SampleTemplatePayload {
   link: string;
   empresa: string;
   tem_encargos: string;
+  /** Programa de indicação (referral.approved). */
+  indicado: string;
+  pontos: string;
+  saldo: string;
 }
 
 /** Dados de exemplo para o preview do editor — todos os placeholders preenchidos. */
@@ -280,6 +297,11 @@ export function sampleTemplatePayload(): TemplatePayload {
     link: "https://minhasupernet.com/faturas/123",
     empresa: "MinhaSuperNet",
     tem_encargos: "1",
+    // Programa de indicação: o preview do editor renderiza o template do evento
+    // com estes exemplos (o evento real preenche com os dados da aprovação).
+    indicado: "João Pereira",
+    pontos: "100",
+    saldo: "250",
   };
 }
 
@@ -308,9 +330,7 @@ export interface TemplatePreview {
   edited: boolean;
 }
 
-const ALL_KEYS = TEMPLATE_CHANNELS.flatMap((channel) =>
-  TEMPLATE_EVENT_KEYS.map((eventKey) => ({ channel, eventKey }))
-);
+const ALL_KEYS = EDITABLE_PAIRS;
 
 /** Estado completo do editor: texto em vigor + render de exemplo por par. */
 export function describeTemplates(stored: Record<string, StoredTemplate>): {

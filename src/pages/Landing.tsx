@@ -39,13 +39,14 @@ import {
 } from "@/components/ui/dialog";
 import TermsOfUseContent from "@/components/terms-content";
 import PrivacyContent from "@/components/privacy-content";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { submitInstallRequest } from "@/lib/install-request";
 import { maskCpf, maskPhone, maskCep } from "@/lib/form-masks";
 import { lookupCep } from "@/lib/cep-lookup";
+import { Gift } from "lucide-react";
 
 const BRAZILIAN_STATES = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT",
@@ -85,6 +86,39 @@ export default function Landing() {
   const [submitted, setSubmitted] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
+
+  // Indicação: código do link (?ref=XXXX) validado contra o backend. O banner
+  // mostra só o primeiro nome do indicador (LGPD). Código inválido não bloqueia
+  // o formulário — o lead nunca é barrado por problema no programa.
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+  const [referrerName, setReferrerName] = useState<string | null>(null);
+
+  const validateReferral = useCallback(async (code: string) => {
+    try {
+      const res = await fetch(`/api/public/referral/${encodeURIComponent(code)}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.valid) {
+        setReferralCode(code);
+        setReferrerName(data.firstName || null);
+      } else {
+        setReferralCode(null);
+        setReferrerName(null);
+      }
+    } catch {
+      setReferralCode(null);
+      setReferrerName(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (ref) {
+      void validateReferral(ref);
+      // Limpa ?ref= da barra para compartilhamentos subsequentes não herdarem o código.
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [validateReferral]);
 
   // Photo state (base64 data URLs)
   const [photos, setPhotos] = useState<{
@@ -226,6 +260,7 @@ export default function Landing() {
       photoStreet: photos.street || undefined,
       photoIdFront: photos.idFront || undefined,
       photoIdBack: photos.idBack || undefined,
+      referralCode: referralCode || undefined,
     });
     setSubmitting(false);
 
@@ -372,6 +407,16 @@ export default function Landing() {
               </div>
             ) : (
               <div className="rounded-lg border border-border bg-card p-6 sm:p-8 animate-[fadeIn_0.3s_ease-out]">
+                {/* Banner de indicação — quem chegou pelo link do amigo vê o nome (só o 1º nome, LGPD) */}
+                {referrerName && (
+                  <div className="mb-6 flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                    <Gift className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <p className="text-sm text-emerald-700 dark:text-emerald-300 leading-snug">
+                      Você foi indicado por <strong>{referrerName}</strong>. Complete a solicitação para que seu amigo
+                      ganhe os pontos dele. 🎁
+                    </p>
+                  </div>
+                )}
                 <div className="text-center mb-8">
                   <div className="flex justify-center mb-4">
                     <div className="h-12 w-12 rounded-full bg-secondary flex items-center justify-center">

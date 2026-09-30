@@ -21,6 +21,7 @@ import {
   Sun,
   Moon,
   CircleUser,
+  Gift,
 } from "lucide-react";
 import { useMemo } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router";
@@ -33,6 +34,7 @@ import type { BillingSummary } from "@/hooks/use-billings";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Faturas", href: "/faturas", icon: FileText },
+  { name: "Indique", href: "/indicacoes", icon: Gift },
   { name: "Perfil", href: "/perfil", icon: User },
 ];
 

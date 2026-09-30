@@ -30,8 +30,9 @@ import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
 import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
 import { describeSync } from "./notify/sync.ts";
 import { runSimulation } from "./notify/simulate.ts";
-import { buildPayload } from "./notify/templates.ts";
+import { buildPayload, renderFor, EVENT_URL, type ChannelTemplate } from "./notify/templates.ts";
 import { applyOverrides } from "./notify/settings-store.ts";
+import { loadNotificationSettings } from "./notify/settings-store.ts";
 import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
 import { maskToken } from "./notify/config.ts";
 import type { ChannelTemplate } from "./notify/templates.ts";
@@ -64,6 +65,21 @@ import {
 import { sendAdminAlert } from "./notify/admin-alerts-send.ts";
 import type { DispatchSummary } from "./notify/dispatch.ts";
 import { aggregateFunnel, buildFunnelWeeks, funnelTotals, weekStartToMs } from "./notify/engagement.ts";
+import {
+  buildReferralMeView,
+  isReferralRewardKind,
+  normalizeReferralCode,
+  publicFirstName,
+  redemptionTransitionAllowed,
+  referralStats,
+  referralApprovedDedupeKey,
+  referralApprovedPayload,
+  REFERRAL_APPROVED_EVENT_KEY,
+  type InstallRequestReferralRow,
+  type RedemptionRow,
+  type ReferralLedgerRow,
+} from "./notify/referrals.ts";
+import { referralDashboardMetrics } from "./notify/referral-metrics.ts";
 
 // ---------------------------------------------------------------------------
 // Env helpers
@@ -399,6 +415,178 @@ async function requireAdmin(request: Request): Promise<boolean> {
   const token = getAdminSessionToken(request);
   if (!token) return false;
   return (await getAdminSession(token)) !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Programa de indicação — helpers (lógica pura em notify/referrals.ts)
+// ---------------------------------------------------------------------------
+
+interface ReferralConfig {
+  enabled: boolean;
+  pointsPerApproved: number;
+  migrationPending: boolean;
+}
+
+/**
+ * Config do programa (linha única em referral_config, migration 011).
+ * Tabela ausente = migration pendente → devolve default com flag: os
+ * endpoints respondem como desligados em vez de 500.
+ */
+async function getReferralConfig(): Promise<ReferralConfig> {
+  try {
+    const { data, error } = await db().from("referral_config").select("*").eq("id", "default").maybeSingle();
+    if (error) return { enabled: false, pointsPerApproved: 100, migrationPending: true };
+    if (!data) return { enabled: false, pointsPerApproved: 100, migrationPending: true };
+    return {
+      enabled: Boolean(data.enabled),
+      pointsPerApproved: Number(data.points_per_approved) || 100,
+      migrationPending: false,
+    };
+  } catch {
+    return { enabled: false, pointsPerApproved: 100, migrationPending: true };
+  }
+}
+
+/** Saldo = SUM(delta) do ledger (fonte única — nunca campo derivado). */
+async function referralBalance(customerRef: string): Promise<number> {
+  try {
+    const { data } = await db()
+      .from("referral_points_ledger")
+      .select("delta")
+      .eq("customer_ref", customerRef);
+    return (data ?? []).reduce((acc: number, row: { delta: number | null }) => acc + (Number(row.delta) || 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Garante a linha do código do cliente; devolve o código ativo (ou null se migration pendente). */
+async function ensureReferralCode(customerRef: string, name: string, cpf: string): Promise<string | null> {
+  try {
+    const { data: existing } = await db()
+      .from("referral_codes")
+      .select("code")
+      .eq("customer_ref", customerRef)
+      .eq("active", true)
+      .maybeSingle();
+    if (existing?.code) return existing.code;
+    const { data, error } = await db().rpc("ensure_referral_code", {
+      p_customer_ref: customerRef,
+      p_name: name,
+      p_cpf: cpf,
+    });
+    if (error) throw error;
+    return (data as string) || null;
+  } catch (err) {
+    console.error("[REFERRAL_CODE_ERROR]", err);
+    return null;
+  }
+}
+
+/** Busca o código ativo para validar a indicação do formulário público. */
+async function findActiveReferralCode(code: string) {
+  const { data } = await db()
+    .from("referral_codes")
+    .select("code, customer_ref, referrer_name, referrer_cpf, active")
+    .eq("code", code)
+    .eq("active", true)
+    .maybeSingle();
+  return data;
+}
+
+/**
+ * Insere a instalação em install_requests (migration 001), tolerando o schema
+ * antigo sem `referral_code` (deploy do código antes da migration): grava
+ * sem o vínculo em vez de falhar a solicitação do cliente.
+ */
+async function insertInstallRequest(values: Record<string, unknown>, referralCode: string | null): Promise<void> {
+  const attempt = { ...values, ...(referralCode ? { referral_code: referralCode } : {}) };
+  const { error } = await db().from("install_requests").insert(attempt);
+  if (error?.message?.includes("referral_code")) {
+    const { error: retryError } = await db().from("install_requests").insert(values);
+    if (retryError) throw new Error(`DB insert into install_requests failed: ${retryError.message}`);
+    return;
+  }
+  if (error) throw new Error(`DB insert into install_requests failed: ${error.message}`);
+}
+
+/**
+ * Enfileira (idempotente) o aviso de "indicação aprovada" para o indicador.
+ *
+ * Reaproveita TODA a infraestrutura do pipeline de lembretes: outbox → dispatcher
+ * → UazAPI. Recebe de graça opt-out (webhook), janela de envio, cotas, ritmo
+ * humano e botões — sem reimplementar nada. Regras:
+ *   • só sai se o indicador tiver contato com opt-in em `whatsapp_contacts`
+ *     (reengajar opt-out por here é exatamente o que o cliente NÃO quer);
+ *   • dedupe key = `referral:<id>:approval` — a mesma do crédito: o segundo
+ *     `enqueue_notification` é ignorado pelo banco;
+ *   • preview é renderizado AQUI (enqueue com `rendered`) e o dispatcher
+ *     re-renderiza no envio de qualquer forma (templates resolvidos por chamada);
+ *   • `saldo` no payload é o saldo APÓS o crédito (lido depois do RPC).
+ * Toda falha é logada e engolida: o crédito já aconteceu — o aviso é cortesia.
+ */
+async function enqueueReferralApprovedNotice(
+  installRequestId: string,
+  referrer: { customer_ref: string; referrer_name: string; referrer_cpf: string },
+  referredName: string,
+  points: number
+): Promise<void> {
+  try {
+    const contact = await whatsappRuntime().getContact(referrer.customer_ref);
+    if (!contact?.phoneE164 || !contact.optIn) {
+      console.log(
+        `[REFERRAL_NOTIFY] sem envio para ${referrer.customer_ref}: ${!contact?.phoneE164 ? "sem celular válido" : "sem opt-in"}`
+      );
+      return;
+    }
+
+    const balance = await referralBalance(referrer.customer_ref);
+    const firstName = publicFirstName(referrer.referrer_name) ?? "cliente";
+    // Mesma settings que o simulador/dispatcher leem (portalBaseUrl, companyName).
+    const settingsLoaded = await loadNotificationSettings({
+      db,
+      getChannelConfig: () => whatsappRuntime().getConfig(),
+    }).catch(() => null);
+    const portalBaseUrl = settingsLoaded?.settings.portalBaseUrl ?? "https://minhasupernet.com";
+    const companyName = settingsLoaded?.settings.companyName ?? "MinhaSuperNet";
+
+    const payload = referralApprovedPayload({
+      referrerFirstName: firstName,
+      referredName: referredName || "seu indicado",
+      points,
+      balanceAfter: balance,
+      portalBaseUrl,
+      companyName,
+    });
+    const templates: ChannelTemplate[] | undefined = (await whatsappRuntime().getTemplates()).templates;
+    const rendered = renderFor("whatsapp", REFERRAL_APPROVED_EVENT_KEY, payload, templates);
+    const preview = rendered.message ? { body: rendered.message.body } : null;
+
+    const enqueued = await whatsappRuntime().outbox.enqueue({
+      eventKey: REFERRAL_APPROVED_EVENT_KEY,
+      dedupeKey: referralApprovedDedupeKey(installRequestId),
+      // Mesmo formato de customer_id do sync/contatos (a sessão usa o mesmo).
+      customerId: referrer.customer_ref,
+      cpf: referrer.referrer_cpf || null,
+      payload: { ...payload, [EVENT_URL]: payload.link } as Record<string, unknown>,
+      priority: "transactional",
+      channel: "whatsapp",
+      target: contact.phoneE164,
+      rendered: preview,
+      scheduledFor: now(),
+    });
+
+    if (enqueued.created) {
+      console.log(`[REFERRAL_NOTIFY] aviso enfileirado (${enqueued.deliveryId}) para ${referrer.customer_ref}`);
+      // Dispara o dispatcher para o aviso sair já (respeitando janela/cotas —
+      // se a janela estiver fechada ele fica na fila para o cron de 5 min).
+      await whatsappRuntime().dispatch({ ids: [enqueued.deliveryId!], policy: "manual", limit: 1 });
+    } else {
+      console.log(`[REFERRAL_NOTIFY] aviso já registrado para ${referrer.customer_ref} — nada reenviado`);
+    }
+  } catch (err) {
+    console.error("[REFERRAL_NOTIFY_ERROR]", err);
+  }
 }
 
 /**
@@ -3212,7 +3400,10 @@ app.post("/admin/install-requests/:id/status", async (c) => {
   if (body.status !== "approved" && body.status !== "rejected") {
     return jsonError("Status inválido.");
   }
-  await db()
+
+  const { data: current } = await db().from("install_requests").select("status, referral_code, full_name").eq("id", requestId).maybeSingle();
+
+  const { error: updateError } = await db()
     .from("install_requests")
     .update({
       status: body.status,
@@ -3220,6 +3411,298 @@ app.post("/admin/install-requests/:id/status", async (c) => {
       reviewed_at: now(),
     })
     .eq("id", requestId);
+  if (updateError) {
+    console.error("[INSTALL_STATUS_ERROR]", updateError.message);
+    return jsonError("Erro ao atualizar a solicitação.", 500);
+  }
+
+  // ---------------------------------------------------------------------
+  // Programa de indicação: aprovar uma solicitação VINDA de link credita os
+  // pontos do indicador. Idempotente no BANCO (unique parcial no ledger):
+  // re-aprovar, duplo clique ou retry não duplica. Migration pendente ou
+  // erro aqui NUNCA reverte a aprovação — o crédito é best-effort logado.
+  // ---------------------------------------------------------------------
+  if (body.status === "approved" && current?.referral_code && current.status !== "approved") {
+    try {
+      const referrer = await findActiveReferralCode(current.referral_code);
+      if (referrer) {
+        const config = await getReferralConfig();
+        if (config.enabled && config.pointsPerApproved > 0) {
+          const { error: creditError } = await db().rpc("credit_referral_points", {
+            p_customer_ref: referrer.customer_ref,
+            p_delta: config.pointsPerApproved,
+            p_reason: `approval:${requestId}`,
+            p_source_type: "approval",
+            p_source_id: requestId,
+            p_created_by: "admin",
+          });
+          if (creditError) {
+            // 23505 aqui = crédito já lançado (re-aprovação) — não é erro.
+            console.error("[REFERRAL_CREDIT_ERROR]", creditError.message);
+          }
+          // Aviso via WhatsApp pela MESMA outbox dos lembretes (mesma dedupe key
+          // do crédito: aprovar 2× não credita e não reenvia). Best-effort:
+          // falha aqui nunca reverte a aprovação nem o crédito.
+          await enqueueReferralApprovedNotice(requestId, referrer, current.full_name, config.pointsPerApproved);
+        }
+      }
+    } catch (err) {
+      console.error("[REFERRAL_CREDIT_ERROR]", err);
+    }
+  }
+
+  return json({ success: true });
+});
+
+// ===========================================================================
+// ADMIN — programa de indicação (tabelas referral_*, migration 011)
+// ===========================================================================
+
+/**
+ * Métricas do card do dashboard (indicações do mês, taxa de aprovação, pontos).
+ * Leitura leve (mesmas consultas do /admin/referrals, sem devolver linhas) e
+ * tolerante a migration 011 pendente: 200 + migrationPending, nunca 500 — o
+ * dashboard não pode quebrar por causa de um card.
+ */
+app.get("/admin/referrals/stats", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const config = await getReferralConfig();
+  if (config.migrationPending) return json({ migrationPending: true, metrics: null });
+  try {
+    const [requestsRes, ledgerRes, redemptionsRes] = await Promise.all([
+      db()
+        .from("install_requests")
+        .select("status, created_at")
+        .not("referral_code", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(2000),
+      db()
+        .from("referral_points_ledger")
+        .select("delta, customer_ref, created_at")
+        .order("created_at", { ascending: false })
+        .limit(5000),
+      db()
+        .from("referral_redemptions")
+        .select("status, points_cost")
+        .limit(2000),
+    ]);
+    const metrics = referralDashboardMetrics({
+      referrals: (requestsRes.data ?? []) as Array<{ status: string; created_at: number }>,
+      ledger: (ledgerRes.data ?? []) as Array<{ delta: number; customer_ref: string; created_at: number }>,
+      redemptions: (redemptionsRes.data ?? []) as Array<{ status: string; points_cost: number }>,
+    });
+    return json({ migrationPending: false, metrics, programEnabled: config.enabled });
+  } catch (err) {
+    console.error("[REFERRAL_STATS_ERROR]", err);
+    return jsonError("Erro ao calcular as métricas de indicações.", 500);
+  }
+});
+
+/** Admin endpoints toleram migration 011 pendente: 200 + migrationPending. */
+app.get("/admin/referrals", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const config = await getReferralConfig();
+  if (config.migrationPending) return json({ migrationPending: true, referrals: [], rewards: [], redemptions: [] });
+
+  try {
+    const [codesRes, requestsRes, rewardsRes, ledgerRes, redemptionsRes] = await Promise.all([
+      db().from("referral_codes").select("*").order("created_at", { ascending: false }).limit(500),
+      db()
+        .from("install_requests")
+        .select("id, full_name, cpf, phone, status, referral_code, created_at, reviewed_at")
+        .not("referral_code", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      db().from("referral_rewards").select("*").order("sort_order").order("created_at"),
+      db()
+        .from("referral_points_ledger")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(1000),
+      db()
+        .from("referral_redemptions")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(300),
+    ]);
+
+    const codeToReferrer = new Map(
+      (codesRes.data ?? []).map((row: { code: string; referrer_name: string; customer_ref: string }) => [row.code, row])
+    );
+    const referrals = (requestsRes.data ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      referrer_name: codeToReferrer.get(String(row.referral_code))?.referrer_name ?? "(código não encontrado)",
+      referrer_customer_ref: codeToReferrer.get(String(row.referral_code))?.customer_ref ?? null,
+    }));
+
+    const stats = referralStats({
+      ledger: (ledgerRes.data ?? []) as ReferralLedgerRow[],
+      redemptions: (redemptionsRes.data ?? []) as RedemptionRow[],
+      referrals: (requestsRes.data ?? []) as InstallRequestReferralRow[],
+    });
+    return json({ migrationPending: false, referrals, rewards: rewardsRes.data ?? [], redemptions: redemptionsRes.data ?? [], ledger: ledgerRes.data ?? [], stats, config });
+  } catch (err) {
+    console.error("[ADMIN_REFERRALS_ERROR]", err);
+    return jsonError("Erro ao carregar indicações.", 500);
+  }
+});
+
+app.post("/admin/referrals/config", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const enabled = Boolean(body.enabled);
+  const points = Math.round(Number(body.pointsPerApproved));
+  if (!Number.isFinite(points) || points < 1 || points > 100000) {
+    return jsonError("Pontos por aprovação deve ser entre 1 e 100000.");
+  }
+  const { error } = await db()
+    .from("referral_config")
+    .upsert(
+      { id: "default", enabled, points_per_approved: points, updated_at: now(), updated_by: "admin" },
+      { onConflict: "id" }
+    );
+  if (error) {
+    console.error("[REFERRAL_CONFIG_ERROR]", error.message);
+    return jsonError("Erro ao salvar a configuração (migration aplicada?).", 500);
+  }
+  return json({ success: true });
+});
+
+app.post("/admin/referrals/rewards", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const title = String(body.title || "").trim();
+  const pointsCost = Math.round(Number(body.pointsCost));
+  const kind = String(body.kind || "desconto");
+  if (title.length < 2) return jsonError("Informe o título da recompensa.");
+  if (!Number.isFinite(pointsCost) || pointsCost < 1) return jsonError("Custo em pontos deve ser maior que zero.");
+  if (!isReferralRewardKind(kind)) return jsonError("Tipo inválido.");
+  const { error } = await db().from("referral_rewards").insert({
+    title: title.slice(0, 120),
+    description: body.description ? String(body.description).trim().slice(0, 500) : null,
+    points_cost: pointsCost,
+    kind,
+    active: body.active !== false,
+    sort_order: Math.round(Number(body.sortOrder)) || 0,
+    created_at: now(),
+  });
+  if (error) {
+    console.error("[REFERRAL_REWARD_CREATE_ERROR]", error.message);
+    return jsonError("Erro ao criar a recompensa.", 500);
+  }
+  return json({ success: true });
+});
+
+app.put("/admin/referrals/rewards/:id", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const patch: Record<string, unknown> = { updated_at: now() };
+  if (body.title !== undefined) {
+    const title = String(body.title || "").trim();
+    if (title.length < 2) return jsonError("Informe o título da recompensa.");
+    patch.title = title.slice(0, 120);
+  }
+  if (body.description !== undefined) patch.description = body.description ? String(body.description).trim().slice(0, 500) : null;
+  if (body.pointsCost !== undefined) {
+    const pointsCost = Math.round(Number(body.pointsCost));
+    if (!Number.isFinite(pointsCost) || pointsCost < 1) return jsonError("Custo em pontos deve ser maior que zero.");
+    patch.points_cost = pointsCost;
+  }
+  if (body.kind !== undefined) {
+    if (!isReferralRewardKind(body.kind)) return jsonError("Tipo inválido.");
+    patch.kind = String(body.kind);
+  }
+  if (body.active !== undefined) patch.active = Boolean(body.active);
+  if (body.sortOrder !== undefined) patch.sort_order = Math.round(Number(body.sortOrder)) || 0;
+  const { error } = await db().from("referral_rewards").update(patch).eq("id", id);
+  if (error) {
+    console.error("[REFERRAL_REWARD_UPDATE_ERROR]", error.message);
+    return jsonError("Erro ao atualizar a recompensa.", 500);
+  }
+  return json({ success: true });
+});
+
+app.delete("/admin/referrals/rewards/:id", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  // Pedidos antigos referenciam a recompensa (FK RESTRICT + snapshot dos
+  // campos): em vez de apagar, DESATIVA — histórico preservado.
+  const { error } = await db().from("referral_rewards").update({ active: false, updated_at: now() }).eq("id", id);
+  if (error) {
+    console.error("[REFERRAL_REWARD_DELETE_ERROR]", error.message);
+    return jsonError("Erro ao desativar a recompensa.", 500);
+  }
+  return json({ success: true, softDeleted: true });
+});
+
+app.post("/admin/referrals/redemptions/:id/decision", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const decision = String(body.decision || "");
+  if (!("approved rejected applied".split(" ")).includes(decision)) return jsonError("Decisão inválida.");
+  try {
+    const { data: current } = await db().from("referral_redemptions").select("*").eq("id", id).maybeSingle();
+    if (!current) return jsonError("Resgate não encontrado.", 404);
+    if (!redemptionTransitionAllowed(current.status, decision)) {
+      return jsonError(`Transição de status inválida: ${current.status} → ${decision}.`);
+    }
+
+    if (decision === "approved" || decision === "applied") {
+      const { error } = await db()
+        .from("referral_redemptions")
+        .update({ status: decision, admin_note: body.adminNote?.trim() || current.admin_note || null, reviewed_at: now(), applied_at: decision === "applied" ? now() : current.applied_at })
+        .eq("id", id);
+      if (error) throw error;
+      return json({ success: true });
+    }
+
+    // rejected: devolve os pontos via ledger (delta positivo, reason único por
+    // resgate — idempotente pelo mesmo unique parcial).
+    const { error } = await db()
+      .from("referral_redemptions")
+      .update({ status: "rejected", admin_note: body.adminNote?.trim() || current.admin_note || null, reviewed_at: now() })
+      .eq("id", id);
+    if (error) throw error;
+    const { error: refundError } = await db().rpc("credit_referral_points", {
+      p_customer_ref: current.customer_ref,
+      p_delta: current.points_cost,
+      p_reason: `refund:${id}`,
+      p_source_type: "redemption",
+      p_source_id: id,
+      p_created_by: "admin",
+    });
+    if (refundError) console.error("[REFERRAL_REFUND_ERROR]", refundError.message);
+    return json({ success: true, refunded: true });
+  } catch (err) {
+    console.error("[REFERRAL_DECISION_ERROR]", err);
+    return jsonError("Erro ao processar a decisão.", 500);
+  }
+});
+
+app.post("/admin/referrals/adjust", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const body = await c.req.json().catch(() => ({}));
+  const customerRef = String(body.customerRef || "").trim();
+  const delta = Math.round(Number(body.delta));
+  const reason = String(body.reason || "").trim();
+  if (!customerRef) return jsonError("Cliente não informado.");
+  if (!Number.isFinite(delta) || delta === 0) return jsonError("Informe um ajuste diferente de zero.");
+  if (reason.length < 3) return jsonError("Descreva o motivo do ajuste (obrigatório para auditoria).");
+
+  const { error } = await db().rpc("credit_referral_points", {
+    p_customer_ref: customerRef,
+    p_delta: delta,
+    p_reason: `admin:${reason.slice(0, 80)}`, // reason na chave de idempotência: mesmo ajuste re-enviado não duplica
+    p_source_type: "admin_adjust",
+    p_source_id: null,
+    p_created_by: "admin",
+  });
+  if (error) {
+    console.error("[REFERRAL_ADJUST_ERROR]", error.message);
+    return jsonError("Erro ao registrar o ajuste.", 500);
+  }
   return json({ success: true });
 });
 
@@ -3504,33 +3987,188 @@ app.post("/public/install-request", async (c) => {
       return val;
     };
 
-    await insertOrThrow("install_requests", {
-      full_name: fullName.slice(0, 200),
-      cpf,
-      phone,
-      email: body.email || null,
-      zip_code: body.zipCode || null,
-      street: body.street || null,
-      number: body.number || null,
-      complement: body.complement || null,
-      neighborhood: body.neighborhood || null,
-      city: body.city || null,
-      state: body.state || null,
-      desired_plan: body.desiredPlan || null,
-      message: body.message || null,
-      photo_house_front: sanitizePhoto(body.photoHouseFront),
-      photo_street: sanitizePhoto(body.photoStreet),
-      photo_id_front: sanitizePhoto(body.photoIdFront),
-      photo_id_back: sanitizePhoto(body.photoIdBack),
-      agreed_to_terms: true,
-      ip_address: getClientIp(request),
-      status: "pending",
-      created_at: now(),
-    });
+    // ---------------------------------------------------------------------
+    // Indicação: valida o código do link (?ref=). Falha de validação NUNCA
+    // bloqueia a solicitação — o lead não pode pagar por link quebrado.
+    // ---------------------------------------------------------------------
+    let referralCode: string | null = null;
+    const normalizedRef = normalizeReferralCode(body.referralCode);
+    if (normalizedRef) {
+      try {
+        const referrer = await findActiveReferralCode(normalizedRef);
+        // Auto-indicação: mesmo CPF no formulário e no código → salva sem vínculo.
+        if (referrer && referrer.referrer_cpf !== cpf) {
+          referralCode = normalizedRef;
+        }
+      } catch (err) {
+        console.error("[REFERRAL_VALIDATE_ERROR]", err);
+      }
+    }
+
+    await insertInstallRequest(
+      {
+        full_name: fullName.slice(0, 200),
+        cpf,
+        phone,
+        email: body.email || null,
+        zip_code: body.zipCode || null,
+        street: body.street || null,
+        number: body.number || null,
+        complement: body.complement || null,
+        neighborhood: body.neighborhood || null,
+        city: body.city || null,
+        state: body.state || null,
+        desired_plan: body.desiredPlan || null,
+        message: body.message || null,
+        photo_house_front: sanitizePhoto(body.photoHouseFront),
+        photo_street: sanitizePhoto(body.photoStreet),
+        photo_id_front: sanitizePhoto(body.photoIdFront),
+        photo_id_back: sanitizePhoto(body.photoIdBack),
+        agreed_to_terms: true,
+        ip_address: getClientIp(request),
+        status: "pending",
+        created_at: now(),
+      },
+      referralCode
+    );
     return json({ success: true });
   } catch (err) {
     console.error("[INSTALL_REQUEST_ERROR]", err);
     return jsonError("Erro ao registrar solicitação.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PÚBLICO — programa de indicação
+// ---------------------------------------------------------------------------
+
+/**
+ * Valida o código do link (?ref=) para o banner da landing. Devolve SOMENTE o
+ * primeiro nome (LGPD — nada de CPF, telefone ou id interno no payload público).
+ */
+app.get("/public/referral/:code", async (c) => {
+  const code = normalizeReferralCode(c.req.param("code"));
+  if (!code) return jsonError("Código de indicação inválido.", 404);
+  try {
+    const row = await findActiveReferralCode(code);
+    if (!row) return jsonError("Código de indicação não encontrado ou inativo.", 404);
+    return json({ valid: true, firstName: publicFirstName(row.referrer_name) });
+  } catch (err) {
+    console.error("[REFERRAL_PUBLIC_ERROR]", err);
+    return jsonError("Erro ao validar o código de indicação.", 500);
+  }
+});
+
+/**
+ * Catálogo público das recompensas ATIVAS (para a página do cliente). Campos
+ * de gestão (sort_order, created_at) não saem daqui.
+ */
+app.get("/public/referral-catalog", async (c) => {
+  const config = await getReferralConfig();
+  if (config.migrationPending) return json({ migrationPending: true, rewards: [], enabled: false });
+  try {
+    const { data, error } = await db()
+      .from("referral_rewards")
+      .select("id, title, description, points_cost, kind")
+      .eq("active", true)
+      .order("sort_order")
+      .order("points_cost");
+    if (error) throw error;
+    return json({ migrationPending: false, enabled: config.enabled, rewards: data ?? [] });
+  } catch (err) {
+    console.error("[REFERRAL_CATALOG_ERROR]", err);
+    return jsonError("Erro ao carregar o catálogo.", 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CLIENTE — programa de indicação (sessão)
+// ---------------------------------------------------------------------------
+
+app.get("/referrals/me", async (c) => {
+  const session = await requireSession(c.req.raw);
+  if (!session) return jsonError("Sessão não encontrada.", 401);
+
+  const config = await getReferralConfig();
+  if (config.migrationPending) {
+    // Migration 011 pendente: flag declarada, nunca 500.
+    return json({ migrationPending: true, referral: null });
+  }
+
+  const customerRef = session.customer_id;
+  try {
+    const code = await ensureReferralCode(customerRef, session.customer_name, session.cpf);
+    const origin = new URL(c.req.raw.url).origin;
+
+    const [ledgerRes, redemptionsRes, referralsRes] = await Promise.all([
+      db()
+        .from("referral_points_ledger")
+        .select("created_at, customer_ref, delta, reason, source_type, source_id")
+        .eq("customer_ref", customerRef)
+        .order("created_at", { ascending: true })
+        .limit(500),
+      db()
+        .from("referral_redemptions")
+        .select("*")
+        .eq("customer_ref", customerRef)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      db()
+        .from("install_requests")
+        .select("id, full_name, cpf, status, referral_code, created_at")
+        .eq("referral_code", code ?? "__none__")
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ]);
+
+    const view = buildReferralMeView(
+      {
+        codeRow: code ? { code, customer_ref: customerRef, referrer_name: session.customer_name, active: true } : null,
+        ledger: (ledgerRes.data ?? []) as ReferralLedgerRow[],
+        redemptions: (redemptionsRes.data ?? []) as RedemptionRow[],
+        referrals: (referralsRes.data ?? []) as InstallRequestReferralRow[],
+      },
+      origin,
+      config.pointsPerApproved
+    );
+    return json({ migrationPending: false, referral: view });
+  } catch (err) {
+    console.error("[REFERRALS_ME_ERROR]", err);
+    return jsonError("Erro ao carregar o programa de indicações.", 500);
+  }
+});
+
+app.post("/referrals/redeem", async (c) => {
+  const session = await requireSession(c.req.raw);
+  if (!session) return jsonError("Sessão não encontrada.", 401);
+
+  const body = await c.req.json().catch(() => ({}));
+  const rewardId = typeof body.rewardId === "string" ? body.rewardId : "";
+  if (!rewardId) return jsonError("Recompensa não informada.");
+
+  const config = await getReferralConfig();
+  if (config.migrationPending) return jsonError("Programa de indicações ainda não configurado.", 503);
+  if (!config.enabled) return jsonError("Programa de indicações desativado.", 403);
+
+  try {
+    const { data, error } = await db().rpc("redeem_referral_reward", {
+      p_customer_ref: session.customer_id,
+      p_reward_id: rewardId,
+      p_customer_name: session.customer_name,
+    });
+    if (error) {
+      const msg = String(error.message || "");
+      if (msg.includes("Saldo insuficiente")) return jsonError("Saldo insuficiente para esta recompensa.");
+      if (msg.includes("Recompensa indisponível")) return jsonError("Esta recompensa não está mais disponível.");
+      if (msg.includes("não encontrada")) return jsonError("Recompensa não encontrada.", 404);
+      throw error;
+    }
+    const result = (typeof data === "string" ? JSON.parse(data) : data) as { redemptionId: string; balance: number; duplicate?: boolean };
+    const balance = await referralBalance(session.customer_id);
+    return json({ success: true, redemptionId: result.redemptionId, balance, duplicate: Boolean(result.duplicate) });
+  } catch (err) {
+    console.error("[REFERRALS_REDEEM_ERROR]", err);
+    return jsonError("Erro ao registrar o resgate. Tente novamente.", 500);
   }
 });
 

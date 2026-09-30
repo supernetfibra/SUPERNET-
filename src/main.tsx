@@ -90,6 +90,7 @@ const AdminInstallRequests = lazy(() => import("./pages/AdminInstallRequests"));
 const AdminSettings = lazy(() => import("./pages/AdminSettings"));
 const AdminReminderRules = lazy(() => import("./pages/AdminReminderRules"));
 const AdminConnections = lazy(() => import("./pages/AdminConnections"));
+const AdminReferrals = lazy(() => import("./pages/AdminReferrals"));
 const AdminMessages = lazy(() => import("./pages/AdminMessages"));
 const AdminSimulator = lazy(() => import("./pages/AdminSimulator"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
@@ -97,6 +98,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Invoices = lazy(() => import("./pages/Invoices"));
 const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
+const Referrals = lazy(() => import("./pages/Referrals"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const TermsOfUse = lazy(() => import("./pages/TermsOfUse"));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy"));
@@ -173,6 +175,7 @@ createRoot(document.getElementById("root")!).render(
               >
                 <Route path="/admin/dashboard" element={<Suspense fallback={<DashboardSkeleton />}><AdminDashboard /></Suspense>} />
                 <Route path="/admin/install-requests" element={<Suspense fallback={<InvoicesSkeleton />}><AdminInstallRequests /></Suspense>} />
+                <Route path="/admin/referrals" element={<Suspense fallback={<DashboardSkeleton />}><AdminReferrals /></Suspense>} />
                 <Route path="/admin/messages" element={<Suspense fallback={<DashboardSkeleton />}><AdminMessages /></Suspense>} />
                 <Route path="/admin/outbox" element={<Navigate to="/admin/messages" replace />} />
                 <Route path="/admin/rules" element={<Suspense fallback={<DashboardSkeleton />}><AdminReminderRules /></Suspense>} />
@@ -193,6 +196,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/faturas" element={<Suspense fallback={<InvoicesSkeleton />}><Invoices /></Suspense>} />
                 <Route path="/faturas/:id" element={<Suspense fallback={<InvoiceDetailSkeleton />}><InvoiceDetail /></Suspense>} />
                 <Route path="/perfil" element={<Suspense fallback={<ProfileSkeleton />}><Profile /></Suspense>} />
+                <Route path="/indicacoes" element={<Suspense fallback={<DashboardSkeleton />}><Referrals /></Suspense>} />
               </Route>
 
               {/* 404 */}

@@ -64,6 +64,7 @@ function templateEventLabel(eventKey: string): string {
   if (eventKey === "billing.due_soon") return "fatura a vencer";
   if (eventKey === "billing.due_today") return "vence hoje";
   if (eventKey === "billing.late") return "em atraso";
+  if (eventKey === "referral.approved") return "indicação aprovada";
   return eventKey;
 }
 
@@ -98,7 +99,7 @@ export function ReminderMessagesCard() {
   /** Lista na ordem WhatsApp primeiro, eventos na ordem da régua (a vencer → hoje → atraso). */
   const orderedTemplates = useMemo(() => {
     const order = ["whatsapp", "push"];
-    const eventOrder = ["billing.due_soon", "billing.due_today", "billing.late"];
+    const eventOrder = ["billing.due_soon", "billing.due_today", "billing.late", "referral.approved"];
     return [...templateItems].sort(
       (a, b) =>
         order.indexOf(a.channel) - order.indexOf(b.channel) ||

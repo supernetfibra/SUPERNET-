@@ -235,7 +235,7 @@ export function describeSettingsOverrides(params: SimParams, baseline: SimSettin
   if (params.at !== baseline.runAtHour) changes.push(`hora de execução ${baseline.runAtHour}h → ${params.at}h`);
   if (params.cap !== baseline.whatsapp.newChatCapPerDay) changes.push(`cota de novas conversas ${baseline.whatsapp.newChatCapPerDay} → ${params.cap}`);
   if (params.perCustomerCap !== baseline.whatsapp.perCustomerCapPerDay) {
-    changes.push(`cota por cliente ${baseline.whatsapp.perCustomerCapPerDay} → ${params.perCustomerCap}`);
+    changes.push(`avisos por cliente/dia ${baseline.whatsapp.perCustomerCapPerDay} → ${params.perCustomerCap}`);
   }
   const channel = baseline.whatsapp.enabled ? "on" : "off";
   if (params.whatsapp !== channel) changes.push(`canal WhatsApp ${channel === "on" ? "ligado → desligado" : "desligado → ligado"}`);
@@ -406,9 +406,13 @@ export const TEMPLATE_SAMPLE_PAYLOAD: Record<string, string> = {
   dias_para_vencer: "3",
   boleto: "https://exemplo.com/boleto.pdf",
   pix: "00020126580014BR.GOV.BCB.PIX…",
-  link: "https://minhasupernet.com/faturas/123",
+  link: "https://minhasupernet.com/indicacoes",
   empresa: "MinhaSuperNet",
   tem_encargos: "1",
+  // Programa de indicação (referral.approved)
+  indicado: "João Pereira",
+  pontos: "100",
+  saldo: "250",
 };
 
 export const TEMPLATE_MINIMAL_PAYLOAD: Record<string, string> = Object.fromEntries(
@@ -532,7 +536,7 @@ const PARAM_LABELS: Record<keyof SimParams, string> = {
   horizon: "horizonte",
   at: "hora",
   cap: "cota novas conversas",
-  perCustomerCap: "cota por cliente",
+  perCustomerCap: "avisos por cliente/dia",
   optIn: "opt-in",
   push: "push",
   whatsapp: "whatsapp",

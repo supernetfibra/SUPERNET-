@@ -14,7 +14,8 @@
     "typecheck:api": "node scripts/check-edge-function.mjs",
     "check:notify": "node scripts/check-notification-settings.mjs",
     "check:sql": "node scripts/check-notifications-sql.mjs",
-    "verify:notify": "npm run typecheck:notify && npm run check:notify && npm run check:sql && npm run typecheck:api",
+    "check:referrals": "node scripts/check-referrals.mjs",
+    "verify:notify": "npm run typecheck:notify && npm run check:notify && npm run check:sql && npm run check:referrals && npm run typecheck:api",
     "deploy": "bash deploy.sh",
     "deploy:functions": "npx supabase functions deploy api --no-verify-jwt"
   },

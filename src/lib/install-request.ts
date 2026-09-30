@@ -28,6 +28,8 @@ export interface InstallRequestPayload {
   photoStreet?: string;
   photoIdFront?: string;
   photoIdBack?: string;
+  // Programa de indicação — código do link ?ref= (validado no backend)
+  referralCode?: string;
 }
 
 export interface InstallRequestResult {

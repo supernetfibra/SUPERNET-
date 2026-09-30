@@ -122,6 +122,23 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
     ].join("\n"),
   },
   {
+    channel: "whatsapp",
+    eventKey: "referral.approved",
+    name: "Indicação aprovada (WhatsApp)",
+    active: true,
+    // Programa de indicação (migration 011): sai pela MESMA outbox/dispatcher dos
+    // lembretes — idempotente por dedupe key, respeita opt-out e janela. Payload
+    // sem `__dueDate`: o dispatcher não recalcula nada de data (não há fatura).
+    body: [
+      "Olá, {{primeiro_nome}}! 🎉 Boa notícia:",
+      "A indicação de *{{indicado}}* foi aprovada!",
+      "Você ganhou *{{pontos}} pontos* — saldo atual: {{saldo}} pontos.",
+      "Troque por descontos na sua fatura: {{link}}",
+      "",
+      "Continue indicando: cada amigo aprovado vale mais pontos. 😉",
+    ].join("\n"),
+  },
+  {
     channel: "push",
     eventKey: "billing.due_soon",
     name: "Fatura a vencer (Push)",

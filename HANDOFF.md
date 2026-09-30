@@ -54,8 +54,9 @@ npm run dev                 # Vite local
 npm run build               # tsc -b + vite build + version.json (o que vai para a Vercel)
 npm run deploy:functions    # npx supabase functions deploy api --no-verify-jwt
 npm run verify:notify       # typecheck:notify + check:notify + check:sql + typecheck:api
-npm run check:notify        # 197 verificações do pipeline de notificações (Node roda TS direto)
-npm run check:sql           # 30 verificações de SQL
+npm run check:notify        # 303 verificações do pipeline de notificações (Node roda TS direto)
+npm run check:sql           # 37 verificações de SQL
+npm run check:referrals     # 22 verificações do programa de indicação (PGlite, migration 011)
 npm run simulate            # CLI do simulador de lembretes (scripts/simulate-reminders.ts)
 ```
 
@@ -116,6 +117,7 @@ Aplicadas e registradas (Local = Remote). Ordem cronológica:
 | `20260928100000_send_gap.sql` | Ritmo configurável de envio (`send_gap_seconds`) |
 | `009_admin_alerts_state.sql` | Estado dos alertas de operação (`admin_alerts_state`, key `default`) |
 | `010_mikweb_connections.sql` | **Multi-conta MikWeb**: tabela `mikweb_connections` + migração da credencial única para a conexão `a` + backfill de origem (`billing:a:<id>:<regra>`, contatos/push `a:<id>`) + `mikweb_sessions.connection_slug` (idempotente) |
+| `011_referrals.sql` | **Programa de indicação**: `referral_codes` (código rastreável por cliente), `referral_points_ledger` (apêndice, crédito idempotente por unique parcial), `referral_config`, `referral_rewards`, `referral_redemptions` + funções plpgsql (`ensure_referral_code`, `credit_referral_points`, `redeem_referral_reward` — débito atômico) + `install_requests.referral_code` |
 
 Datas são **epoch ms** (`created_at`, `sent_at`, `status_at`). Cuidado com overflow int4 em
 literais SQL (`30 * 86400 * 1000` estoura — usar `(extract(epoch from now()) - 30*86400) * 1000`).
@@ -127,6 +129,7 @@ literais SQL (`30 * 86400 * 1000` estoura — usar `(extract(epoch from now()) -
 - **Cliente MikWeb**: `login`, `logout`, `me`, `customer`, `select-contact`, `billings`, `billings/:id/download`, `action`.
 - **Admin geral**: `login/logout/verify`, `branding`, `config` (MikWeb, só branding+legado), `test-connection`, `audit-logs`, `sessions` (+ revoke), `customer` (busca multi-conta, devolve `connection`), `push`, `install-requests` (+ status).
 - **Multi-conta MikWeb**: `GET/POST /admin/connections`, `POST /admin/connections/:id/update|test|toggle`, `DELETE /admin/connections/:id` (token nunca volta na resposta; última ativa não sai).
+- **Indicações** (migration 011): cliente `GET /referrals/me` (link, saldo, histórico) e `POST /referrals/redeem`; público `GET /public/referral/:code` (só 1º nome — LGPD) e `GET /public/referral-catalog`; admin `GET /admin/referrals` (+stats), `POST /admin/referrals/config|adjust|rewards`, `PUT/DELETE /admin/referrals/rewards/:id`, `POST /admin/referrals/redemptions/:id/decision`. Aprovar instalação (`/admin/install-requests/:id/status` → approved) credita pontos via `credit_referral_points` (idempotente no banco; migration pendente ou erro NUNCA reverte a aprovação) e enfileira o **aviso de aprovação por WhatsApp** (`enqueueReferralApprovedNotice`): sai pela MESMA outbox/dispatcher/UazAPI dos lembretes (opt-out, janela, cotas de graça), template editável `referral.approved` no editor de mensagens (só WhatsApp — sem default push), dedupe key `referral:<id>:approval` = a do crédito (aprovar 2× não credita e não reenvia), só envia com opt-in em `whatsapp_contacts`, `saldo` no payload é o pós-crédito, todo erro é best-effort logado. Suíte própria: `npm run check:referrals` (PGlite, 22 checks) + seção 16 do `check:notify`.
 - **Notificações**: `GET/POST /admin/notifications/templates`, `settings` (régua), `simulate` (dry-run multi-conta),
   `deliveries` (outbox), `deliveries/retry`, `deliveries/cancel`, `send-now` (aceita `connection` para validar a fatura na conta de origem).
 - **WhatsApp**: `GET/POST /admin/whatsapp/config`, `connect` (QR/pairing), `test` (sonda ou evento da régua),
@@ -199,7 +202,11 @@ O webhook da instância na UazAPI precisa ter o evento **`messages` inscrito** (
 6. **Multi-conta MikWeb (29/09)**: cadastre a segunda conta em Conexões → "Adicionar conta"
    (a Conta A já foi migrada automaticamente). O sync varre as duas; falha de uma alerta o
    admin e segue com a outra. Ver `LEMBRETES-WHATSAPP.md` §13b.
-7. Ideias em aberto: taxas de conversão (%) no funil (com guarda para amostra pequena);
+7. **Indicações (30/09)**: aplicar `011_referrals.sql` no SQL Editor e deploy da função
+   (`npm run deploy:functions`); criar as recompensas do catálogo em Painel → Indicações.
+   Aviso WhatsApp na aprovação JÁ implementado (template `referral.approved` editável em
+   Mensagens; personalizar o texto por lá). Falta only: deploy da função.
+8. Ideias em aberto: taxas de conversão (%) no funil (com guarda para amostra pequena);
    reengajamento de quem clicou no Pix mas não pagou; relatório semanal consolidado; rate-limit/observabilidade do webhook.
 
 ---
@@ -229,3 +236,8 @@ O webhook da instância na UazAPI precisa ter o evento **`messages` inscrito** (
 
 Para acrescentar comportamento novo: nova seção numerada no fim, com mock mínimo; rode `npm run check:notify`
 e `npm run verify:notify` antes de commitar. Convenção de dados: datas civis ISO, epoch ms para instantes, fuso UTC-3.
+
+Suíte irmã `scripts/check-referrals.mjs` (`npm run check:referrals`, incluída no `verify:notify`): prova as
+garantias plpgsql da migration 011 contra PGlite — crédito idempotente (unique parcial), débito atômico com saldo
+nunca negativo, reembolso idempotente na recusa, máquina de estados do resgate, emissão de código. A migration 011
+aplica sozinha: não depende de pgcrypto/uuid-ossp (código gerado por `random()` + alfabeto Crockford).

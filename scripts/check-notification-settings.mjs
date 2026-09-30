@@ -42,7 +42,7 @@ import {
 } from "../supabase/functions/api/notify/template-store.ts";
 import { eventKeyForRule, sendBillingReminder } from "../supabase/functions/api/notify/send-billing.ts";
 import { describeSync, planSync, runBillingSync, syncDueWindow } from "../supabase/functions/api/notify/sync.ts";
-import { buildActions, buildPayload, renderFor, toStoredPayload } from "../supabase/functions/api/notify/templates.ts";
+import { buildActions, buildPayload, renderFor, toStoredPayload, DEFAULT_TEMPLATES } from "../supabase/functions/api/notify/templates.ts";
 import { handleUazapiWebhook, parseWebhookPayload } from "../supabase/functions/api/notify/webhook.ts";
 import { aggregateFunnel, buildFunnelWeeks, formatWeekLabel, funnelTotals, weekStartOf, weekStartToMs } from "../supabase/functions/api/notify/engagement.ts";
 import { resolveSimulationSettings, runSimulation } from "../supabase/functions/api/notify/simulate.ts";
@@ -63,6 +63,16 @@ import {
   ALERT_COOLDOWN_MS,
 } from "../supabase/functions/api/notify/admin-alerts.ts";
 import * as ui from "../src/lib/simulator-report.ts";
+import {
+  normalizeReferralCode,
+  publicFirstName,
+  generateReferralCode,
+  referralApprovedDedupeKey,
+  referralApprovedPayload,
+  REFERRAL_APPROVED_EVENT_KEY,
+  buildReferralMeView,
+} from "../supabase/functions/api/notify/referrals.ts";
+import { referralDashboardMetrics, monthKeyBrt, currentMonthKeyBrt } from "../supabase/functions/api/notify/referral-metrics.ts";
 import {
   sanitizeConnection,
   sanitizeConnections,
@@ -859,7 +869,7 @@ check(
 check("template de teste nunca é editável", !eff.some((t) => t.eventKey === "test" && t.body.includes("EDITADO")), null);
 
 const described = describeTemplates({});
-eq("o editor lista 3 eventos × 2 canais", described.templates.length, 6);
+eq("o editor lista 3 eventos × 2 canais + aviso de indicação", described.templates.length, 7);
 check("todo item vem com render de exemplo", described.templates.every((t) => t.sampleFull.length > 0));
 check("nenhum placeholder quebra o render padrão", described.templates.every((t) => t.missing.length === 0), described.templates.filter((t) => t.missing.length));
 const late = described.templates.find((t) => t.key === "whatsapp:billing.late");
@@ -1573,6 +1583,119 @@ eq("conta ok carrega o valor", [gathered[0].ok, gathered[0].slug], [true, "a"]);
 eq("conta que falhou declara o erro", [gathered[1].ok, gathered[1].value, String(gathered[1].error).includes("503")], [false, null, true]);
 check("describePerConnection diz qual conta falhou", describePerConnection(gathered).includes("b: FALHOU"));
 eq("failedSlugs lista os slugs fora do ar", failedSlugs(gathered), ["b"]);
+
+// ---------------------------------------------------------------------------
+// 16. Programa de indicação — aviso de aprovação (migration 011)
+// ---------------------------------------------------------------------------
+section("16. Indicações: dedupe, payload e render do aviso de aprovação");
+
+// O aviso deduplica pela MESMA chave do crédito de pontos: aprovar duas vezes
+// não credita (unique parcial no ledger) E não reenvia (enqueue_notification).
+eq(
+  "dedupe key é estável por solicitação",
+  referralApprovedDedupeKey("req-1"),
+  "referral:req-1:approval"
+);
+check(
+  "solicitações diferentes têm chaves diferentes",
+  referralApprovedDedupeKey("req-1") !== referralApprovedDedupeKey("req-2")
+);
+
+const referralPayload = referralApprovedPayload({
+  referrerFirstName: "Maria",
+  referredName: "João Pereira",
+  points: 100,
+  balanceAfter: 250,
+  portalBaseUrl: "https://minhasupernet.com/",
+  companyName: "MinhaSuperNet",
+});
+eq("payload carrega o 1º nome do indicador", referralPayload.primeiro_nome, "Maria");
+eq("payload carrega o indicado", referralPayload.indicado, "João Pereira");
+eq("pontos viram string inteira", referralPayload.pontos, "100");
+eq("saldo é o APÓS o crédito", referralPayload.saldo, "250");
+eq("link aponta para /indicacoes", referralPayload.link, "https://minhasupernet.com/indicacoes");
+check(
+  "pontos negativos/quebrados são saneados",
+  referralApprovedPayload({ referrerFirstName: "X", referredName: "Y", points: 99.6, balanceAfter: -3, portalBaseUrl: "https://x", companyName: "X" }).pontos === "100" &&
+    referralApprovedPayload({ referrerFirstName: "X", referredName: "Y", points: 10, balanceAfter: -3, portalBaseUrl: "https://x", companyName: "X" }).saldo === "0"
+);
+
+// O template default do evento existe, está ativo e renderiza SEM placeholder
+// faltando com o payload que o enfileiramento produz — placeholder quebrado aqui
+// seria uma mensagem furada chegando ao cliente (ou pior: vazia).
+const referralTemplate = DEFAULT_TEMPLATES.find(
+  (t) => t.channel === "whatsapp" && t.eventKey === REFERRAL_APPROVED_EVENT_KEY
+);
+check("template default referral.approved existe e está ativo", Boolean(referralTemplate?.active), referralTemplate);
+const referralRender = renderFor("whatsapp", REFERRAL_APPROVED_EVENT_KEY, referralPayload, DEFAULT_TEMPLATES);
+check("render do aviso produz mensagem", Boolean(referralRender.message?.body), referralRender.warnings);
+eq("nenhum placeholder quebra o render do aviso", referralRender.message?.missing, []);
+check("o texto cita o indicado", referralRender.message?.body.includes("João Pereira") === true, referralRender.message?.body);
+check("o texto cita os pontos", referralRender.message?.body.includes("100") === true, referralRender.message?.body);
+check(
+  "aviso ganha o botão Abrir portal (payload tem link, sem pix/boleto)",
+  referralRender.message?.actions?.length === 1 && referralRender.message.actions[0].url === "https://minhasupernet.com/indicacoes",
+  referralRender.message?.actions
+);
+
+// O evento entrou na lista editável do editor (8 = 4 eventos × 2 canais).
+eq("editor lista 3 eventos × 2 canais + aviso de indicação (7)", describeTemplates({}).templates.length, 7);
+const referralEditorItem = describeTemplates({}).templates.find((t) => t.key === "whatsapp:referral.approved");
+check(
+  "push não tem template de indicação (evento é só WhatsApp)",
+  !described.templates.some((t) => t.key === "push:referral.approved"),
+  described.templates.map((t) => t.key)
+);
+check("editor traz o preview do aviso", Boolean(referralEditorItem?.sampleFull.includes("João Pereira")), referralEditorItem);
+
+// Payload de exemplo do editor cobre os placeholders do evento (preview sem buraco).
+eq(
+  "sample do editor preenche indicado/pontos/saldo",
+  [ui.TEMPLATE_SAMPLE_PAYLOAD.indicado, ui.TEMPLATE_SAMPLE_PAYLOAD.pontos, ui.TEMPLATE_SAMPLE_PAYLOAD.saldo],
+  ["João Pereira", "100", "250"]
+);
+
+// Métricas do card do dashboard: o corte "do mês" é por calendário civil BRT
+// (não janela móvel), para o número do card bater com a lista do painel.
+// 2026-09-03 12:00 UTC = 09:00 BRT do mesmo dia → mês "2026-09".
+const METRICS_NOW = Date.UTC(2026, 8, 3, 12, 0, 0);
+eq("monthKeyBrt converte epoch para mês civil BRT", monthKeyBrt(METRICS_NOW), "2026-09");
+// 2026-10-01 01:00 UTC ainda é 30/09 22h BRT → o mês virou SEM ser virada UTC.
+eq("mês vira no fuso BRT, não no UTC", monthKeyBrt(Date.UTC(2026, 9, 1, 1, 0, 0)), "2026-09");
+eq("currentMonthKeyBrt usa o fuso do projeto", currentMonthKeyBrt(METRICS_NOW), "2026-09");
+
+const metrics = referralDashboardMetrics({
+  referrals: [
+    { status: "pending", created_at: METRICS_NOW },
+    { status: "approved", created_at: METRICS_NOW - 86_400_000 },
+    { status: "approved", created_at: Date.UTC(2026, 7, 10) }, // mês passado
+    { status: "rejected", created_at: Date.UTC(2026, 7, 15) }, // mês passado
+  ],
+  ledger: [
+    { delta: 100, customer_ref: "a:1", created_at: METRICS_NOW - 3_600_000 },
+    { delta: 100, customer_ref: "a:2", created_at: Date.UTC(2026, 7, 20) }, // mês passado
+    { delta: -150, customer_ref: "a:1", created_at: METRICS_NOW - 1_800_000 }, // débito não é emissão
+  ],
+  redemptions: [
+    { status: "pending", points_cost: 150 },
+    { status: "applied", points_cost: 100 },
+  ],
+  month: "2026-09",
+});
+eq("indicações do mês contam só o mês de referência", metrics.referralsThisMonth, 2);
+eq("aprovadas do mês", metrics.approvedThisMonth, 1);
+eq("taxa de aprovação do mês = 50%", metrics.approvalRatePct, 50);
+eq("taxa total ignora pendentes (decididas = 3)", metrics.approvalRateAllPct, 67);
+eq("pontos emitidos no mês = 100 (débito não conta)", metrics.pointsIssuedThisMonth, 100);
+eq("pontos emitidos totais = 200", metrics.pointsIssuedTotal, 200);
+eq("pontos resgatados = 250", metrics.pointsRedeemedTotal, 250);
+eq("resgates pendentes", metrics.pendingRedemptions, 1);
+eq("clientes com movimento", metrics.activeCustomers, 2);
+eq(
+  "mês sem indicações → taxa null (não 0% mentiroso)",
+  referralDashboardMetrics({ referrals: [], ledger: [], redemptions: [], month: "2026-09" }).approvalRatePct,
+  null
+);
 
 // ---------------------------------------------------------------------------
 

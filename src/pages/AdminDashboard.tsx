@@ -55,7 +55,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
 import { mapStatus } from "@/lib/billing-utils";
+import { Gift } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
+import type { ReferralMonthMetrics } from "../../supabase/functions/api/notify/referral-metrics.ts";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { apiUrl } from "@/lib/api-config";
@@ -338,6 +340,11 @@ export default function AdminDashboard() {
   const [installFilter, setInstallFilter] = useState("all");
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
   const [processingRequest, setProcessingRequest] = useState<string | null>(null);
+
+  // Programa de indicações — métricas do card do dashboard
+  const [referralMetrics, setReferralMetrics] = useState<ReferralMonthMetrics | null>(null);
+  const [referralMigrationPending, setReferralMigrationPending] = useState(false);
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(true);
 
   // Track if welcome toast has been shown for this session
   const welcomeShown = useRef(false);
@@ -744,6 +751,29 @@ export default function AdminDashboard() {
     if (isVerified) loadInstallRequests();
   }, [isVerified, loadInstallRequests]);
 
+  // Métricas do programa de indicações (card). Falha silenciosa: card é
+  // acessório — o dashboard nunca deve quebrar por causa dele.
+  const loadReferralMetrics = useCallback(async () => {
+    try {
+      const res = await adminFetch("/api/admin/referrals/stats");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (data.migrationPending) {
+        setReferralMigrationPending(true);
+        return;
+      }
+      setReferralMigrationPending(false);
+      setReferralProgramEnabled(data.programEnabled !== false);
+      setReferralMetrics(data.metrics ?? null);
+    } catch {
+      // silencioso — card continua com o estado anterior
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isVerified) loadReferralMetrics();
+  }, [isVerified, loadReferralMetrics]);
+
   const handleInstallRequestStatus = async (
     requestId: string,
     status: "approved" | "rejected"
@@ -953,6 +983,83 @@ export default function AdminDashboard() {
           ))}
         </div>
       )}
+
+      {/* Programa de Indicações — métricas do mês (migration 011) */}
+      {referralMigrationPending ? null : referralMetrics ? (
+        <Card className="border-emerald-500/20 shadow-none animate-[slideUp_0.3s_ease-out_0.08s_both]">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Gift className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <CardTitle className="text-sm font-medium">Indique e Ganhe</CardTitle>
+                {!referralProgramEnabled && (
+                  <Badge variant="secondary" className="text-[10px] font-medium">
+                    programa desativado
+                  </Badge>
+                )}
+              </div>
+              <button
+                onClick={() => navigate("/admin/referrals")}
+                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
+              >
+                Gerenciar
+              </button>
+            </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Indicações recebidas em {referralMetrics.month.split("-").reverse().join("/")} e saldo geral do programa.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <p className="text-2xl font-light text-foreground tabular-nums">
+                  {referralMetrics.referralsThisMonth}
+                </p>
+                <p className="text-xs text-muted-foreground">Indicações do mês</p>
+                {referralMetrics.referralsThisMonth > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {referralMetrics.approvedThisMonth} aprovada
+                    {referralMetrics.approvedThisMonth === 1 ? "" : "s"}
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-2xl font-light text-foreground tabular-nums">
+                  {referralMetrics.approvalRatePct === null
+                    ? "—"
+                    : `${referralMetrics.approvalRatePct}%`}
+                </p>
+                <p className="text-xs text-muted-foreground">Taxa de aprovação (mês)</p>
+                {referralMetrics.approvalRateAllPct !== null && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {referralMetrics.approvalRateAllPct}% no total
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-2xl font-light text-foreground tabular-nums">
+                  {referralMetrics.pointsIssuedThisMonth.toLocaleString("pt-BR")}
+                </p>
+                <p className="text-xs text-muted-foreground">Pontos emitidos no mês</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {referralMetrics.pointsIssuedTotal.toLocaleString("pt-BR")} no total
+                </p>
+              </div>
+              <div>
+                <p className="text-2xl font-light text-foreground tabular-nums">
+                  {referralMetrics.pendingRedemptions}
+                </p>
+                <p className="text-xs text-muted-foreground">Resgates em análise</p>
+                {referralMetrics.pointsRedeemedTotal > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {referralMetrics.pointsRedeemedTotal.toLocaleString("pt-BR")} pts resgatados
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Audit Log — abas: acessos de clientes × operação do sistema */}
       <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.1s_both]">
