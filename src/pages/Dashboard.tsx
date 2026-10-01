@@ -22,8 +22,9 @@ import {
   CheckCircle2,
   Clock,
   TrendingUp,
+  Gift,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
 import {
@@ -35,6 +36,20 @@ import {
 import type { BillingSummary } from "@/hooks/use-billings";
 import { useBillingContext } from "@/lib/billing-context";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import { fetchMyReferrals } from "@/lib/referral-api";
+
+// Aviso de indicação: reaparece a cada sessão (sessionStorage, igual ao banner de
+// faturas) — melhor para o programa do que sumir para sempre.
+const REFERRAL_DISMISS_KEY = "mikweb_referral_banner_dismissed";
+
+interface ReferralBannerInfo {
+  points: number;
+  shareText: string;
+}
+
+function referralShareUrl(text: string): string {
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Dashboard Page
@@ -105,6 +120,58 @@ export default function Dashboard() {
 
   // Retry when offline — reload to attempt fresh fetch
   const handleRetry = () => window.location.reload();
+
+  // ── Aviso de indicação (Indique e Ganhe) ──
+  const [referralBanner, setReferralBanner] = useState<ReferralBannerInfo | null>(null);
+  const [dismissedReferral, setDismissedReferral] = useState(() => {
+    try {
+      return sessionStorage.getItem(REFERRAL_DISMISS_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const mine = await fetchMyReferrals();
+      if (
+        !cancelled &&
+        mine.ok &&
+        mine.enabled &&
+        mine.data.code &&
+        mine.data.shareText &&
+        (mine.data.referrals.length === 0 || mine.data.balance === 0)
+      )
+        setReferralBanner({ points: mine.data.pointsPerApproved, shareText: mine.data.shareText });
+    })().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleReferralShare = () => {
+    if (!referralBanner) return;
+    try {
+      window.open(referralShareUrl(referralBanner.shareText), "_blank", "noopener");
+    } catch {
+      // popup bloqueado: o cliente copia o link na página do programa
+    }
+    navigate("/indicacoes");
+    try {
+      sessionStorage.setItem(REFERRAL_DISMISS_KEY, "true");
+      setDismissedReferral(true);
+      setReferralBanner(null);
+    } catch {}
+  };
+
+  const dismissReferralBanner = () => {
+    setDismissedReferral(true);
+    setReferralBanner(null);
+    try {
+      sessionStorage.setItem(REFERRAL_DISMISS_KEY, "true");
+    } catch {}
+  };
 
   // ── Warning banner state ──
   const [dismissedBanner, setDismissedBanner] = useState(() => {
@@ -218,6 +285,37 @@ export default function Dashboard() {
               Recarregar dados
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Aviso: Indique e Ganhe no WhatsApp */}
+      {!dismissedReferral && referralBanner && (
+        <div className="animate-[slideUp_0.3s_ease-out] rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 px-4 py-3 flex items-start gap-3">
+          <div className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400">
+            <Gift className="h-5 w-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+              Indique e ganhe {referralBanner.points} pontos
+            </p>
+            <p className="text-xs mt-1 text-emerald-700 dark:text-emerald-300">
+              Manda seu link no WhatsApp para amigos e conhecidos — quando a instalação for aprovada, os pontos são seus.
+            </p>
+            <Button
+              size="sm"
+              className="h-8 mt-2 bg-[#25D366] hover:bg-[#1eb857] text-white"
+              onClick={handleReferralShare}
+            >
+              Compartilhar no WhatsApp →
+            </Button>
+          </div>
+          <button
+            onClick={dismissReferralBanner}
+            className="shrink-0 p-0.5 rounded-sm transition-opacity hover:opacity-70 text-emerald-400 dark:text-emerald-500"
+            aria-label="Fechar aviso"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 

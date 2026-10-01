@@ -4159,7 +4159,9 @@ app.get("/referrals/me", async (c) => {
       origin,
       config.pointsPerApproved
     );
-    return json({ migrationPending: false, referral: view });
+    // `enabled` no payload: o painel do cliente (aviso do dashboard) só promove o
+    // programa enquanto ele estiver ligado na configuração.
+    return json({ migrationPending: false, referral: view, enabled: config.enabled });
   } catch (err) {
     console.error("[REFERRALS_ME_ERROR]", err);
     return jsonError("Erro ao carregar o programa de indicações.", 500);

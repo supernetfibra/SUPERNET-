@@ -14,6 +14,7 @@ import {
   Check,
   Copy,
   Loader2,
+  MessageCircle,
   Share2,
   Users,
   Coins,
@@ -263,6 +264,17 @@ export default function Referrals() {
                           {copied ? <Check className="h-4 w-4 mr-1" /> : <Copy className="h-4 w-4 mr-1" />}
                           {copied ? "Copiado" : "Copiar"}
                         </Button>
+                        {/* Caminho principal: WhatsApp com a mensagem pronta — abre o
+                            app/app web com o texto montado; o admin só escolhe o contato. */}
+                        {waShareUrl && (
+                          <Button
+                            size="sm"
+                            onClick={() => window.open(waShareUrl, "_blank", "noopener")}
+                            className="flex-1 sm:flex-none bg-[#25D366] hover:bg-[#1eb857] text-white"
+                          >
+                            <MessageCircle className="h-4 w-4 mr-1" /> WhatsApp
+                          </Button>
+                        )}
                         <Button size="sm" variant="outline" onClick={handleNativeShare} className="flex-1 sm:flex-none">
                           <Share2 className="h-4 w-4 mr-1" /> Compartilhar
                         </Button>

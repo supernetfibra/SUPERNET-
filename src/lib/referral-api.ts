@@ -126,14 +126,14 @@ export interface ReferralAdminData {
 // ---------------------------------------------------------------------------
 
 export async function fetchMyReferrals(): Promise<
-  { ok: true; data: ReferralMeView } | { ok: false; error: string; migrationPending?: boolean }
+  { ok: true; data: ReferralMeView; enabled: boolean } | { ok: false; error: string; migrationPending?: boolean }
 > {
   try {
     const res = await authFetch("/api/referrals/me");
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || "Erro ao carregar indicações." };
     if (data.migrationPending) return { ok: false, error: "Programa ainda não configurado.", migrationPending: true };
-    return { ok: true, data: data.referral as ReferralMeView };
+    return { ok: true, data: data.referral as ReferralMeView, enabled: data.enabled !== false };
   } catch {
     return { ok: false, error: "Falha de conexão." };
   }
