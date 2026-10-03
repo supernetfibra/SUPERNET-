@@ -245,7 +245,7 @@ export default function Dashboard() {
           Olá, {customer?.name?.split(" ")[0] || "Cliente"}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Bem-vindo à sua área do cliente.
+          Sua área do cliente.
         </p>
       </div>
 

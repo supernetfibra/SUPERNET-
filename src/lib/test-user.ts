@@ -160,7 +160,7 @@ export function getTestBillings() {
       observation: null,
       our_number: "200006",
     },
-    // ── 2026 (mixed: 3 unpaid, 2 paid) ──
+    // ── 2026 (mixed: 4 unpaid — one future, 2 paid) ──
     {
       id: 1001,
       customer_id: 999,
@@ -204,9 +204,9 @@ export function getTestBillings() {
       date_payment: null,
       situation_id: 1,
       situation_name: "Em Aberto",
-      reference: "Agosto/2026",
+      reference: "Outubro/2026",
       type_billing: "Mensalidade",
-      due_day: "2026-08-15",
+      due_day: "2026-10-02",
       form_payment: "Boleto",
       digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901236",
       pix_copy_paste_base64: "MDAwMjAxMDEwMjEyMjYxMDYwMTRici5nb3YuYmNiLnBpeDI1NThhcGkucGl4LmNvbS92Mi9jb2J2LzEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5NTIwNDAwMDAwNTMwMzk4NjU0MDYxMjkuOTA1ODAyQlI1OTEzQ2xpZW50ZSBUZXN0ZTYwMDlTYW8gUGF1bG82MjA3MDUwMyoqKjYzMDQxMjM2",
@@ -243,6 +243,24 @@ export function getTestBillings() {
       form_payment: "PIX",
       observation: null,
       our_number: "123455",
+    },
+    {
+      id: 1006,
+      customer_id: 999,
+      value: 129.90,
+      value_paid: null,
+      date_payment: null,
+      situation_id: 1,
+      situation_name: "Em Aberto",
+      reference: "Novembro/2026",
+      type_billing: "Mensalidade",
+      due_day: "2026-11-15",
+      form_payment: "Boleto",
+      digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901237",
+      pix_copy_paste_base64: "MDAwMjAxMDEwMjEyMjYxMDYwMTRici5nb3YuYmNiLnBpeDI1NThhcGkucGl4LmNvbS92Mi9jb2J2LzEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5NTIwNDAwMDAwNTMwMzk4NjU0MDYxMjkuOTA1ODAyQlI1OTEzQ2xpZW50ZSBUZXN0ZTYwMDlTYW8gUGF1bG82MjA3MDUwMyoqKjYzMDQxMjM3",
+      observation: null,
+      our_number: "123459",
+      integration_link: "https://boleto.exemplo.com/pdf/1006",
     },
   ];
 }

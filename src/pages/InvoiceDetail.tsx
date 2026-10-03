@@ -28,7 +28,7 @@ import { useNavigate, useParams } from "react-router";
 import { useBillings } from "@/hooks/use-billings";
 import { useAuth } from "@/lib/auth-context";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { statusConfig } from "@/lib/status-config";
+import { statusBadge } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-config";
@@ -106,7 +106,8 @@ export default function InvoiceDetail() {
 
   const billing = rawBilling;
 
-  const status = statusConfig[billing.status] || statusConfig.pendente;
+  const status = statusBadge(billing.status, billing.vencimento);
+  const statusLabel = status.label;
   const StatusIcon = status.icon;
 
   // Updated value including late fees
@@ -194,7 +195,7 @@ export default function InvoiceDetail() {
                 className={`text-[10px] font-medium px-2 py-0.5 border-none ${status.color} shrink-0`}
               >
                 <StatusIcon className="h-3 w-3 mr-1" />
-                {status.label}
+                {statusLabel}
               </Badge>
             </div>
           </div>

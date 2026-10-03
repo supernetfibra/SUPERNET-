@@ -232,7 +232,7 @@ export default function Invoices() {
       <div>
         <h1 className="text-xl font-medium tracking-tight text-foreground">Faturas</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Acompanhe suas cobranças de forma inteligente.
+          Acompanhe suas cobranças.
         </p>
       </div>
 
@@ -257,7 +257,7 @@ export default function Invoices() {
               </button>
             )}
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-1 flex-wrap">
             {(["all", "pendente", "vencido", "pago"] as const).map((status) => (
               <button
                 key={status}
@@ -274,9 +274,17 @@ export default function Invoices() {
                     : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
                 }`}
               >
-                {status === "all" ? "Todas" : status === "pendente" ? "Pendente" : status === "vencido" ? "Vencida" : "Paga"}
+                {status === "all" ? "Todas" : status === "pendente" ? "A vencer" : status === "vencido" ? "Vencida" : "Paga"}
               </button>
             ))}
+            <button
+              onClick={refetch}
+              title="Atualizar lista de faturas"
+              className="ml-auto inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Atualizar
+            </button>
           </div>
         </div>
       )}
@@ -327,19 +335,6 @@ export default function Invoices() {
               Recarregar faturas
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Manual refresh button — only when data loaded and not already refreshing */}
-      {!isLoading && billings.length > 0 && (
-        <div className="flex justify-end">
-          <button
-            onClick={refetch}
-            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Atualizar
-          </button>
         </div>
       )}
 

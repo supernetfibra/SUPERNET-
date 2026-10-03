@@ -29,12 +29,17 @@ export {
   mapBilling,
   mapStatus,
   formatDate,
+  parseDateBR,
+  diasAteVencimento,
   extractPixCode,
   findPixCode,
   saveToCache,
   loadFromCache,
   clearCache,
 } from "@/lib/billing-utils";
+
+// Local value import — re-export alone doesn't make it usable inside this file.
+import { diasAteVencimento, parseDateBR } from "@/lib/billing-utils";
 // ---------------------------------------------------------------------------
 // Hook — reads from centralized BillingContext (no local state/effects)
 // ---------------------------------------------------------------------------
@@ -111,33 +116,6 @@ export function formatVencimentoComMes(vencimento: string): string {
   const mesNome = MESES[mesNum - 1] || mes;
 
   return `${parseInt(dia, 10)} de ${mesNome} de ${ano}`;
-}
-
-/**
- * Convert dd/MM/yyyy string to a Date object at midnight local time.
- */
-export function parseDateBR(dateStr: string): Date | null {
-  if (!dateStr) return null;
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
-  const [dia, mes, ano] = parts.map(Number);
-  if (!dia || !mes || !ano) return null;
-  return new Date(ano, mes - 1, dia);
-}
-
-/**
- * Calculate how many days until the due date.
- * Negative = already overdue.
- */
-export function diasAteVencimento(vencimento: string): number | null {
-  const dueDate = parseDateBR(vencimento);
-  if (!dueDate) return null;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const diffMs = dueDate.getTime() - today.getTime();
-  return Math.round(diffMs / (1000 * 60 * 60 * 24));
 }
 
 /**

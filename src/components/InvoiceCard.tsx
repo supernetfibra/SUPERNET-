@@ -24,14 +24,13 @@ import {
   ChevronRight,
   AlertTriangle,
   Clock,
-  Zap,
   CalendarDays,
   CreditCard,
   Smartphone,
 } from "lucide-react";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
-import { statusConfig } from "@/lib/status-config";
+import { statusBadge } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-config";
@@ -78,25 +77,25 @@ function getUrgencyStyles(type: string) {
     case "vence-hoje":
       return {
         cardAccent:
-          "border-orange-400 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/20 ring-1 ring-orange-200 dark:ring-orange-900/50",
+          "border-yellow-400 dark:border-yellow-600 bg-yellow-50 dark:bg-yellow-950/20 ring-1 ring-yellow-200 dark:ring-yellow-900/50",
         cardBorder:
-          "border-orange-200 dark:border-orange-800/60 bg-orange-50/50 dark:bg-orange-950/10 hover:bg-orange-100/50 dark:hover:bg-orange-950/30",
-        iconBg: "bg-orange-100 dark:bg-orange-900/30",
-        iconColor: "text-orange-600 dark:text-orange-400",
+          "border-yellow-200 dark:border-yellow-800/60 bg-yellow-50/50 dark:bg-yellow-950/10 hover:bg-yellow-100/50 dark:hover:bg-yellow-950/30",
+        iconBg: "bg-yellow-100 dark:bg-yellow-900/30",
+        iconColor: "text-yellow-600 dark:text-yellow-400",
         labelBg:
-          "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400",
-        Icon: Zap,
+          "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400",
+        Icon: Clock,
       };
     case "a-vencer":
       return {
         cardAccent:
-          "border-amber-300 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/15 ring-1 ring-amber-200/50 dark:ring-amber-900/30",
+          "border-blue-300 dark:border-blue-700 bg-blue-50/80 dark:bg-blue-950/15 ring-1 ring-blue-200/50 dark:ring-blue-900/30",
         cardBorder:
-          "border-amber-200 dark:border-amber-800/60 bg-amber-50/30 dark:bg-amber-950/5 hover:bg-amber-100/30 dark:hover:bg-amber-950/20",
-        iconBg: "bg-amber-100 dark:bg-amber-900/30",
-        iconColor: "text-amber-600 dark:text-amber-400",
+          "border-blue-200 dark:border-blue-800/60 bg-blue-50/30 dark:bg-blue-950/5 hover:bg-blue-100/30 dark:hover:bg-blue-950/20",
+        iconBg: "bg-blue-100 dark:bg-blue-900/30",
+        iconColor: "text-blue-600 dark:text-blue-400",
         labelBg:
-          "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400",
+          "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400",
         Icon: Clock,
       };
     default:
@@ -190,7 +189,8 @@ function InvoiceCardInner({
 
   const smartLabel = getSmartLabel(billing);
   const styles = getUrgencyStyles(smartLabel.type);
-  const status = statusConfig[billing.status] || statusConfig.pendente;
+  const status = statusBadge(billing.status, billing.vencimento);
+  const statusLabel = status.label;
   const StatusIcon = status.icon;
 
   // Highlight variant uses explicit currentDias for styling

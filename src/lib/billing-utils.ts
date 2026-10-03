@@ -143,6 +143,33 @@ export function findPixCode(raw: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/**
+ * Convert dd/MM/yyyy string to a Date object at midnight local time.
+ */
+export function parseDateBR(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return null;
+  const [dia, mes, ano] = parts.map(Number);
+  if (!dia || !mes || !ano) return null;
+  return new Date(ano, mes - 1, dia);
+}
+
+/**
+ * Calculate how many days until the due date (dd/MM/yyyy).
+ * Negative = already overdue. Returns null when the date is invalid.
+ */
+export function diasAteVencimento(vencimento: string): number | null {
+  const dueDate = parseDateBR(vencimento);
+  if (!dueDate) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const diffMs = dueDate.getTime() - today.getTime();
+  return Math.round(diffMs / (1000 * 60 * 60 * 24));
+}
+
 /** Map raw API billing to frontend-friendly format */
 export function mapBilling(raw: RawBilling): BillingSummary {
   return {
