@@ -101,7 +101,7 @@ export interface ReferralMeInput {
 
 export interface ReferralMeView {
   code: string | null;
-  /** Link completo, montado com o ORIGIN do portal informado pelo backend. */
+  /** Link completo do portal (portalBaseUrl das configurações) com ?ref=<código>. */
   shareLink: string | null;
   shareText: string | null;
   balance: number;
@@ -128,13 +128,19 @@ const REFERRAL_STATUS_TO_POINTS: Record<string, number> = {
   rejected: 0,
 };
 
-export function buildReferralMeView(input: ReferralMeInput, origin: string, pointsPerApproved: number): ReferralMeView {
+export function buildReferralMeView(
+  input: ReferralMeInput,
+  portalBaseUrl: string,
+  companyName: string,
+  pointsPerApproved: number,
+): ReferralMeView {
   const balance = input.ledger.reduce((acc, row) => acc + row.delta, 0);
   const totalEarned = input.ledger.filter((r) => r.delta > 0).reduce((acc, r) => acc + r.delta, 0);
   const code = input.codeRow?.code ?? null;
-  const shareLink = code ? `${origin.replace(/\/$/, "")}/?ref=${code}` : null;
+  const portal = portalBaseUrl.replace(/\/+$/, "");
+  const shareLink = code ? `${portal}/?ref=${code}` : null;
   const shareText = shareLink
-    ? `Indique a ${origin.replace(/^https?:\/\//, "").replace(/\/$/, "")} para amigos e ganhe pontos! ${shareLink}`
+    ? `Indique a ${companyName} e ganhe pontos! Acesse: ${shareLink}`
     : null;
   return {
     code,

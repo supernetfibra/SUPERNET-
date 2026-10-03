@@ -4126,7 +4126,12 @@ app.get("/referrals/me", async (c) => {
   const customerRef = session.customer_id;
   try {
     const code = await ensureReferralCode(customerRef, session.customer_name, session.cpf);
-    const origin = new URL(c.req.raw.url).origin;
+    // Link de compartilhamento aponta para o PORTAL (settings), nunca para a
+    // origem da Edge Function (supabase.co/functions — daria "requested path
+    // is invalid" ao abrir).
+    const settingsLoaded = await whatsappRuntime().getSettings().catch(() => null);
+    const portalBaseUrl = settingsLoaded?.settings.portalBaseUrl ?? "https://minhasupernet.com";
+    const companyName = settingsLoaded?.settings.companyName ?? "MinhaSuperNet";
 
     const [ledgerRes, redemptionsRes, referralsRes] = await Promise.all([
       db()
@@ -4156,7 +4161,8 @@ app.get("/referrals/me", async (c) => {
         redemptions: (redemptionsRes.data ?? []) as RedemptionRow[],
         referrals: (referralsRes.data ?? []) as InstallRequestReferralRow[],
       },
-      origin,
+      portalBaseUrl,
+      companyName,
       config.pointsPerApproved
     );
     // `enabled` no payload: o painel do cliente (aviso do dashboard) só promove o

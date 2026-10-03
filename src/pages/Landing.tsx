@@ -44,6 +44,7 @@ import { useNavigate } from "react-router";
 import { useBranding } from "@/lib/branding-context";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { submitInstallRequest } from "@/lib/install-request";
+import { apiUrl } from "@/lib/api-config";
 import { maskCpf, maskPhone, maskCep } from "@/lib/form-masks";
 import { lookupCep } from "@/lib/cep-lookup";
 import { Gift } from "lucide-react";
@@ -95,7 +96,7 @@ export default function Landing() {
 
   const validateReferral = useCallback(async (code: string) => {
     try {
-      const res = await fetch(`/api/public/referral/${encodeURIComponent(code)}`);
+      const res = await fetch(apiUrl(`/api/public/referral/${encodeURIComponent(code)}`));
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.valid) {
         setReferralCode(code);
