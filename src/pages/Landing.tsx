@@ -93,6 +93,8 @@ export default function Landing() {
   // o formulário — o lead nunca é barrado por problema no programa.
   const [referralCode, setReferralCode] = useState<string | null>(null);
   const [referrerName, setReferrerName] = useState<string | null>(null);
+  // Fluxo em duas etapas: primeiro o aviso da indicação, depois o formulário.
+  const [showReferralForm, setShowReferralForm] = useState(false);
 
   const validateReferral = useCallback(async (code: string) => {
     try {
@@ -190,6 +192,12 @@ export default function Landing() {
     document
       .getElementById("solicitar-instalacao")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // "Solicitar Instalação" na página do aviso abre o formulário.
+  const openReferralForm = () => {
+    setShowReferralForm(true);
+    window.scrollTo(0, 0);
   };
 
   const resetForm = () => {
@@ -305,8 +313,44 @@ export default function Landing() {
         </div>
       </header>
 
-      {/* Hero */}
-      <main className="flex-1 flex flex-col">
+      {/* Indicação: página dedicada com o aviso; o formulário abre ao clicar em Solicitar Instalação */}
+      {referrerName && !showReferralForm ? (
+        <main className="flex-1 flex flex-col">
+          <div className="flex-1 flex items-center justify-center px-4 sm:px-6 py-16 sm:py-20">
+            <div className="max-w-md mx-auto text-center animate-[slideUp_0.5s_ease-out]">
+              <div className="flex justify-center mb-8">
+                <div className="h-16 w-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+                  <Gift className="h-8 w-8 text-emerald-600 dark:text-emerald-400" />
+                </div>
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-light tracking-tight text-foreground leading-tight">
+                Você foi indicado por{" "}
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  {referrerName}
+                </span>
+              </h1>
+              <p className="text-base text-muted-foreground mt-4 max-w-sm mx-auto leading-relaxed">
+                Solicite sua instalação e, quando ela for aprovada, seu amigo
+                ganha os pontos do programa. 🎁
+              </p>
+              <div className="mt-10">
+                <Button
+                  className="h-11 px-8 text-sm w-full sm:w-auto"
+                  onClick={openReferralForm}
+                >
+                  <Home className="mr-2 h-4 w-4" />
+                  Solicitar Instalação
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-8">
+                Já é cliente? Use o botão "Acessar Área do Cliente" no topo.
+              </p>
+            </div>
+          </div>
+        </main>
+      ) : (
+        <main className="flex-1 flex flex-col">
+        {!referrerName && (
         <div className="flex-1 flex items-center justify-center px-4 sm:px-6 py-16 sm:py-20">
           <div className="max-w-2xl mx-auto text-center">
             <div className="animate-[slideUp_0.5s_ease-out]">
@@ -379,6 +423,7 @@ export default function Landing() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Installation request section */}
         <section id="solicitar-instalacao" className="border-t border-border scroll-mt-6">
@@ -819,7 +864,8 @@ export default function Landing() {
             )}
           </div>
         </section>
-      </main>
+        </main>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-border">
