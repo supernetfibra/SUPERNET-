@@ -26,7 +26,6 @@ import {
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { useBillings } from "@/hooks/use-billings";
-import { useAuth } from "@/lib/auth-context";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { statusBadge } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
@@ -38,7 +37,6 @@ export default function InvoiceDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { billings, isLoading } = useBillings();
-  const { customer } = useAuth();
   const [copiedField, handleCopy] = useCopyToClipboard();
 
   const [pixQrCode, setPixQrCode] = useState<string | null>(null);
@@ -206,7 +204,7 @@ export default function InvoiceDetail() {
                 <p className="text-xl sm:text-2xl font-light tracking-tight text-foreground">
                   {updatedValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   Valor original: {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                 </p>
               </>
@@ -246,7 +244,7 @@ export default function InvoiceDetail() {
                 </span>
               </div>
               {showUpdatedValue && (
-                <div className="flex items-center justify-between text-[11px]">
+                <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Valor original</span>
                   <span className="text-muted-foreground line-through">
                     {billing.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
@@ -285,11 +283,11 @@ export default function InvoiceDetail() {
                 <>
                   {billing.linha_digitavel && (
                     <div className="space-y-1.5">
-                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
                         Linha Digitável
                       </p>
                       <div className="flex items-center gap-2">
-                        <code className="flex-1 text-[10px] font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm truncate">
+                        <code className="flex-1 text-xs font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm truncate">
                           {billing.linha_digitavel}
                         </code>
                         <Button
@@ -312,7 +310,7 @@ export default function InvoiceDetail() {
                     <div className="space-y-3">
                       {/* QR Code */}
                       <div className="flex flex-col items-center gap-2">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium self-start">
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium self-start">
                           PIX QR Code
                         </p>
                         <div className="bg-white rounded-lg p-2 shadow-sm border border-border/50">
@@ -334,18 +332,18 @@ export default function InvoiceDetail() {
                             </div>
                           )}
                         </div>
-                        <p className="text-[10px] text-muted-foreground text-center leading-relaxed max-w-[200px]">
+                        <p className="text-xs text-muted-foreground text-center leading-relaxed max-w-[200px]">
                           Abra o app do seu banco, escolha PIX e escaneie este código
                         </p>
                       </div>
 
                       {/* Copy-paste code */}
                       <div className="space-y-1.5">
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
                           PIX Copia e Cola
                         </p>
                         <div className="flex items-center gap-2">
-                          <code className="flex-1 text-[10px] font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm line-clamp-2 break-all">
+                          <code className="flex-1 text-xs font-mono text-foreground bg-secondary/50 px-2 py-1.5 rounded-sm line-clamp-2 break-all">
                             {billing.pix_copiaecola}
                           </code>
                           <Button

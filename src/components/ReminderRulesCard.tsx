@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { apiUrl } from "@/lib/api-config";
+import { adminFetch } from "@/lib/api-config";
 import {
   paramsFromSettings,
   validateRules,
@@ -36,26 +36,7 @@ import {
   type SimRule,
 } from "@/lib/simulator-report";
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
+// Admin auth (token + fetch) vem de src/lib/api-config.ts
 
 export function ReminderRulesCard() {
   const [baseline, setBaseline] = useState<SimSettings | null>(null);
@@ -202,9 +183,9 @@ export function ReminderRulesCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         {settingsError ? (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">{settingsError}</p>
+          <p className="text-xs text-amber-600 dark:text-amber-400">{settingsError}</p>
         ) : null}
-        {loading ? <p className="text-[11px] text-muted-foreground">Carregando…</p> : null}
+        {loading ? <p className="text-xs text-muted-foreground">Carregando…</p> : null}
 
         {/* Visão SIMPLES: um cartão por regra, com toggle e descrição em português */}
         <div className="space-y-2">
@@ -234,7 +215,7 @@ export function ReminderRulesCard() {
                   <p className={`text-xs font-medium ${rule.active ? "text-foreground" : "text-muted-foreground"}`}>
                     {rule.label || eventLabel}
                   </p>
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {eventLabel} · {offsetLabel}
                   </p>
                 </div>
@@ -251,7 +232,7 @@ export function ReminderRulesCard() {
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
         >
           <ChevronDown className={`h-3 w-3 transition-transform ${showAdvanced ? "" : "-rotate-90"}`} />
           Editar avançado (chave, evento, prioridade, rótulo)
@@ -289,7 +270,7 @@ export function ReminderRulesCard() {
                     onChange={(event) => updateRule(index, { offsetDays: Number(event.target.value) })}
                     className="h-8 w-16 text-xs font-mono"
                   />
-                  <span className="text-[10px] text-muted-foreground">d</span>
+                  <span className="text-xs text-muted-foreground">d</span>
                 </div>
                 <Input
                   type="number"
@@ -310,7 +291,7 @@ export function ReminderRulesCard() {
             ))}
             <div className="grid grid-cols-2 gap-3 max-w-xs">
               <div className="space-y-1.5">
-                <Label className="text-[10px] font-medium text-muted-foreground">Horizonte (dias)</Label>
+                <Label className="text-xs font-medium text-muted-foreground">Horizonte (dias)</Label>
                 <Input
                   type="number"
                   min={1}
@@ -321,7 +302,7 @@ export function ReminderRulesCard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-[10px] font-medium text-muted-foreground">Execução (h)</Label>
+                <Label className="text-xs font-medium text-muted-foreground">Execução (h)</Label>
                 <Input
                   type="number"
                   min={0}
@@ -336,14 +317,14 @@ export function ReminderRulesCard() {
         ) : null}
 
         {problems.length ? (
-          <ul className="space-y-0.5 text-[10px] text-red-600 dark:text-red-400">
+          <ul className="space-y-0.5 text-xs text-red-600 dark:text-red-400">
             {problems.map((problem) => (
               <li key={problem}>• {problem}</li>
             ))}
           </ul>
         ) : null}
         {!rules.some((rule) => rule.active) && rules.length ? (
-          <span className="text-[10px] text-amber-600 dark:text-amber-400">
+          <span className="text-xs text-amber-600 dark:text-amber-400">
             Nenhuma regra ligada: o pipeline não geraria nenhum aviso.
           </span>
         ) : null}

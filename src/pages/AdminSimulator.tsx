@@ -55,7 +55,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { apiUrl } from "@/lib/api-config";
+import { adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
 import {
   buildDecisionChips,
   buildMetrics,
@@ -79,26 +80,7 @@ import {
 // Helpers de API (mesmo padrão das outras páginas admin)
 // ---------------------------------------------------------------------------
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
+// Admin auth (token + fetch) vem de src/lib/api-config.ts
 
 // ---------------------------------------------------------------------------
 // Estado inicial e acesso à API
@@ -334,7 +316,7 @@ export default function AdminSimulator() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Fonte</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Fonte</Label>
               <Select
                 value={params.source}
                 onValueChange={(value) => setParams({ ...params, source: value as SimParams["source"] })}
@@ -350,7 +332,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Cenário {params.source === "mikweb" ? "(ignorado)" : ""}
               </Label>
               <Select
@@ -370,7 +352,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Data de referência
               </Label>
               <Input
@@ -382,7 +364,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Horizonte (dias)</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Horizonte (dias)</Label>
               <Input
                 type="number"
                 min={1}
@@ -394,7 +376,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Execução (h)</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Execução (h)</Label>
               <Input
                 type="number"
                 min={0}
@@ -406,7 +388,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Cota de conversas novas/dia
               </Label>
               <Input
@@ -419,7 +401,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Avisos por cliente/dia</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Avisos por cliente/dia</Label>
               <Input
                 type="number"
                 min={1}
@@ -427,13 +409,13 @@ export default function AdminSimulator() {
                 onChange={(e) => setParams({ ...params, perCustomerCap: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Quantas mensagens UM cliente pode receber por dia. O envio real usa o valor salvo em Conexões → Ajustes avançados.
               </p>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Opt-in</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Opt-in</Label>
               <Select
                 value={params.optIn}
                 onValueChange={(value) => setParams({ ...params, optIn: value as SimParams["optIn"] })}
@@ -450,7 +432,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Push</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Push</Label>
               <Select
                 value={params.push}
                 onValueChange={(value) => setParams({ ...params, push: value as SimParams["push"] })}
@@ -467,7 +449,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Canal WhatsApp</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Canal WhatsApp</Label>
               <Select
                 value={params.whatsapp}
                 onValueChange={(value) => setParams({ ...params, whatsapp: value as SimParams["whatsapp"] })}
@@ -483,7 +465,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Instância</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Instância</Label>
               <Select
                 value={params.instance}
                 onValueChange={(value) => setParams({ ...params, instance: value as SimParams["instance"] })}
@@ -499,7 +481,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">Time-lock (dias)</Label>
+              <Label className="text-xs font-medium text-muted-foreground">Time-lock (dias)</Label>
               <Input
                 type="number"
                 min={0}
@@ -510,7 +492,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Clientes varridos
               </Label>
               <Input
@@ -524,7 +506,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Itens no relatório
               </Label>
               <Input
@@ -538,7 +520,7 @@ export default function AdminSimulator() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Mensagens renderizadas
               </Label>
               <Input
@@ -623,14 +605,14 @@ export default function AdminSimulator() {
                 onCheckedChange={(checked) => setParams({ ...params, reveal: checked })}
                 className="cursor-pointer"
               />
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 mostrar telefone completo
               </span>
             </div>
           </div>
 
           {overrides.length ? (
-            <div className="flex items-start gap-2 rounded-sm border border-amber-500/30 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+            <div className="flex items-start gap-2 rounded-sm border border-amber-500/30 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
               <div className="space-y-1">
                 <p className="font-medium">Esta rodada não é o que está salvo:</p>
@@ -646,14 +628,14 @@ export default function AdminSimulator() {
               </div>
             </div>
           ) : (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Sem overrides: esta rodada usa exatamente a configuração persistida
               {baseline ? ` (${baseline.fingerprint})` : ""} — é o que será enviado.
             </p>
           )}
 
           {params.cap === 0 ? (
-            <p className="text-[10px] text-amber-600 dark:text-amber-400">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
               Cota 0 = sem limite de novas conversas. É o cenário que mais arrisca restrição do
               número pelo WhatsApp — use só para medir o teto.
             </p>
@@ -697,7 +679,9 @@ export default function AdminSimulator() {
               <CardDescription className="text-xs text-muted-foreground">
                 Configuração <span className="font-mono">{report.settings.fingerprint}</span> (
                 {report.settings.origin === "db" ? "salva" : "padrão do código"})
-                {report.overrides.length ? ` · ${report.overrides.length} override(s)` : " · sem override"}{" "}
+                {report.overrides.length
+                      ? ` · ${plural(report.overrides.length, "override", "overrides")}`
+                      : " · sem override"}{" "}
                 — janela {formatDateBR(report.window.from)} → {formatDateBR(report.window.to)} ·{" "}
                 {report.window.days} dias · execução às {report.window.runAtHour}h · base{" "}
                 {report.source.kind}/{report.source.strategy}: {report.source.billingsScanned} faturas
@@ -709,7 +693,7 @@ export default function AdminSimulator() {
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
                 {metrics.map((metric) => (
                   <div key={metric.label} className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground leading-tight">
+                    <p className="text-xs text-muted-foreground leading-tight">
                       {metric.label}
                     </p>
                     <p
@@ -721,7 +705,7 @@ export default function AdminSimulator() {
                     </p>
                     {metric.delta !== null && metric.delta !== 0 ? (
                       <p
-                        className={`text-[10px] font-mono ${
+                        className={`text-xs font-mono ${
                           metric.delta > 0
                             ? "text-emerald-600 dark:text-emerald-400"
                             : "text-red-600 dark:text-red-400"
@@ -746,7 +730,7 @@ export default function AdminSimulator() {
                 </div>
               ) : null}
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[10px] text-muted-foreground">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-muted-foreground">
                 <div className="space-y-0.5">
                   <p className="font-medium text-foreground">Faturas</p>
                   <p>{report.plan.billingsOpen} em aberto</p>
@@ -800,7 +784,7 @@ export default function AdminSimulator() {
                 </div>
               </div>
 
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Régua em vigor:{" "}
                 <span className="font-mono break-words">
                   {report.settings.rules
@@ -828,7 +812,7 @@ export default function AdminSimulator() {
                 {paramChanges.length ? (
                   <ul className="space-y-0.5 text-muted-foreground">
                     {paramChanges.map((change) => (
-                      <li key={change} className="font-mono text-[10px]">
+                      <li key={change} className="font-mono text-xs">
                         · {change}
                       </li>
                     ))}
@@ -855,7 +839,7 @@ export default function AdminSimulator() {
                       </span>
                     ))}
                   {metrics.every((metric) => !metric.delta) ? (
-                    <span className="text-[10px] text-muted-foreground">sem diferença</span>
+                    <span className="text-xs text-muted-foreground">sem diferença</span>
                   ) : null}
                 </div>
               </CardContent>
@@ -877,7 +861,7 @@ export default function AdminSimulator() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ul className="space-y-1 text-[11px] text-muted-foreground">
+                <ul className="space-y-1 text-xs text-muted-foreground">
                   {report.assumptions.map((assumption) => (
                     <li key={assumption}>• {assumption}</li>
                   ))}
@@ -892,7 +876,7 @@ export default function AdminSimulator() {
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <p className="font-medium">Atenção nos templates</p>
-                  <ul className="space-y-0.5 text-[11px]">
+                  <ul className="space-y-0.5 text-xs">
                     {report.templateWarnings.map((warning) => (
                       <li key={warning}>• {warning}</li>
                     ))}
@@ -921,7 +905,7 @@ export default function AdminSimulator() {
                 <button
                   type="button"
                   onClick={() => setDecisionFilter([])}
-                  className={`text-[10px] px-2 py-1 rounded-sm border cursor-pointer transition-colors ${
+                  className={`text-xs px-2 py-1 rounded-sm border cursor-pointer transition-colors ${
                     decisionFilter.length === 0
                       ? "border-foreground/40 text-foreground"
                       : "border-border text-muted-foreground hover:text-foreground"
@@ -936,7 +920,7 @@ export default function AdminSimulator() {
                       key={chip.code}
                       type="button"
                       onClick={() => toggleDecision(chip.code)}
-                      className={`text-[10px] px-2 py-1 rounded-sm border cursor-pointer transition-colors ${
+                      className={`text-xs px-2 py-1 rounded-sm border cursor-pointer transition-colors ${
                         active
                           ? `${decisionTone(chip.code)} border-foreground/40`
                           : `${decisionTone(chip.code)} border-transparent opacity-70 hover:opacity-100`
@@ -982,14 +966,14 @@ export default function AdminSimulator() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-[10px] h-8 w-8" />
-                      <TableHead className="text-[10px] h-8">Envio</TableHead>
-                      <TableHead className="text-[10px] h-8">Cliente</TableHead>
-                      <TableHead className="text-[10px] h-8 hidden sm:table-cell">Ref</TableHead>
-                      <TableHead className="text-[10px] h-8 hidden md:table-cell">Venc.</TableHead>
-                      <TableHead className="text-[10px] h-8 hidden sm:table-cell">Valor</TableHead>
-                      <TableHead className="text-[10px] h-8 hidden lg:table-cell">Regra</TableHead>
-                      <TableHead className="text-[10px] h-8">Decisão</TableHead>
+                      <TableHead className="text-xs h-8 w-8" />
+                      <TableHead className="text-xs h-8">Envio</TableHead>
+                      <TableHead className="text-xs h-8">Cliente</TableHead>
+                      <TableHead className="text-xs h-8 hidden sm:table-cell">Ref</TableHead>
+                      <TableHead className="text-xs h-8 hidden md:table-cell">Venc.</TableHead>
+                      <TableHead className="text-xs h-8 hidden sm:table-cell">Valor</TableHead>
+                      <TableHead className="text-xs h-8 hidden lg:table-cell">Regra</TableHead>
+                      <TableHead className="text-xs h-8">Decisão</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1015,22 +999,22 @@ export default function AdminSimulator() {
                                   <ChevronRight className="h-3 w-3 text-muted-foreground" />
                                 )}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] font-mono tabular-nums whitespace-nowrap">
+                              <TableCell className="py-2 text-xs font-mono tabular-nums whitespace-nowrap">
                                 {item.sendDateBR}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] max-w-[180px] truncate">
+                              <TableCell className="py-2 text-xs max-w-[180px] truncate">
                                 {item.customerName}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] font-mono hidden sm:table-cell">
+                              <TableCell className="py-2 text-xs font-mono hidden sm:table-cell">
                                 {item.reference}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] font-mono hidden md:table-cell whitespace-nowrap">
+                              <TableCell className="py-2 text-xs font-mono hidden md:table-cell whitespace-nowrap">
                                 {item.dueDateBR}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] font-mono tabular-nums hidden sm:table-cell whitespace-nowrap">
+                              <TableCell className="py-2 text-xs font-mono tabular-nums hidden sm:table-cell whitespace-nowrap">
                                 {formatBRL(item.valueWithCharges)}
                               </TableCell>
-                              <TableCell className="py-2 text-[11px] font-mono hidden lg:table-cell">
+                              <TableCell className="py-2 text-xs font-mono hidden lg:table-cell">
                                 {item.ruleKey}
                               </TableCell>
                               <TableCell className="py-2">
@@ -1047,10 +1031,10 @@ export default function AdminSimulator() {
                               <TableRow>
                                 <TableCell colSpan={8} className="bg-muted/30">
                                   <div className="space-y-2 py-1">
-                                    <p className="text-[11px] text-muted-foreground">
+                                    <p className="text-xs text-muted-foreground">
                                       {item.reason}
                                     </p>
-                                    <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground font-mono">
+                                    <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground font-mono">
                                       <span className="px-1.5 py-0.5 rounded-sm border border-border">
                                         {item.phone ?? item.phoneMasked ?? "sem telefone"}
                                       </span>
@@ -1072,12 +1056,12 @@ export default function AdminSimulator() {
                                       ) : null}
                                     </div>
                                     {item.preview?.body ? (
-                                      <pre className="whitespace-pre-wrap font-sans text-[11px] leading-relaxed rounded-sm border border-border bg-background p-3 text-foreground">
+                                      <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed rounded-sm border border-border bg-background p-3 text-foreground">
                                         {item.preview.title ? `${item.preview.title}\n\n` : ""}
                                         {item.preview.body}
                                       </pre>
                                     ) : (
-                                      <p className="text-[11px] text-muted-foreground">
+                                      <p className="text-xs text-muted-foreground">
                                         {previewFallbackNote(
                                           item,
                                           runParams?.previewLimit ?? params.previewLimit
@@ -1098,7 +1082,7 @@ export default function AdminSimulator() {
 
               {/* Paginação — o total continua sendo o resumo; a tabela mostra uma página por vez */}
               {filteredItems.length > ITEMS_PER_PAGE ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
                     página {safeItemPage + 1} de {totalItemPages} · {filteredItems.length} avisos filtrados
                   </span>
@@ -1106,7 +1090,7 @@ export default function AdminSimulator() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-7 text-[10px] cursor-pointer"
+                      className="h-7 text-xs cursor-pointer"
                       disabled={safeItemPage === 0}
                       onClick={() => setItemPage(safeItemPage - 1)}
                     >
@@ -1115,7 +1099,7 @@ export default function AdminSimulator() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-7 text-[10px] cursor-pointer"
+                      className="h-7 text-xs cursor-pointer"
                       disabled={safeItemPage >= totalItemPages - 1}
                       onClick={() => setItemPage(safeItemPage + 1)}
                     >
@@ -1126,8 +1110,8 @@ export default function AdminSimulator() {
               ) : null}
 
               {report.skippedSamples.length ? (
-                <details className="text-[11px] text-muted-foreground">
-                  <summary className="cursor-pointer text-[10px]">
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer text-xs">
                     amostra de ignorados/adiados
                   </summary>
                   <ul className="mt-2 space-y-0.5 font-mono">
@@ -1142,7 +1126,7 @@ export default function AdminSimulator() {
             </CardContent>
           </Card>
 
-          <p className="text-[10px] text-muted-foreground text-center">
+          <p className="text-xs text-muted-foreground text-center">
             relatório gerado em{" "}
             {new Date(report.generatedAt).toLocaleString("pt-BR")} · simulador v
             {report.simulatorVersion} · nada foi enviado nem gravado

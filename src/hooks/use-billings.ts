@@ -14,17 +14,12 @@ import { useBillingContext } from "@/lib/billing-context";
 import {
   type BillingSummary,
   type BillingDetail,
-  type RawBilling,
 } from "@/lib/billing-utils";
 
 // ── Re-export shared types and helpers from billing-utils ──
 // These were previously defined inline here, but were moved to billing-utils.ts
 // to break the circular dependency (billing-context imports from use-billings).
-export type {
-  BillingSummary,
-  BillingDetail,
-  RawBilling,
-} from "@/lib/billing-utils";
+export type { BillingSummary, BillingDetail } from "@/lib/billing-utils";
 export {
   mapBilling,
   mapStatus,

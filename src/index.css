@@ -112,6 +112,170 @@
   --sidebar-ring: oklch(0.55 0 0);
 }
 
+/* --------------------------------------------------------------------------- */
+/* Semantic status tokens (ETAPA 1 — Foundations)                            */
+/*                                                                           */
+/* Reproduzem EXATAMENTE a paleta já predominante no produto (emerald/amber/ */
+/* red/blue/gray) sob nomes semânticos. Nenhuma cor nova foi inventada:      */
+/*   success  = emerald  (pago, aprovado, aplicado, conectado)               */
+/*   warning  = amber    (pendente, aguardando, rate-limit)                  */
+/*   danger   = red      (vencido, recusado, falha)                          */
+/*   info     = blue     (a vencer, aprovado em análise, acesso)             */
+/*   neutral  = gray     (logout, cancelado, desligado)                      */
+/*                                                                           */
+/* Uso via Tailwind (as variantes flipam no dark automaticamente):           */
+/*   texto   → text-status-{tone}                                            */
+/*   fundo   → bg-status-{tone}-bg        (estilo "sólido": bg-{c}-50)       */
+/*   borda   → border-status-{tone}-border                                  */
+/*   fundo suave → bg-status-{tone}-soft  (estilo "soft": {c}-500/15)       */
+/*                                                                           */
+/* Obs.: o tom "vence hoje" (yellow) do status-config.ts ainda não tem       */
+/* token — só existe na área do cliente; mapear em fase posterior.           */
+/* --------------------------------------------------------------------------- */
+
+:root {
+  /* success (emerald) */
+  --status-success: oklch(0.596 0.145 163.225);
+  --status-success-bg: oklch(0.979 0.021 166.113);
+  --status-success-border: oklch(0.905 0.093 164.15);
+  --status-success-soft: oklch(0.696 0.17 162.48 / 0.15);
+  /* warning (amber) */
+  --status-warning: oklch(0.666 0.179 58.318);
+  --status-warning-bg: oklch(0.987 0.022 95.277);
+  --status-warning-border: oklch(0.924 0.12 95.746);
+  --status-warning-soft: oklch(0.769 0.188 70.08 / 0.15);
+  /* danger (red) */
+  --status-danger: oklch(0.577 0.245 27.325);
+  --status-danger-bg: oklch(0.971 0.013 17.38);
+  --status-danger-border: oklch(0.885 0.062 18.334);
+  --status-danger-soft: oklch(0.637 0.237 25.331 / 0.15);
+  /* info (blue) */
+  --status-info: oklch(0.546 0.245 262.881);
+  --status-info-bg: oklch(0.97 0.014 254.604);
+  --status-info-border: oklch(0.882 0.059 254.128);
+  --status-info-soft: oklch(0.623 0.214 259.815 / 0.15);
+  /* neutral (gray) */
+  --status-neutral: oklch(0.551 0.027 264.364);
+  --status-neutral-bg: oklch(0.985 0.002 247.839);
+  --status-neutral-border: oklch(0.928 0.006 264.531);
+  --status-neutral-soft: oklch(0.551 0.027 264.364 / 0.15);
+}
+
+.dark {
+  /* success (emerald) */
+  --status-success: oklch(0.765 0.177 163.223);
+  --status-success-bg: oklch(0.262 0.051 172.552 / 0.2);
+  --status-success-border: oklch(0.378 0.077 168.94);
+  --status-success-soft: oklch(0.696 0.17 162.48 / 0.15);
+  /* warning (amber) */
+  --status-warning: oklch(0.828 0.189 84.429);
+  --status-warning-bg: oklch(0.279 0.077 45.635 / 0.2);
+  --status-warning-border: oklch(0.414 0.112 45.904);
+  --status-warning-soft: oklch(0.769 0.188 70.08 / 0.15);
+  /* danger (red) */
+  --status-danger: oklch(0.704 0.191 22.216);
+  --status-danger-bg: oklch(0.271 0.105 12.094 / 0.2);
+  --status-danger-border: oklch(0.396 0.141 25.723);
+  --status-danger-soft: oklch(0.637 0.237 25.331 / 0.15);
+  /* info (blue) */
+  --status-info: oklch(0.707 0.165 254.624);
+  --status-info-bg: oklch(0.282 0.091 267.935 / 0.2);
+  --status-info-border: oklch(0.379 0.146 265.522);
+  --status-info-soft: oklch(0.623 0.214 259.815 / 0.15);
+  /* neutral (gray) */
+  --status-neutral: oklch(0.707 0.022 261.325);
+  --status-neutral-bg: oklch(0.13 0.028 261.692 / 0.2);
+  --status-neutral-border: oklch(0.21 0.034 264.665);
+  --status-neutral-soft: oklch(0.551 0.027 264.364 / 0.15);
+}
+
+@theme inline {
+  --color-status-success: var(--status-success);
+  --color-status-success-bg: var(--status-success-bg);
+  --color-status-success-border: var(--status-success-border);
+  --color-status-success-soft: var(--status-success-soft);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-warning-border: var(--status-warning-border);
+  --color-status-warning-soft: var(--status-warning-soft);
+  --color-status-danger: var(--status-danger);
+  --color-status-danger-bg: var(--status-danger-bg);
+  --color-status-danger-border: var(--status-danger-border);
+  --color-status-danger-soft: var(--status-danger-soft);
+  --color-status-info: var(--status-info);
+  --color-status-info-bg: var(--status-info-bg);
+  --color-status-info-border: var(--status-info-border);
+  --color-status-info-soft: var(--status-info-soft);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-neutral-bg: var(--status-neutral-bg);
+  --color-status-neutral-border: var(--status-neutral-border);
+  --color-status-neutral-soft: var(--status-neutral-soft);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Semantic typography scale (ETAPA 1 — Foundations)                          */
+/*                                                                           */
+/* Espelha os padrões visuais JÁ EM USO — substitui gradualmente os 356       */
+/* tamanhos arbitrários (text-[9px]/[10px]/[11px]) sem mudar a aparência.     */
+/*                                                                           */
+/*   text-display        → valores numéricos grandes (text-2xl font-light)   */
+/*   text-page-title     → h1 de página (text-xl font-medium tracking-tight) */
+/*   text-section-title  → CardTitle (text-sm font-medium)                   */
+/*   text-body           → texto corrente (text-sm)                          */
+/*   text-label          → rótulos de campo/labels (text-xs font-medium)     */
+/*   text-caption        → texto secundário (text-xs)                        */
+/*   text-data           → dados tabulares (text-xs + tabular-nums; usar     */
+/*                         com a classe `tabular-nums` onde for número)      */
+/*                                                                           */
+/* PISO de legibilidade: nada abaixo de 12px (migrar 9–11px para estes).     */
+/*                                                                           */
+/* --------------------------------------------------------------------------- */
+/* REGRA DO PISO (FASE 6, item 1)                                            */
+/*                                                                           */
+/* Auditado e migrado em 05/10/2026: 364 tamanhos arbitrários abaixo de 12px  */
+/* (267×text-[10px], 87×text-[11px], 10×text-[9px]) → 0 fora de badge.       */
+/*                                                                           */
+/*   PISO DE 12px para tudo, com DUAS exceções documentadas:                  */
+/*                                                                           */
+/*   1. BADGE / pill de altura travada — mantidos em 9–10px.                 */
+/*      São as caixas com `rounded-full`, `border-none` ou o par `px-* +       */
+/*      py-0.5` do shadcn Badge. Subir para 12px estoura a altura fixa e       */
+/*      quebra a varredura visual de status que o admin faz na lista.         */
+/*      Restam 23 pontos de 9/10px no produto, todos nesta categoria.          */
+/*                                                                           */
+/*   2. Nada mais. specifically NÃO há mais texto operacional relevante       */
+/*      abaixo de 12px: rótulos de formulário (`<Label>`), legendas de foto,  */
+/*      metadados de conta, mensagens de estado e rótulos de KPI agora usam   */
+/*      12px.                                                               */
+/*                                                                           */
+/* Densidade de tabela/admin foi preservada de outra forma: quando havia       */
+/* aperto real, a solução foi ajuste de layout (largura mínima da coluna,     */
+/* quebra de linha), não diminuir a fonte.                                    */
+/* --------------------------------------------------------------------------- */
+
+@theme inline {
+  --text-display: 1.5rem;
+  --text-display--line-height: 2rem;
+  --text-display--font-weight: 300;
+  --text-display--letter-spacing: -0.025em;
+  --text-page-title: 1.25rem;
+  --text-page-title--line-height: 1.75rem;
+  --text-page-title--font-weight: 500;
+  --text-page-title--letter-spacing: -0.025em;
+  --text-section-title: 0.875rem;
+  --text-section-title--line-height: 1.25rem;
+  --text-section-title--font-weight: 500;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1rem;
+  --text-label--font-weight: 500;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-data: 0.75rem;
+  --text-data--line-height: 1rem;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -126,17 +290,115 @@
   }
 }
 
-/* Smooth transitions when switching between light/dark themes */
-/* Respect user preference for reduced motion */
-@media (prefers-reduced-motion: no-preference) {
-  :root,
-  .dark {
-    transition: background-color 0.3s ease, color 0.15s ease;
+/* --------------------------------------------------------------------------- */
+/* Motion — FASE 6                                                             */
+/*                                                                            */
+/* BUG CORRIGIDO: a regra anterior aplicava `transition` (shorthand) em         */
+/* `:root *` — TODOS os elementos da aplicação. Além do custo em listas       */
+/* longas, ela era NÃO-layered: na cascata, regras fora de `@layer` vencem     */
+/* qualquer utilitário de `@layer utilities`, sobrescrevendo                    */
+/* `transition-property`. Medido no browser antes da correção:                 */
+/*   .transition-transform -> background-color, border-color, color, box-shadow */
+/*   .transition-opacity   -> background-color, border-color, color, box-shadow */
+/* ou seja, chevrons que giram (AdminConnections, AdminInstallRequests,        */
+/* Invoices, ReminderRulesCard) e thumbnails/sections que aparecem              */
+/* (Dashboard, Landing, Invoices) pulavam sem feedback.                         */
+/*                                                                            */
+/* CORREÇÃO (3 pontos, sem remover feedback de interação):                     */
+/*  1. A regra entra em `@layer base` — utilitários `transition-*` do Tailwind  */
+/*     voltam a vencer (prioridade de camada: base < utilities).               */
+/*  2. A lista de seletores é restrita às superfícies que realmente mudam com  */
+/*     o tema, em vez de "todo elemento".                                      */
+/*  3. `prefers-reduced-motion` agora cobre entrada, ripple e transições.      */
+/* --------------------------------------------------------------------------- */
+
+@layer base {
+  @media (prefers-reduced-motion: no-preference) {
+    :root,
+    .dark {
+      transition: background-color 0.3s ease, color 0.15s ease;
+    }
+
+    /* Superfícies cujo fundo/borda/texto mudam na troca de tema. */
+    body,
+    [data-slot="card"],
+    [data-slot="card-header"],
+    [data-slot="card-footer"],
+    [data-slot="card-title"],
+    [data-slot="card-description"],
+    [data-slot="dialog-overlay"],
+    [data-slot="dialog-content"],
+    [data-slot="alert-dialog-overlay"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="sheet-overlay"],
+    [data-slot="sheet-content"],
+    [data-slot="popover-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="tooltip-content"],
+    [data-slot="table"],
+    [data-slot="table-header"],
+    [data-slot="table-body"],
+    [data-slot="table-row"],
+    [data-slot="table-cell"],
+    [data-slot="sidebar"],
+    [data-slot="sidebar-menu"],
+    [data-slot="sidebar-menu-item"],
+    [data-slot="sidebar-menu-button"],
+    [data-slot="input"],
+    [data-slot="textarea"],
+    [data-slot="select-trigger"],
+    [data-slot="badge"],
+    [data-slot="alert"],
+    [data-slot="skeleton"],
+    [data-slot="empty"] {
+      transition:
+        background-color 0.3s ease,
+        border-color 0.3s ease,
+        color 0.15s ease,
+        box-shadow 0.3s ease;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------------- */
+/* prefers-reduced-motion: support sem remover animações para quem as quer.     */
+/* NADA é apagado por padrão — só quando o usuário pede.                       */
+/*   - animações de ENTRADA (slideUp/fadeIn) colapsam no estado final: o       */
+/*     conteúdo aparece normalmente, sem deslocamento;                        */
+/*   - ripple do botão é desligado (é o movimento mais insistente da UI);     */
+/*   - transições viram quase instantâneas;                                    */
+/*   - loaders ESSENCIAIS (animate-spin) continuam girando — parar um          */
+/*     indicador de "carregando" deixa de comunicar que algo está acontecendo.  */
+/* --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 
-  :root *,
-  .dark * {
-    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.15s ease, box-shadow 0.3s ease;
+  /* Entradas: estado final imediato (sem `both` deixando conteúdo invisível). */
+  [class*="animate-[slideUp"],
+  [class*="animate-[fadeIn"] {
+    animation: none !important;
+  }
+
+  /* Ripple: desligado sob reduced-motion (hover/active continuam respondendo). */
+  [data-slot="button"]::after {
+    display: none !important;
+  }
+
+  /* Feedback de status preservado — loaders não essenciais param, o spinner
+     de "carregando" continua. */
+  .animate-spin,
+  .animate-spin-slow {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 
@@ -224,10 +486,91 @@
 }
 .dark ::-webkit-scrollbar-thumb {
   background: oklch(0.35 0 0);
+}/* --------------------------------------------------------------------------- */
+/* FASE 6 / item 9 — alvo de toque do Checkbox                                 */
+/*                                                                           */
+/* O Checkbox do shadcn mede 16×16px. Auditado no browser: era o ÚNICO        */
+/* controle abaixo de 24×24 (WCAG 2.5.8 / AA) em todo o painel admin —        */
+/* aparece 1× por linha nas tabelas de Mensagens, Auditoria e Cliente 360.     */
+/*                                                                           */
+/* A extensao é feita AQUI, por CSS, e não dentro de components/ui/checkbox.tsx: */
+/* o componente vendorizado continua intocado e a área de clique cresce sem    */
+/* alterar tamanho, cor ou layout.                                            */
+/* --------------------------------------------------------------------------- */
+
+[data-slot="checkbox"] {
+  position: relative;
+}
+
+[data-slot="checkbox"]::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
 }
 
 /* --------------------------------------------------------------------------- */
-/* Sonner toast notifications — success type gets green styling */
+/* RADIUS, BORDAS E SOMBRAS — regra (FASE 6, item 3)                           */
+/*                                                                           */
+/* O tema é FLAT por decisão ("Minimalism": quase monocromático, sem sombras).  */
+/* Com `--radius: 0.25rem`, as classes valem:                                    */
+/*     rounded-sm = 0px · rounded-md = 2px · rounded-lg = 4px · rounded-xl = 8px */
+/*                                                                           */
+/* REGRA por categoria (medido em 05/10/2026: sm 150 · full 73 · md 67 ·        */
+/* lg 36 · xl 2 — o xl era o único ponto fora do padrão e foi corrigido):       */
+/*                                                                           */
+/*   ELEMENTOS INTERNOS (linhas de tabela,inputs, chips, linhas de lista,     */
+/*     divisor de seção, caixa de diálogo do ConfirmDialog)  → rounded-sm/md   */
+/*   CARDS e BANNERS (Card, EmptyState, ErrorState, banners de aviso)          */
+/*     → rounded-lg (4px)                                                      */
+/*   BADGES e PONTOS (badge de status, contador da bottom nav, avatar)         */
+/*     → rounded-full                                                          */
+/*   DIÁLOGOS / SHEETS / DROPDOWN / TOOLTIP / POPOVER                          */
+/*     → rounded-md ou lg (herdam do primitivo shadcn — não mexer)             */
+/*   AVATARES e fotos circulares → rounded-full                                 */
+/*                                                                           */
+/* EXCEÇÃO PRESERVADA (justificada, não é "padronização por padronizar"):      */
+/*   O `rounded-full` das fotos de perfil/avatares é funcional, não decorativo. */
+/*                                                                           */
+/* SOMBRAS — regra flat, mantida:                                               */
+/*   shadow-none = padrão (75 usos). Sombra é estrutural, nunca decorativa.   */
+/*   shadow-sm/md → apenas no card de fatura DESTACADO (ação pendente que     */
+/*     precisa saltar da página) e em hover de card focável.                  */
+/*   shadow-lg/xl → apenas superfícies flutuantes (popover/dialog/sheet), que */
+/*     precisam se destacar do conteúdo por ficarem acima dele.               */
+/*   Nenhuma sombra decorativa foi adicionada nesta fase.                      */
+/*                                                                           */
+/* BORDAS — `border-border` é o token. No dark o contraste da borda é baixo   */
+/* por natureza do tema monocromático; por isso superfícies escuras usam borda */
+/* em vez de sombra para se destacarem. Não clarear o token: mudaria a         */
+/* identidade do tema.                                                         */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/* SPACING — consistencia por categoria (FASE 6, item 2)                       */
+/*                                                                           */
+/* O objetivo NAO e uma densidade unica: cada categoria de componente tem a    */
+/* sua. O que se padronizou e a DIFERENCA SEM MOTIVO entre telas equivalentes.  */
+/*                                                                           */
+/*   Card de conteúdo (KPIs, listas, seções)      → CardContent p-4            */
+/*   Card de destaque (fatura principal, único     → CardContent p-5            */
+/*     por tela)                                    (espaço para o valor)      */
+/*   Linha de tabela / linha de lista              → py-2 / px-3               */
+/*   Bloco de filtros (FilterBar)                  → p-3                       */
+/*   Diálogo (ConfirmDialog)                        → p-4 no rodapé, conteúdo  */
+/*                                                    com max-h + scroll       */
+/*   Empty/Error state dentro de card               → py-8 (section)            */
+/*   Empty/Error state de página inteira           → py-12 md:p-12 (page)      */
+/*   KPI                                             → p-4 com ícone h-9        */
+/*   Banner de aviso                                 → px-4 py-3                */
+/*                                                                           */
+/* Mantido por decisão (densidade operacional do admin, com justificativa):   */
+/*   p-3 e p-3.5 em blocos densos (Simulador, tabela de contas) — cabem mais  */
+/*   linhas na tela sem transformar a leitura em varredura; p-2 em rótulos     */
+/*   internos de badge.                                                        */
+/* --------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------- */
+/* Sonner toast notifications — success type gets green styling               */
 /* --------------------------------------------------------------------------- */
 
 [data-sonner-toaster] [data-type="success"] {

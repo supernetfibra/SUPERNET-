@@ -52,6 +52,20 @@ function generatePlaceholderFavicon(color: string): string {
 /**
  * Apply the accent color as the --primary CSS variable on the document root.
  * Also sets --primary-foreground for text contrast (white on dark, near-black on light).
+ *
+ * FASE 6 / item 9 — MEDIDO, NÃO ALTERADO (documentado como dívida):
+ * o texto do botão primário é escolhido por um limiar de luminância
+ * perceptiva (0.55), não pela razão de contraste WCAG. Para o destaque
+ * atual #2080c0 isso dá texto branco a 4.10:1 — ABAIXO de AA (4.5:1) para
+ * texto normal. Trocar por "quase-preto" (a opção de maior contraste,
+ * 4.31:1) foi avaliado e DESCARTADO de propósito: a troca de 4,10 para 4,31
+ * não alcança AA mesmo, e mudaria a cor do texto de TODOS os botões
+ * primários do produto — ou seja, é decisão de IDENTIDADE visual, não
+ * polimento de UI. Medir os dois lados:
+ *   #2080c0 + branco       = 4.10:1  (o que existe hoje)
+ *   #2080c0 + quase-preto  = 4.31:1  (nenhum dos dois atinge 4.5:1)
+ * Ficar acima de AA exigiria trocar/escurecer a própria cor de destaque da
+ * marca — decisão de produto (rampa de cor), não de implementação.
  */
 function applyAccentColor(hex: string) {
   const root = document.documentElement;
@@ -110,7 +124,9 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
         const current = loadFromStorage() || defaults;
         current.accentColor = color;
         localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(current));
-      } catch {}
+      } catch {
+        // localStorage indisponível (modo privado/cota) — a branding segue só em memória.
+      }
     }
   }, []);
 
@@ -394,7 +410,9 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
           setBranding(fresh);
           try {
             localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(fresh));
-          } catch {}
+          } catch {
+            // localStorage indisponível (modo privado/cota) — a branding segue só em memória.
+          }
         }
       })
       .catch(() => {

@@ -5,7 +5,7 @@
 export default function TermsOfUseContent() {
   return (
     <div className="space-y-6 text-sm text-muted-foreground leading-relaxed">
-      <p className="text-[10px] text-muted-foreground/60">
+      <p className="text-xs text-muted-foreground">
         Última atualização: Setembro de 2026
       </p>
 

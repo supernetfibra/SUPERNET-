@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
-  ArrowLeft,
   Gift,
   Loader2,
   Plus,
@@ -29,6 +28,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/page-header";
+import { StatusBadge } from "@/components/status-badge";
+import { DataTable } from "@/components/data-table";
+import type { DataTableColumn } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,6 +67,7 @@ import {
   type ReferralAdminData,
   type ReferralReward,
 } from "@/lib/referral-api";
+import { plural } from "@/lib/plural";
 
 function formatPoints(n: number): string {
   return n.toLocaleString("pt-BR");
@@ -83,39 +89,94 @@ function maskCpfForAdmin(cpf: string): string {
   return `***.${d.slice(3, 6)}.${d.slice(6, 9)}.-**`;
 }
 
-function ReferralStatusBadge({ status }: { status: "pending" | "approved" | "rejected" }) {
-  if (status === "approved")
-    return (
-      <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" variant="outline">
-        Aprovada
-      </Badge>
-    );
-  if (status === "rejected")
-    return (
-      <Badge className="bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30" variant="outline">
-        Recusada
-      </Badge>
-    );
+type ReferralStatus = "pending" | "approved" | "rejected";
+type RedemptionStatus = "pending" | "approved" | "rejected" | "applied";
+
+function ReferralStatusBadge({ status }: { status: ReferralStatus }) {
+  const map: Record<ReferralStatus, { label: string; tone: "success" | "danger" | "warning" }> = {
+    approved: { label: "Aprovada", tone: "success" },
+    rejected: { label: "Recusada", tone: "danger" },
+    pending: { label: "Pendente", tone: "warning" },
+  };
+  const item = map[status];
   return (
-    <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" variant="outline">
-      Pendente
-    </Badge>
+    <StatusBadge variant="soft" tone={item.tone} label={item.label} />
   );
 }
 
-function RedemptionStatusBadge({ status }: { status: "pending" | "approved" | "rejected" | "applied" }) {
-  const map = {
-    pending: { label: "Em análise", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
-    approved: { label: "Aprovado", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30" },
-    applied: { label: "Aplicado", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30" },
-    rejected: { label: "Recusado", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30" },
+type AdminReferralRow = ReferralAdminData["referrals"][number];
+type AdminRedemptionRow = ReferralAdminData["redemptions"][number];
+
+const referralColumns: DataTableColumn<AdminReferralRow>[] = [
+  {
+    key: "full_name",
+    header: "Indicado",
+    render: (r) => (
+      <div>
+        <div className="font-medium">{r.full_name}</div>
+        <div className="text-xs text-muted-foreground">{maskCpfForAdmin(r.cpf)}</div>
+      </div>
+    ),
+  },
+  { key: "referrer_name", header: "Indicador" },
+  // 4.7 — mobile: Código é secundário; some <640px em vez de forçar scroll.
+  { key: "referral_code", header: "Código", className: "font-mono text-xs", hideBelow: "sm" },
+  {
+    key: "created_at",
+    header: "Data",
+    className: "text-xs text-muted-foreground whitespace-nowrap",
+    sortValue: (r) => r.created_at,
+    render: (r) => formatDateTime(r.created_at),
+  },
+  {
+    key: "status",
+    header: "Status",
+    render: (r) => <ReferralStatusBadge status={r.status} />,
+  },
+];
+
+const redemptionColumns: DataTableColumn<AdminRedemptionRow>[] = [
+  {
+    key: "customer_name",
+    header: "Cliente",
+    render: (r) => (
+      <div>
+        <div className="font-medium">{r.customer_name || r.customer_ref}</div>
+        <div className="text-xs text-muted-foreground font-mono">{r.customer_ref}</div>
+      </div>
+    ),
+  },
+  { key: "reward_title", header: "Recompensa" },
+  {
+    key: "points_cost",
+    header: "Pontos",
+    className: "tabular-nums",
+    sortValue: (r) => r.points_cost,
+    render: (r) => `−${formatPoints(r.points_cost)}`,
+  },
+  {
+    key: "created_at",
+    header: "Data",
+    className: "text-xs text-muted-foreground whitespace-nowrap",
+    sortValue: (r) => r.created_at,
+    render: (r) => formatDateTime(r.created_at),
+  },
+  {
+    key: "status",
+    header: "Status",
+    render: (r) => <RedemptionStatusBadge status={r.status} />,
+  },
+];
+
+function RedemptionStatusBadge({ status }: { status: RedemptionStatus }) {
+  const map: Record<RedemptionStatus, { label: string; tone: "warning" | "info" | "success" | "danger" }> = {
+    pending: { label: "Em análise", tone: "warning" },
+    approved: { label: "Aprovado", tone: "info" },
+    applied: { label: "Aplicado", tone: "success" },
+    rejected: { label: "Recusado", tone: "danger" },
   } as const;
   const item = map[status];
-  return (
-    <Badge className={item.className} variant="outline">
-      {item.label}
-    </Badge>
-  );
+  return <StatusBadge variant="soft" tone={item.tone} label={item.label} />;
 }
 
 interface RewardFormState {
@@ -307,29 +368,66 @@ export default function AdminReferrals() {
     setRewardDialogOpen(true);
   };
 
+  const renderRedemptionActions = (r: AdminRedemptionRow) => (
+    <>
+      {r.status === "pending" && (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs text-emerald-600 hover:text-emerald-700"
+            disabled={busy}
+            onClick={() => setDecisionTarget({ id: r.id, decision: "approved", title: r.reward_title })}
+          >
+            <CheckCircle2 className="h-3 w-3 mr-1" /> Aprovar
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs text-destructive hover:text-destructive"
+            disabled={busy}
+            onClick={() => setDecisionTarget({ id: r.id, decision: "rejected", title: r.reward_title })}
+          >
+            <XCircle className="h-3 w-3 mr-1" /> Recusar
+          </Button>
+        </>
+      )}
+      {r.status === "approved" && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          disabled={busy}
+          onClick={() => setDecisionTarget({ id: r.id, decision: "applied", title: r.reward_title })}
+        >
+          <PackageCheck className="h-3 w-3 mr-1" /> Marcar aplicado
+        </Button>
+      )}
+      {r.status === "applied" && (
+        <span className="text-xs text-muted-foreground">
+          {r.applied_at ? formatDateTime(r.applied_at) : ""}
+        </span>
+      )}
+    </>
+  );
+
   const stats = data?.stats;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate("/admin/dashboard")}>
-            <ArrowLeft className="h-4 w-4" />
+      <PageHeader
+        onBack={() => navigate("/admin/dashboard")}
+        backLabel="Voltar ao dashboard"
+        icon={Gift}
+        title="Indique e Ganhe"
+        description="Programa de indicação, pontos e recompensas."
+        actions={
+          <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setAdjustOpen(true)}>
+            <Coins className="h-3.5 w-3.5 mr-1" /> Ajustar pontos
           </Button>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight flex items-center gap-2">
-              <Gift className="h-5 w-5 text-primary" /> Indique e Ganhe
-            </h1>
-            <p className="text-xs text-muted-foreground">
-              Programa de indicação, pontos e recompensas.
-            </p>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => setAdjustOpen(true)}>
-          <Coins className="h-3.5 w-3.5 mr-1" /> Ajustar pontos
-        </Button>
-      </div>
+        }
+      />
 
       {loading ? (
         <div className="space-y-4">
@@ -352,7 +450,12 @@ export default function AdminReferrals() {
         </Card>
       ) : loadError ? (
         <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">{loadError}</CardContent>
+          <ErrorState
+            title="Não foi possível carregar o programa"
+            description={loadError}
+            onRetry={() => void load()}
+            retrying={loading}
+          />
         </Card>
       ) : data ? (
         <>
@@ -364,7 +467,7 @@ export default function AdminReferrals() {
                   <Users className="h-3.5 w-3.5" /> Indicações
                 </div>
                 <div className="text-xl font-bold tabular-nums">{stats?.totalReferrals ?? 0}</div>
-                <div className="text-[11px] text-muted-foreground">{stats?.pendingReferrals ?? 0} pendente(s)</div>
+                <div className="text-xs text-muted-foreground">{plural(stats?.pendingReferrals ?? 0, "pendente", "pendentes")}</div>
               </CardContent>
             </Card>
             <Card>
@@ -373,7 +476,7 @@ export default function AdminReferrals() {
                   <Coins className="h-3.5 w-3.5" /> Pontos emitidos
                 </div>
                 <div className="text-xl font-bold tabular-nums">{formatPoints(stats?.pointsIssued ?? 0)}</div>
-                <div className="text-[11px] text-muted-foreground">{formatPoints(stats?.pointsSpent ?? 0)} resgatados</div>
+                <div className="text-xs text-muted-foreground">{formatPoints(stats?.pointsSpent ?? 0)} resgatados</div>
               </CardContent>
             </Card>
             <Card>
@@ -401,7 +504,7 @@ export default function AdminReferrals() {
               <TabsTrigger value="redemptions">
                 Resgates
                 {(stats?.redemptionsPending ?? 0) > 0 && (
-                  <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[10px]">
+                  <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-xs">
                     {stats?.redemptionsPending}
                   </Badge>
                 )}
@@ -421,41 +524,13 @@ export default function AdminReferrals() {
                 </CardHeader>
                 <CardContent>
                   {data.referrals.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-8 text-center">
-                      Nenhuma indicação registrada ainda.
-                    </p>
+                    <EmptyState icon={Users} title="Nenhuma indicação registrada ainda." />
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-muted-foreground border-b">
-                            <th className="py-2 pr-3 font-medium">Indicado</th>
-                            <th className="py-2 pr-3 font-medium">Indicador</th>
-                            <th className="py-2 pr-3 font-medium">Código</th>
-                            <th className="py-2 pr-3 font-medium">Data</th>
-                            <th className="py-2 pr-3 font-medium">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.referrals.map((r) => (
-                            <tr key={r.id} className="border-b last:border-0">
-                              <td className="py-2.5 pr-3">
-                                <div className="font-medium">{r.full_name}</div>
-                                <div className="text-[11px] text-muted-foreground">{maskCpfForAdmin(r.cpf)}</div>
-                              </td>
-                              <td className="py-2.5 pr-3">{r.referrer_name}</td>
-                              <td className="py-2.5 pr-3 font-mono text-xs">{r.referral_code}</td>
-                              <td className="py-2.5 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                                {formatDateTime(r.created_at)}
-                              </td>
-                              <td className="py-2.5 pr-3">
-                                <ReferralStatusBadge status={r.status} />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable
+                      columns={referralColumns}
+                      data={data.referrals}
+                      getRowId={(r) => r.id}
+                    />
                   )}
                 </CardContent>
               </Card>
@@ -484,9 +559,7 @@ export default function AdminReferrals() {
                 </CardHeader>
                 <CardContent>
                   {data.rewards.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-8 text-center">
-                      Nenhuma recompensa cadastrada. Crie a primeira!
-                    </p>
+                    <EmptyState icon={PackageCheck} title="Nenhuma recompensa cadastrada. Crie a primeira!" />
                   ) : (
                     <div className="grid gap-3 sm:grid-cols-2">
                       {data.rewards.map((reward) => (
@@ -498,7 +571,7 @@ export default function AdminReferrals() {
                             <div>
                               <div className="text-sm font-medium leading-tight flex items-center gap-2">
                                 {reward.title}
-                                {!reward.active && <Badge variant="secondary" className="text-[10px]">Inativa</Badge>}
+                                {!reward.active && <Badge variant="secondary" className="text-xs">Inativa</Badge>}
                               </div>
                               <div className="text-xs text-muted-foreground capitalize">{reward.kind}</div>
                             </div>
@@ -544,82 +617,14 @@ export default function AdminReferrals() {
                 </CardHeader>
                 <CardContent>
                   {data.redemptions.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-8 text-center">Nenhum resgate ainda.</p>
+                    <EmptyState icon={Clock} title="Nenhum resgate ainda." />
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-xs text-muted-foreground border-b">
-                            <th className="py-2 pr-3 font-medium">Cliente</th>
-                            <th className="py-2 pr-3 font-medium">Recompensa</th>
-                            <th className="py-2 pr-3 font-medium">Pontos</th>
-                            <th className="py-2 pr-3 font-medium">Data</th>
-                            <th className="py-2 pr-3 font-medium">Status</th>
-                            <th className="py-2 pr-3 font-medium text-right">Ações</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.redemptions.map((r) => (
-                            <tr key={r.id} className="border-b last:border-0">
-                              <td className="py-2.5 pr-3">
-                                <div className="font-medium">{r.customer_name || r.customer_ref}</div>
-                                <div className="text-[11px] text-muted-foreground font-mono">{r.customer_ref}</div>
-                              </td>
-                              <td className="py-2.5 pr-3">{r.reward_title}</td>
-                              <td className="py-2.5 pr-3 tabular-nums">−{formatPoints(r.points_cost)}</td>
-                              <td className="py-2.5 pr-3 text-xs text-muted-foreground whitespace-nowrap">
-                                {formatDateTime(r.created_at)}
-                              </td>
-                              <td className="py-2.5 pr-3">
-                                <RedemptionStatusBadge status={r.status} />
-                              </td>
-                              <td className="py-2.5 pr-3 text-right">
-                                <div className="inline-flex gap-1.5">
-                                  {r.status === "pending" && (
-                                    <>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-7 text-xs text-emerald-600 hover:text-emerald-700"
-                                        disabled={busy}
-                                        onClick={() => setDecisionTarget({ id: r.id, decision: "approved", title: r.reward_title })}
-                                      >
-                                        <CheckCircle2 className="h-3 w-3 mr-1" /> Aprovar
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-7 text-xs text-destructive hover:text-destructive"
-                                        disabled={busy}
-                                        onClick={() => setDecisionTarget({ id: r.id, decision: "rejected", title: r.reward_title })}
-                                      >
-                                        <XCircle className="h-3 w-3 mr-1" /> Recusar
-                                      </Button>
-                                    </>
-                                  )}
-                                  {r.status === "approved" && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 text-xs"
-                                      disabled={busy}
-                                      onClick={() => setDecisionTarget({ id: r.id, decision: "applied", title: r.reward_title })}
-                                    >
-                                      <PackageCheck className="h-3 w-3 mr-1" /> Marcar aplicado
-                                    </Button>
-                                  )}
-                                  {r.status === "applied" && (
-                                    <span className="text-[11px] text-muted-foreground">
-                                      {r.applied_at ? formatDateTime(r.applied_at) : ""}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable
+                      columns={redemptionColumns}
+                      data={data.redemptions}
+                      getRowId={(r) => r.id}
+                      rowActions={renderRedemptionActions}
+                    />
                   )}
                 </CardContent>
               </Card>
@@ -821,7 +826,7 @@ export default function AdminReferrals() {
                 placeholder="Ex.: a:123 (prefixo da conta + id MikWeb)"
                 className="font-mono text-xs"
               />
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 O identificador aparece na lista de resgates e no histórico.
               </p>
             </div>

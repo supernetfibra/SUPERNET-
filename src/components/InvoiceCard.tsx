@@ -24,12 +24,11 @@ import {
   ChevronRight,
   AlertTriangle,
   Clock,
-  CalendarDays,
   CreditCard,
   Smartphone,
 } from "lucide-react";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { getSmartLabel, diasAteVencimento } from "@/hooks/use-billings";
+import { getSmartLabel } from "@/hooks/use-billings";
 import { statusBadge } from "@/lib/status-config";
 import { logCustomerAction } from "@/lib/audit-actions";
 import { toast } from "sonner";
@@ -190,7 +189,6 @@ function InvoiceCardInner({
   const smartLabel = getSmartLabel(billing);
   const styles = getUrgencyStyles(smartLabel.type);
   const status = statusBadge(billing.status, billing.vencimento);
-  const statusLabel = status.label;
   const StatusIcon = status.icon;
 
   // Highlight variant uses explicit currentDias for styling
@@ -506,7 +504,7 @@ function InvoiceCardInner({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+              className="h-6 text-xs text-muted-foreground hover:text-foreground px-2"
               onClick={(e) => {
                 e.stopPropagation();
                 copyBarcode();
@@ -524,7 +522,7 @@ function InvoiceCardInner({
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+              className="h-6 text-xs text-muted-foreground hover:text-foreground px-2"
               onClick={(e) => {
                 e.stopPropagation();
                 copyPix();
@@ -541,7 +539,7 @@ function InvoiceCardInner({
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 text-[10px] text-muted-foreground hover:text-foreground px-2"
+            className="h-6 text-xs text-muted-foreground hover:text-foreground px-2"
             onClick={(e) => {
               e.stopPropagation();
               openPdf();

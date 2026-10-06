@@ -60,33 +60,8 @@ import {
 import { useNavigate } from "react-router";
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { apiUrl } from "@/lib/api-config";
-import type { FunnelTotalsView, FunnelWeekView } from "@/lib/engagement-types";
-
-// ---------------------------------------------------------------------------
-// Helpers (mesmos de AdminSettings: token de admin em localStorage)
-// ---------------------------------------------------------------------------
-
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
+import { adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
 
 /** Resposta de `GET /api/admin/whatsapp/config` — só os campos que a tela usa. */
 interface WhatsAppConfigView {
@@ -182,10 +157,6 @@ export default function AdminConnections() {
     keptOptOut: number;
   } | null>(null);
   const [waImporting, setWaImporting] = useState(false);
-  /** Uso real dos botões (cliques reportados pelo webhook, 30 dias). */
-  const [waButtonStats, setWaButtonStats] = useState<Array<{ label: string; clicks: number; uniquePhones: number; matched: number; lastClickAt: number | null }> | null>(null);
-  /** Funil de engajamento semanal (enviado → entregue → lido → Pix). */
-  const [waFunnel, setWaFunnel] = useState<{ weeks: FunnelWeekView[]; totals: FunnelTotalsView; pending?: string } | null>(null);
 
   // ── Multi-conta MikWeb (migration 010) ──
   const [connections, setConnections] = useState<MikWebConnectionView[]>([]);
@@ -292,45 +263,6 @@ export default function AdminConnections() {
       cancelled = true;
     };
   }, [applyWhatsAppConfig]);
-
-  useEffect(() => {
-    // Métricas de cliques nos botões (migration 007). Falha silenciosa: se a view
-    // ainda não existe, o endpoint devolve vazio e a seção simplesmente não aparece.
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await adminFetch("/api/admin/whatsapp/button-stats");
-        const data = await res.json().catch(() => ({}));
-        if (!cancelled && res.ok && Array.isArray(data?.stats)) setWaButtonStats(data.stats);
-      } catch {
-        // seção fica oculta
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    // Funil de engajamento por semana (enviado → entregue → lido → Pix). Se as
-    // migrations ainda não estão aplicadas, o endpoint devolve semanas zeradas
-    // com `pending` — a seção aparece com zeros e uma nota discreta.
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await adminFetch("/api/admin/whatsapp/engagement-funnel?weeks=8");
-        const data = await res.json().catch(() => ({}));
-        if (!cancelled && res.ok && Array.isArray(data?.weeks)) {
-          setWaFunnel({ weeks: data.weeks, totals: data.totals, pending: data.pending });
-        }
-      } catch {
-        // seção fica oculta
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const handleSaveWhatsApp = async () => {
     setWaSaving(true);
@@ -753,6 +685,18 @@ export default function AdminConnections() {
         </p>
       </div>
 
+      {/* ── Domínio: Conexões e credenciais ── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2">
+          <PlugZap className="h-3.5 w-3.5 text-muted-foreground" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Conexões e credenciais
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            quem o painel fala com — conexão, status e integração
+          </span>
+        </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── MikWeb (ERP) — MULTI-CONTA ── */}
         <Card className="border-border shadow-none">
@@ -760,9 +704,14 @@ export default function AdminConnections() {
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">
-                  Contas MikWeb (ERP de faturas)
-                </CardTitle>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Conexão
+                  </p>
+                  <CardTitle className="text-sm font-medium">
+                    Contas MikWeb (ERP de faturas)
+                  </CardTitle>
+                </div>
               </div>
               <Button
                 variant="outline"
@@ -809,20 +758,26 @@ export default function AdminConnections() {
                       connection.active ? "border-border" : "border-border/50 opacity-70"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
+                    {/* FASE 6 / item 6 — no mobile as ações ocupavam ~215px da
+                        linha e espremiam o nome da conta para ~90px ("sup…",
+                        "terr…"). Abaixo de `sm` a identificação fica com a
+                        largura toda e as ações descem para a segunda linha; a
+                        partir de `sm` volta a ser uma linha só, como no desktop.
+                        Identificação da conta nunca é sacrificada. */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-foreground truncate">
                           {connection.label}{" "}
-                          <span className="text-[10px] font-mono text-muted-foreground">({connection.slug})</span>
+                          <span className="text-xs font-mono text-muted-foreground">({connection.slug})</span>
                           {!connection.active ? (
-                            <span className="ml-1.5 text-[10px] text-muted-foreground">· inativa</span>
+                            <span className="ml-1.5 text-xs text-muted-foreground">· inativa</span>
                           ) : null}
                         </p>
-                        <p className="text-[10px] text-muted-foreground font-mono truncate">
+                        <p className="text-xs text-muted-foreground font-mono truncate">
                           {connection.apiUrl || "URL nos secrets"} · token {connection.hasToken ? connection.tokenMasked : "nos secrets"}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1 flex-wrap shrink-0">
                         {connection.lastTestOk === true ? (
                           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                         ) : connection.lastTestOk === false ? (
@@ -833,7 +788,7 @@ export default function AdminConnections() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 px-2 text-[10px] cursor-pointer"
+                          className="h-8 sm:h-7 px-2 text-xs sm:text-xs cursor-pointer"
                           onClick={() => handleTestConnectionById(connection.id)}
                           disabled={testingSlug === connection.id}
                         >
@@ -847,7 +802,7 @@ export default function AdminConnections() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-7 px-2 text-[10px] cursor-pointer"
+                          className="h-8 sm:h-7 px-2 text-xs sm:text-xs cursor-pointer"
                           onClick={() => openEditConnection(connection)}
                         >
                           <Settings className="h-3 w-3 mr-1" />
@@ -856,9 +811,14 @@ export default function AdminConnections() {
                         <button
                           type="button"
                           title={connection.active ? "Desativar conta" : "Ativar conta"}
+                          aria-label={
+                            connection.active
+                              ? `Desativar conta ${connection.label}`
+                              : `Ativar conta ${connection.label}`
+                          }
                           onClick={() => handleToggleConnection(connection.id)}
                           disabled={togglingSlug === connection.id}
-                          className="p-1.5 text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
+                          className="p-2 sm:p-1.5 text-muted-foreground hover:text-foreground cursor-pointer disabled:opacity-50"
                         >
                           {togglingSlug === connection.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -869,25 +829,26 @@ export default function AdminConnections() {
                         <button
                           type="button"
                           title="Remover conta"
+                          aria-label={`Remover conta ${connection.label}`}
                           onClick={() => {
                             setDeletingId(connection.id);
                             setRemoveDialogOpen(true);
                           }}
-                          className="p-1.5 text-muted-foreground hover:text-destructive cursor-pointer"
+                          className="p-2 sm:p-1.5 text-muted-foreground hover:text-destructive cursor-pointer"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
                     {connection.lastTestOk === false && connection.lastTestError ? (
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400 truncate" title={connection.lastTestError}>
+                      <p className="text-xs text-amber-600 dark:text-amber-400 truncate" title={connection.lastTestError}>
                         {connection.lastTestError}
                       </p>
                     ) : null}
                   </div>
                 ))}
                 {connectionsEnvFallback ? (
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Os secrets MIKWEB_API_URL/MIKWEB_API_TOKEN servem como respaldo da conexão
                     "a" quando ela não tem token próprio.
                   </p>
@@ -902,7 +863,7 @@ export default function AdminConnections() {
                   {editingConnection === "new" ? "Nova conta MikWeb" : "Editar conta"}
                 </p>
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-medium text-muted-foreground">Nome da conta</Label>
+                  <Label className="text-xs font-medium text-muted-foreground">Nome da conta</Label>
                   <Input
                     placeholder="Ex.: Conta B (filial)"
                     value={connectionForm.label}
@@ -911,7 +872,7 @@ export default function AdminConnections() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-medium text-muted-foreground">URL da API</Label>
+                  <Label className="text-xs font-medium text-muted-foreground">URL da API</Label>
                   <Input
                     type="url"
                     placeholder="https://api.mikweb.com.br/v1/admin/"
@@ -921,8 +882,8 @@ export default function AdminConnections() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-[10px] font-medium text-muted-foreground">
-                    Token {editingConnection !== "new" ? <span className="text-muted-foreground/50">(vazio = manter atual)</span> : ""}
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Token {editingConnection !== "new" ? <span className="text-muted-foreground">(vazio = manter atual)</span> : ""}
                   </Label>
                   <Input
                     type="password"
@@ -959,7 +920,7 @@ export default function AdminConnections() {
               </div>
             ) : null}
 
-            <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               Desativar NÃO apaga nada: a conta só sai do sync, das consultas e do portal.
               A última conta ativa não pode ser desativada nem removida.
             </p>
@@ -972,9 +933,14 @@ export default function AdminConnections() {
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <MessageCircle className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">
-                  WhatsApp — estado atual
-                </CardTitle>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Status
+                  </p>
+                  <CardTitle className="text-sm font-medium">
+                    WhatsApp — estado atual
+                  </CardTitle>
+                </div>
               </div>
               {waLoading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
@@ -1003,7 +969,7 @@ export default function AdminConnections() {
             <SendFlowCard />
 
             {/* Estado atual — o que o backend realmente enxerga */}
-            <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
+            <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
               <span className="px-2 py-0.5 rounded-sm border border-border">
                 credenciais: {waConfig?.origin === "env" ? "secrets do servidor" : waConfig?.origin === "db" ? "salvas no painel" : waConfig?.origin ?? "—"}
               </span>
@@ -1039,107 +1005,12 @@ export default function AdminConnections() {
               </div>
             ) : null}
 
-            {/* Uso real dos botões de ação (webhook, últimos 30 dias) */}
-            {waButtonStats && waButtonStats.length > 0 ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  Cliques nos botões (30 dias)
-                </div>
-                <div className="grid gap-1.5">
-                  {waButtonStats.map((stat) => (
-                    <div
-                      key={stat.label}
-                      className="flex items-center justify-between gap-2 rounded-sm border border-border px-2.5 py-1.5 text-[11px]"
-                    >
-                      <span className="font-medium text-foreground truncate" title={stat.label}>
-                        {stat.label}
-                      </span>
-                      <span className="flex items-center gap-2 shrink-0 text-muted-foreground">
-                        <span className="font-mono text-foreground">{stat.clicks}</span>
-                        <span>cliques</span>
-                        <span className="text-border">·</span>
-                        <span className="font-mono">{stat.uniquePhones}</span>
-                        <span>clientes</span>
-                        {stat.lastClickAt ? (
-                          <span
-                            className="text-[10px]"
-                            title={new Date(stat.lastClickAt).toLocaleString("pt-BR")}
-                          >
-                            últ. {new Date(stat.lastClickAt).toLocaleDateString("pt-BR")}
-                          </span>
-                        ) : null}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* Funil de engajamento por semana — enviado → entregue → lido → Pix */}
-            {waFunnel ? (
-              <div className="space-y-2 border-t border-border pt-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                    Funil de engajamento (por semana)
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                    <span>enviados</span>
-                    <span>· entregues</span>
-                    <span>· lidos</span>
-                    <span>· Pix</span>
-                  </div>
-                </div>
-                <div className="grid gap-1.5">
-                  {waFunnel.weeks.map((week) => {
-                    const max = Math.max(week.sent, 1);
-                    return (
-                      <div key={week.weekStart} className="rounded-sm border border-border px-2.5 py-1.5">
-                        <div className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="font-medium text-foreground">{week.label}</span>
-                          {week.failed > 0 ? (
-                            <span className="text-[10px] text-amber-600 dark:text-amber-400" title="Falhas reportadas pelo WhatsApp na semana">
-                              {week.failed} falha{week.failed > 1 ? "s" : ""}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="mt-1 space-y-0.5">
-                          {([
-                            ["sent", week.sent, "bg-sky-500/70"],
-                            ["delivered", week.delivered, "bg-emerald-500/70"],
-                            ["read", week.read, "bg-violet-500/70"],
-                            ["pixClicks", week.pixClicks, "bg-amber-500/70"],
-                          ] as const).map(([key, value, barClass]) => (
-                            <div key={key} className="flex items-center gap-1.5">
-                              <div className="h-1.5 flex-1 overflow-hidden rounded-sm bg-muted">
-                                <div className={`h-full rounded-sm ${barClass}`} style={{ width: `${(value / max) * 100}%` }} />
-                              </div>
-                              <span className="w-8 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-                  <span>
-                    total (8 sem.):{" "}
-                    <span className="font-mono text-foreground">{waFunnel.totals.sent}</span> enviados ·{" "}
-                    <span className="font-mono text-foreground">{waFunnel.totals.delivered}</span> entregues ·{" "}
-                    <span className="font-mono text-foreground">{waFunnel.totals.read}</span> lidos ·{" "}
-                    <span className="font-mono text-foreground">{waFunnel.totals.pixClicks}</span> clicaram no Pix
-                  </span>
-                  {waFunnel.pending ? <span className="text-amber-600 dark:text-amber-400">({waFunnel.pending})</span> : null}
-                </div>
-              </div>
-            ) : null}
-
             {/* URL do webhook — montada no servidor com o secret, pronta para colar na UazAPI */}
             {waWebhookUrl ? (
               <div className="space-y-2">
                 <Label htmlFor="wa-webhook" className="text-xs font-medium text-muted-foreground">
                   URL do webhook{" "}
-                  <span className="text-muted-foreground/50">(colar na UazAPI → Webhook)</span>
+                  <span className="text-muted-foreground">(colar na UazAPI → Webhook)</span>
                 </Label>
                 <div className="flex gap-2">
                   <Input
@@ -1147,7 +1018,7 @@ export default function AdminConnections() {
                     readOnly
                     value={waWebhookUrl}
                     onFocus={(e) => e.currentTarget.select()}
-                    className="h-9 text-[11px] font-mono text-muted-foreground"
+                    className="h-9 text-xs font-mono text-muted-foreground"
                   />
                   <Button
                     variant="outline"
@@ -1164,7 +1035,7 @@ export default function AdminConnections() {
                   </Button>
                 </div>
                 {!waConfig?.webhookSecretConfigured ? (
-                  <p className="flex items-start gap-1.5 text-[10px] text-amber-600 dark:text-amber-400">
+                  <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                     <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                     <span>
                       Sem o secret <code className="font-mono">UAZAPI_WEBHOOK_SECRET</code> configurado,
@@ -1188,7 +1059,7 @@ export default function AdminConnections() {
                     )}
                     Aplicar webhook automaticamente
                   </Button>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-xs text-muted-foreground">
                     Registra a URL acima na UazAPI (mensagens, status e conexão) — sem entrar no painel deles.
                   </span>
                 </div>
@@ -1203,9 +1074,14 @@ export default function AdminConnections() {
         <CardHeader className="pb-4">
           <div className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-sm font-medium">
-              WhatsApp (UazAPI) — credenciais e operação
-            </CardTitle>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Integração
+              </p>
+              <CardTitle className="text-sm font-medium">
+                WhatsApp (UazAPI) — credenciais e operação
+              </CardTitle>
+            </div>
           </div>
           <CardDescription className="text-xs text-muted-foreground">
             Campos de conexão, ritmo de envio e botões de operação da fila.
@@ -1253,7 +1129,7 @@ export default function AdminConnections() {
 
             <div className="space-y-2">
               <Label htmlFor="wa-admin" className="text-xs font-medium text-muted-foreground">
-                admintoken <span className="text-muted-foreground/50">(opcional)</span>
+                admintoken <span className="text-muted-foreground">(opcional)</span>
               </Label>
               <Input
                 id="wa-admin"
@@ -1269,7 +1145,7 @@ export default function AdminConnections() {
           <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-sm border border-border">
             <div className="min-w-0">
               <p className="text-xs font-medium text-foreground">Canal ativo</p>
-              <p className="text-[10px] text-muted-foreground leading-relaxed">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 Desligado, nenhuma mensagem sai — nem pelo botão de envio manual.
               </p>
             </div>
@@ -1281,10 +1157,10 @@ export default function AdminConnections() {
               avançados: é guarda de segurança, não controle de alcance. */}
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Pausa entre uma mensagem e outra
               </Label>
-              <span className="text-[10px] text-muted-foreground font-mono">
+              <span className="text-xs text-muted-foreground font-mono">
                 {waCaps.sendGapSeconds > 0
                   ? `${waCaps.sendGapSeconds}–${waCaps.sendGapSeconds * 2}s`
                   : "automática (2,5–9s)"}
@@ -1306,7 +1182,7 @@ export default function AdminConnections() {
               <ToggleGroupItem value="60" className="text-xs cursor-pointer">1 min</ToggleGroupItem>
               <ToggleGroupItem value="120" className="text-xs cursor-pointer">2 min</ToggleGroupItem>
             </ToggleGroup>
-            <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {waCaps.sendGapSeconds > 0
                 ? `Envia 1 mensagem a cada ${waCaps.sendGapSeconds}–${waCaps.sendGapSeconds * 2} segundos, dentro da janela de envio — TODOS os devedores do dia recebem, só que em ritmo seguro.`
                 : "Sem pausa configurada, o sistema usa um ritmo automático de 2,5–9 segundos entre mensagens."}
@@ -1316,7 +1192,7 @@ export default function AdminConnections() {
           <button
             type="button"
             onClick={() => setWaShowAdvanced((v) => !v)}
-            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           >
             <ChevronDown className={`h-3 w-3 transition-transform ${waShowAdvanced ? "" : "-rotate-90"}`} />
             Ajustes avançados
@@ -1324,7 +1200,7 @@ export default function AdminConnections() {
           {waShowAdvanced && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Pausa customizada (s)
               </Label>
               <Input
@@ -1337,7 +1213,7 @@ export default function AdminConnections() {
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Avisos por cliente/dia
               </Label>
               <Input
@@ -1347,12 +1223,12 @@ export default function AdminConnections() {
                 onChange={(e) => setWaCaps({ ...waCaps, perCustomerCap: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Quantas mensagens UM cliente pode receber por dia. Mudou de valor? A fila antiga se ajusta no próximo envio.
               </p>
             </div>
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Janela — início (h)
               </Label>
               <Input
@@ -1365,7 +1241,7 @@ export default function AdminConnections() {
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Janela — fim (h)
               </Label>
               <Input
@@ -1378,7 +1254,7 @@ export default function AdminConnections() {
               />
             </div>
             <div className="space-y-2 col-span-2 sm:col-span-4">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Teto diário de novas conversas (proteção do número)
               </Label>
               <Input
@@ -1388,7 +1264,7 @@ export default function AdminConnections() {
                 onChange={(e) => setWaCaps({ ...waCaps, dailyNewChatCap: Number(e.target.value) })}
                 className="h-9 text-xs font-mono"
               />
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Guarda de segurança contra bloqueio do WhatsApp (time-lock). 0 = sem teto.
                 Só reduza se o WhatsApp avisar sobre o número.
               </p>
@@ -1476,14 +1352,14 @@ export default function AdminConnections() {
             </Button>
           </div>
 
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Antes de ligar o canal ativo, rode o simulador: ele mostra quantos avisos sairiam,
             quantos ficam presos na cota de novas conversas e quantos clientes ficam sem canal.
           </p>
 
           {waQr ? (
             <div className="space-y-2">
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Abra o WhatsApp → Aparelhos conectados → Conectar aparelho.
               </p>
               <img
@@ -1518,7 +1394,7 @@ export default function AdminConnections() {
               </Button>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Qual mensagem testar
               </Label>
               <Select
@@ -1569,13 +1445,13 @@ export default function AdminConnections() {
                     }}
                     className="h-8 w-20 text-xs font-mono"
                   />
-                  <span className="text-[10px] text-muted-foreground">
-                    dias de deslocamento (a mensagem mostra {waTestOffset} dia(s) de atraso)
+                  <span className="text-xs text-muted-foreground">
+                    dias de deslocamento (a mensagem mostra {plural(waTestOffset, "dia", "dias")} de atraso)
                   </span>
                 </div>
               ) : null}
             </div>
-            <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               O teste passa pela outbox e pelo mesmo adapter do lembrete — se ele chega, o
               caminho de envio está inteiro. Escolhendo uma opção da régua, você recebe a
               mensagem no formato exato que o cliente receberia.
@@ -1583,15 +1459,33 @@ export default function AdminConnections() {
           </div>
         </CardContent>
       </Card>
+      </section>
+
+      {/* ── Domínio: Configuração ── */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2">
+          <BellRing className="h-3.5 w-3.5 text-muted-foreground" />
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Configuração
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            quando e como o painel avisa você
+          </span>
+        </div>
 
       {/* ── Alertas de operação — o sistema avisa o admin por WhatsApp ── */}
       <Card className="border-border shadow-none">
         <CardHeader className="pb-4">
           <div className="flex items-center gap-2">
             <BellRing className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-sm font-medium">
-              Alertas de operação
-            </CardTitle>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Configuração
+              </p>
+              <CardTitle className="text-sm font-medium">
+                Alertas de operação
+              </CardTitle>
+            </div>
           </div>
           <CardDescription className="text-xs text-muted-foreground">
             Quando o canal parar ou uma rodada de envio acumular falhas, o sistema
@@ -1608,7 +1502,7 @@ export default function AdminConnections() {
             <>
               <div className="space-y-2">
                 <Label htmlFor="alert-phone" className="text-xs font-medium text-muted-foreground">
-                  WhatsApp do admin <span className="text-muted-foreground/50">(com DDD)</span>
+                  WhatsApp do admin <span className="text-muted-foreground">(com DDD)</span>
                 </Label>
                 <Input
                   id="alert-phone"
@@ -1617,7 +1511,7 @@ export default function AdminConnections() {
                   onChange={(e) => setAlertPhone(e.target.value)}
                   className="h-9 text-sm font-mono"
                 />
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   Vazio = sem alertas. O aviso sai por este número mesmo fora da janela de
                   envio dos clientes — é operação, não lembrete.
                 </p>
@@ -1628,7 +1522,7 @@ export default function AdminConnections() {
                   <Switch checked={alertChannelDown} onCheckedChange={setAlertChannelDown} className="cursor-pointer mt-0.5" />
                   <span className="text-xs leading-relaxed">
                     <span className="font-medium text-foreground">Avisar quando o canal parar</span>
-                    <span className="block text-[10px] text-muted-foreground">
+                    <span className="block text-xs text-muted-foreground">
                       Instância desconectada (QR expirou) ou credenciais ausentes com fila pronta.
                     </span>
                   </span>
@@ -1637,8 +1531,8 @@ export default function AdminConnections() {
                   <Switch checked={alertDispatchFailures} onCheckedChange={setAlertDispatchFailures} className="cursor-pointer mt-0.5" />
                   <span className="text-xs leading-relaxed">
                     <span className="font-medium text-foreground">Avisar quando uma rodada acumular falhas</span>
-                    <span className="block text-[10px] text-muted-foreground">
-                      Dispara a partir de {alertThreshold} falha(s) na mesma rodada de envio.
+                    <span className="block text-xs text-muted-foreground">
+                      Dispara a partir de {plural(alertThreshold, "falha", "falhas")} na mesma rodada de envio.
                     </span>
                   </span>
                 </label>
@@ -1646,7 +1540,7 @@ export default function AdminConnections() {
                   <Switch checked={alertStuckQueue} onCheckedChange={setAlertStuckQueue} className="cursor-pointer mt-0.5" />
                   <span className="text-xs leading-relaxed">
                     <span className="font-medium text-foreground">Avisar quando a fila empacar</span>
-                    <span className="block text-[10px] text-muted-foreground">
+                    <span className="block text-xs text-muted-foreground">
                       Avisos com horário agendado passado há mais de 12h — ou presos na fila há mais de 2 dias.
                     </span>
                   </span>
@@ -1657,7 +1551,7 @@ export default function AdminConnections() {
                 <Switch checked={alertDailySummary} onCheckedChange={setAlertDailySummary} className="cursor-pointer mt-0.5" />
                 <span className="text-xs leading-relaxed">
                   <span className="font-medium text-foreground">Resumo diário de cobranças</span>
-                  <span className="block text-[10px] text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     Uma vez por dia, junto da sincronização: vencem hoje, vencidas até 5 dias,
                     vencidas há mais de 5 e próximas — com valores.
                   </span>
@@ -1666,7 +1560,7 @@ export default function AdminConnections() {
 
               <div className="space-y-2">
                 <Label className="text-xs font-medium text-muted-foreground">
-                  Botões de ação rápida <span className="text-muted-foreground/50">(máx. 3, vão nos alertas)</span>
+                  Botões de ação rápida <span className="text-muted-foreground">(máx. 3, vão nos alertas)</span>
                 </Label>
                 {alertButtons.map((button, index) => (
                   <div key={index} className="flex gap-2">
@@ -1704,12 +1598,12 @@ export default function AdminConnections() {
                   <button
                     type="button"
                     onClick={() => setAlertButtons([...alertButtons, { label: "", url: "" }])}
-                    className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+                    className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
                   >
                     + Adicionar botão
                   </button>
                 ) : null}
-                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   URL vazia abre o portal com o atalho contextual (falhas → Mensagens, canal →
                   Conexões, resumo → Prévia). Sobre login direto no portal: o link abriria a
                   sessão de quem clicar — o login do cliente é individual, por segurança.
@@ -1717,7 +1611,7 @@ export default function AdminConnections() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-[10px] font-medium text-muted-foreground">
+                <Label className="text-xs font-medium text-muted-foreground">
                   Falhas para disparar o aviso
                 </Label>
                 <div className="flex items-center gap-2">
@@ -1739,7 +1633,7 @@ export default function AdminConnections() {
               </div>
 
               {Object.keys(alertLastSentAt).length > 0 ? (
-                <div className="text-[10px] text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   Últimos disparos:{" "}
                   {Object.entries(alertLastSentAt).map(([key, ts]) => (
                     <span key={key} className="mr-2">
@@ -1805,7 +1699,7 @@ export default function AdminConnections() {
               <p className="text-muted-foreground">
                 Sem celular: {waImportPlan.noPhone} · fixo/inválido: {Object.values(waImportPlan.phoneFailures).reduce((a, b) => a + b, 0)} · opt-out preservado: {waImportPlan.keptOptOut}
               </p>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Novos contatos entram com opt-in = autorização de receber pelo portal. Se não for
                 o caso, desative o canal antes de importar.
               </p>
@@ -1872,6 +1766,7 @@ export default function AdminConnections() {
           void loadWhatsAppConfig();
         }}
       />
+      </section>
     </div>
   );
 }

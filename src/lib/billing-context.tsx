@@ -97,6 +97,21 @@ export function BillingProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // ---- ADMIN SESSION — never fetch billings ----
+      // Durante sessão admin o customer.id é "admin-..."; o backend
+      // retornaria 401 a cada ciclo de polling. Skip total: sem fetch,
+      // sem cache e sem polling.
+      if (customer.id.startsWith("admin-")) {
+        if (!cancelled) {
+          setBillings([]);
+          setError(null);
+          setIsLoading(false);
+          setIsCached(false);
+          setCacheAge(null);
+        }
+        return;
+      }
+
       // ---- TEST USER - return mock data instantly ----
       if (customer.id.startsWith("test-") && isTestCpf(customer.cpf)) {
         const mockRaw = getTestBillings() as RawBilling[];
@@ -292,7 +307,8 @@ export function BillingProvider({ children }: { children: ReactNode }) {
   // Periodic refetch every 5 minutes while authenticated
   // -----------------------------------------------------------------------
   useEffect(() => {
-    if (!customer || customer.id.startsWith("test-")) return;
+    if (!customer || customer.id.startsWith("test-") || customer.id.startsWith("admin-"))
+      return;
 
     intervalRef.current = setInterval(() => {
       setFetchTick((t) => t + 1);

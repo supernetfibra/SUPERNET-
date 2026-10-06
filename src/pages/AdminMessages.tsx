@@ -14,10 +14,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
-  Activity,
   AlertCircle,
   AlertTriangle,
-  ArrowUpDown,
   Ban,
   CheckCircle2,
   Clock,
@@ -25,7 +23,6 @@ import {
   ExternalLink,
   MousePointerClick,
   Eye,
-  Filter,
   Layers,
   Loader2,
   MessageSquare,
@@ -33,21 +30,15 @@ import {
   Phone,
   RefreshCw,
   RotateCcw,
-  Search,
   Send,
-  ShieldAlert,
   Sparkles,
   User,
   XCircle,
   Radio,
-  CheckSquare,
-  Square,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -66,39 +57,25 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
-import { apiUrl } from "@/lib/api-config";
+// Admin auth vem de api-config — esta tela sempre enviou o token TAMBÉM no
+// header x-admin-token, por isso usa a variante adminFetchHeader.
+import { adminFetchHeader as adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
+import { PageHeader } from "@/components/page-header";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EngagementFunnelCard } from "@/components/EngagementFunnelCard";
+import { DataTable } from "@/components/data-table";
+import type { DataTableColumn } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
+import { ErrorState } from "@/components/error-state";
+import { FilterBar, FilterSearch } from "@/components/filter-bar";
 
 // ---------------------------------------------------------------------------
 // Helpers e Tipos
 // ---------------------------------------------------------------------------
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  const token = getAdminToken();
-  const headers = new Headers(init?.headers);
-  if (token) headers.set("x-admin-token", token);
-  return fetch(withAdminToken(apiUrl(url)), {
-    ...init,
-    headers,
-    credentials: "include",
-  });
-}
+// Admin auth (adminFetch/adminFetchHeader, header-only) consolidado em
+// src/lib/api-config.ts — comportamento idêntico à cópia local antiga.
 
 export type DeliveryStatus =
   | "queued"
@@ -230,6 +207,174 @@ const STATUS_CONFIG: Record<
   },
 };
 
+const outboxColumns: DataTableColumn<OutboxDelivery>[] = [
+  {
+    key: "status",
+    header: "Status",
+    className: "whitespace-nowrap",
+    render: (item) => {
+      const statusInfo = STATUS_CONFIG[item.status] || STATUS_CONFIG.queued;
+      const StatusIcon = statusInfo.icon;
+      return (
+        <>
+          <Badge
+            variant="outline"
+            className={`text-[10px] font-medium gap-1 px-2 py-0.5 border ${statusInfo.border} ${statusInfo.bg} ${statusInfo.text}`}
+          >
+            <StatusIcon className={`h-3 w-3 ${item.status === "sending" ? "animate-spin" : ""}`} />
+            {statusInfo.label}
+          </Badge>
+          {item.errorMessage && (
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1 max-w-[200px] truncate" title={item.errorMessage}>
+              {item.errorMessage}
+            </p>
+          )}
+        </>
+      );
+    },
+  },
+  {
+    key: "target",
+    header: "Destino / Cliente",
+    render: (item) => (
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1.5 font-mono font-medium text-foreground">
+          {item.channel === "whatsapp" ? (
+            <Phone className="h-3 w-3 text-emerald-600 shrink-0" />
+          ) : (
+            <Send className="h-3 w-3 text-blue-500 shrink-0" />
+          )}
+          <span>{item.target}</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {item.customerName ? (
+            <span className="flex items-center gap-1 font-medium text-foreground">
+              <User className="h-3 w-3 shrink-0" />
+              {item.customerName}
+            </span>
+          ) : null}
+          {item.customerId && <span>ID: {item.customerId}</span>}
+          {item.cpf && <span>CPF: {formatCpfMask(item.cpf)}</span>}
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "reason",
+    header: "Motivo",
+    // `min-w-` (não `max-w-`/`w-`): em table-layout auto, max-w não reserva
+    // espaço e w- é apenas uma dica — o navegador espremia esta coluna para o
+    // mínimo e o texto quebrava a ~90px. min-w é o piso respeitado.
+    // `whitespace-normal` é obrigatório porque o TableCell do DS aplica
+    // `whitespace-nowrap` em todo <td> — sem isso a mensagem de erro vaza por
+    // cima das colunas vizinhas.
+    className: "min-w-[260px] whitespace-normal",
+    render: (item) => (
+      <div className="space-y-1">
+        {item.ruleLabel ? (
+          <Badge
+            variant="outline"
+            className="text-[10px] font-medium gap-1 px-2 py-0.5 border-violet-500/30 text-violet-700 dark:text-violet-400 bg-violet-500/10"
+          >
+            <Sparkles className="h-3 w-3" />
+            {item.ruleLabel}
+          </Badge>
+        ) : null}
+        {item.reasonLabel ? (
+          <p className="text-xs text-muted-foreground leading-snug" title={item.errorMessage ?? undefined}>
+            {item.reasonLabel}
+          </p>
+        ) : null}
+        {!item.ruleLabel && !item.reasonLabel ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : null}
+      </div>
+    ),
+  },
+  {
+    key: "channel",
+    header: "Canal",
+    className: "whitespace-nowrap",
+    render: (item) => (
+      <div className="flex items-center gap-1.5">
+        <Badge variant="outline" className="text-xs uppercase font-mono px-1.5 py-0">
+          {item.channel}
+        </Badge>
+        {item.actions && item.actions.length > 0 && (
+          <span
+            className="inline-flex items-center gap-0.5 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1 py-0.5"
+            title={item.actions.map((a) => a.label).join(" · ")}
+          >
+            <MousePointerClick className="h-3 w-3" />
+            {item.actions.length}
+          </span>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "attempts",
+    header: "Tentativas",
+    className: "whitespace-nowrap",
+    render: (item) => (
+      <div className="space-y-0.5">
+        <span className="font-mono text-foreground font-medium">
+          {item.attempts} / 4
+        </span>
+        {item.errorKey && (
+          <span className="block text-xs text-amber-600 font-mono">
+            {item.errorKey}
+          </span>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "schedule",
+    header: "Horário / Agendado",
+    className: "whitespace-nowrap",
+    render: (item) => (
+      <div className="space-y-0.5">
+        {item.status === "queued" && item.scheduledFor > 0 ? (
+          <>
+            <span className="text-xs text-foreground font-medium">
+              📅 {formatEpochTime(item.scheduledFor)}
+            </span>
+            {item.errorMessage ? (
+              <p
+                className="text-xs text-muted-foreground max-w-[180px] truncate"
+                title={item.errorMessage}
+              >
+                {item.errorMessage}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-xs text-foreground font-medium">
+            {item.sentAt ? `Enviado: ${formatEpochTime(item.sentAt)}` : `Criado: ${formatEpochTime(item.createdAt)}`}
+          </span>
+        )}
+        {item.status !== "queued" && item.sentAt ? (
+          <p className="text-xs text-muted-foreground">
+            Criado: {formatEpochTime(item.createdAt)}
+          </p>
+        ) : null}
+      </div>
+    ),
+  },
+];
+
+/**
+ * Status elegíveis para REENVIO em lote.
+ *
+ * O endpoint faz `update ... where id in (...)` sem filtrar status: reenviar uma
+ * entrega já enviada/entregue/lida chega ao cliente de novo e não tem volta. É a
+ * mesma regra da ação por linha (reenviar uma cancelada é o "desfazer").
+ *
+ * Em escopo de módulo para ser uma referência estável nas dependências do useMemo.
+ */
+const RETRYABLE_STATUSES = new Set(["failed", "canceled"]);
+
 export default function AdminMessages() {
   const navigate = useNavigate();
 
@@ -250,7 +395,7 @@ export default function AdminMessages() {
 
   // Polling em tempo real
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(10); // segundos
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(Date.now());
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number>(() => Date.now());
 
   // Seleção em lote
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -360,18 +505,45 @@ export default function AdminMessages() {
     return { queued, sent, read, failed, skipped };
   }, [stats]);
 
-  // Contagem de selecionados por tipo
+  // Contagem de selecionados + ELEGIBILIDADE por ação.
+  //
+  // O endpoint de retry faz `update ... where id in (...)` SEM filtrar status:
+  // reenviar uma entrega já enviada/desentregada chega ao cliente de novo e não
+  // tem volta. Por isso a ação só monta a lista com o que é elegível e a barra
+  // diz em voz alta o que fica de fora.
   const selectedDetails = useMemo(() => {
     const selectedList = filteredDeliveries.filter((d) => selectedIds.has(d.id));
     const failedCount = selectedList.filter((d) => d.status === "failed").length;
     const queuedCount = selectedList.filter((d) => d.status === "queued").length;
+    // Elegíveis para reenvio: `failed` e `canceled` — mesma regra da ação por
+    // linha (reenviar uma cancelada é o "desfazer" do cancelamento).
+    const retryableIds = selectedList
+      .filter((d) => RETRYABLE_STATUSES.has(d.status))
+      .map((d) => d.id);
+    const cancellableIds = selectedList.filter((d) => d.status === "queued").map((d) => d.id);
     return {
       total: selectedList.length,
       failedCount,
       queuedCount,
+      retryableIds,
+      cancellableIds,
+      // Já enviadas/entregues/lidas/descartadas — no retry, chegariam ao cliente
+      // de novo; no cancel, não têm efeito.
+      notRetryableCount: selectedList.length - retryableIds.length,
+      notCancellableCount: selectedList.length - cancellableIds.length,
       items: selectedList,
     };
   }, [filteredDeliveries, selectedIds]);
+
+  // Quantos itens da seleção atual ficam de fora de cada ação em lote.
+  const retryExcludedCount = useMemo(
+    () => selectedDetails.total - targetRetryIds.length,
+    [selectedDetails.total, targetRetryIds.length]
+  );
+  const cancelExcludedCount = useMemo(
+    () => selectedDetails.total - targetCancelIds.length,
+    [selectedDetails.total, targetCancelIds.length]
+  );
 
   // Alterna seleção individual
   const toggleSelect = (id: string) => {
@@ -411,7 +583,7 @@ export default function AdminMessages() {
       }
 
       toast.success(
-        `${ids.length} entrega(s) reenviada(s) com sucesso para processamento imediato.`
+        `${plural(ids.length, "entrega reenviada", "entregas reenviadas")} com sucesso para processamento imediato.`
       );
       setSelectedIds(new Set());
       void loadDeliveries();
@@ -441,7 +613,9 @@ export default function AdminMessages() {
         throw new Error(data.error || "Falha ao cancelar mensagens.");
       }
 
-      toast.success(`${ids.length} mensagem(ns) pendente(s) cancelada(s).`);
+      toast.success(
+      `${plural(ids.length, "mensagem pendente cancelada", "mensagens pendentes canceladas")}.`,
+    );
       setSelectedIds(new Set());
       void loadDeliveries();
     } catch (err) {
@@ -452,80 +626,124 @@ export default function AdminMessages() {
     }
   };
 
+  // Ações individuais por linha (coluna Ações do DataTable)
+  const renderOutboxActions = (item: OutboxDelivery) => (
+    <>
+      {/* Reenviar se falhou ou foi descartada */}
+      {(item.status === "failed" || item.status === "canceled") && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs px-2 gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+          onClick={() => {
+            setTargetRetryIds([item.id]);
+            setRetryDialogOpen(true);
+          }}
+          title="Reenviar agora"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Reenviar
+        </Button>
+      )}
+
+      {/* Cancelar se pendente na fila */}
+      {item.status === "queued" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs px-2 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+          onClick={() => {
+            setTargetCancelIds([item.id]);
+            setCancelDialogOpen(true);
+          }}
+          title="Cancelar envio"
+        >
+          <Ban className="h-3 w-3" />
+          Cancelar
+        </Button>
+      )}
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 text-xs px-2 gap-1 text-muted-foreground hover:text-foreground"
+        onClick={() => setSelectedDelivery(item)}
+      >
+        <Eye className="h-3.5 w-3.5" />
+        Detalhes
+      </Button>
+    </>
+  );
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 sm:space-y-8 animate-[fadeIn_0.2s_ease-out]">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-medium tracking-tight text-foreground">
-              Mensagens enviadas
-            </h1>
-            <Badge
-              variant="outline"
-              className={`text-[10px] gap-1 px-2 py-0.5 ${
-                autoRefreshInterval > 0
-                  ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
-                  : "border-border text-muted-foreground"
-              }`}
+      <PageHeader
+        title="Mensagens enviadas"
+        description="Qual mensagem foi enviada para qual cliente — e o motivo de cada uma. Fila, histórico e retries em tempo real."
+        badge={
+          <Badge
+            variant="outline"
+            className={`text-[10px] gap-1 px-2 py-0.5 ${
+              autoRefreshInterval > 0
+                ? "border-emerald-500/40 text-emerald-700 bg-emerald-500/10"
+                : "border-border text-muted-foreground"
+            }`}
+          >
+            <Radio className={`h-3 w-3 ${autoRefreshInterval > 0 ? "text-emerald-500 animate-pulse" : ""}`} />
+            {autoRefreshInterval > 0 ? `Ao vivo (${autoRefreshInterval}s)` : "Pausado"}
+          </Badge>
+        }
+        actions={
+          <>
+            {/* Controle de polling */}
+            <Select
+              value={String(autoRefreshInterval)}
+              onValueChange={(val) => setAutoRefreshInterval(Number(val))}
             >
-              <Radio className={`h-3 w-3 ${autoRefreshInterval > 0 ? "text-emerald-500 animate-pulse" : ""}`} />
-              {autoRefreshInterval > 0 ? `Ao vivo (${autoRefreshInterval}s)` : "Pausado"}
-            </Badge>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            Qual mensagem foi enviada para qual cliente — e o motivo de cada uma. Fila, histórico e retries em tempo real.
-          </p>
-        </div>
+              <SelectTrigger className="h-9 text-xs w-[130px]">
+                <SelectValue placeholder="Atualização" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="5">Atualizar a cada 5s</SelectItem>
+                <SelectItem value="10">Atualizar a cada 10s</SelectItem>
+                <SelectItem value="30">Atualizar a cada 30s</SelectItem>
+                <SelectItem value="0">Desativar polling</SelectItem>
+              </SelectContent>
+            </Select>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Controle de polling */}
-          <Select
-            value={String(autoRefreshInterval)}
-            onValueChange={(val) => setAutoRefreshInterval(Number(val))}
-          >
-            <SelectTrigger className="h-9 text-xs w-[130px]">
-              <SelectValue placeholder="Atualização" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="5">Atualizar a cada 5s</SelectItem>
-              <SelectItem value="10">Atualizar a cada 10s</SelectItem>
-              <SelectItem value="30">Atualizar a cada 30s</SelectItem>
-              <SelectItem value="0">Desativar polling</SelectItem>
-            </SelectContent>
-          </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 gap-1.5 cursor-pointer"
+              onClick={() => void loadDeliveries()}
+              disabled={loading}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Recarregar
+            </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs h-9 gap-1.5 cursor-pointer"
-            onClick={() => void loadDeliveries()}
-            disabled={loading}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Recarregar
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+              onClick={() => setSyncOpen(true)}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Sincronizar cobranças
+            </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
-            onClick={() => setSyncOpen(true)}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            Sincronizar cobranças
-          </Button>
-
-          <Button
-            size="sm"
-            className="text-xs h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-medium"
-            onClick={() => setDispatchOpen(true)}
-          >
-            <Send className="h-3.5 w-3.5" />
-            Disparar lote agora
-          </Button>
-        </div>
-      </div>
+            <Button
+              size="sm"
+              className="text-xs h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer font-medium"
+              onClick={() => setDispatchOpen(true)}
+            >
+              <Send className="h-3.5 w-3.5" />
+              Disparar lote agora
+            </Button>
+          </>
+        }
+      />
 
       {migrationPending && (
         <div className="flex items-start gap-3 p-4 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-900 text-xs text-amber-900 dark:text-amber-200">
@@ -539,70 +757,78 @@ export default function AdminMessages() {
         </div>
       )}
 
+      {/* Mensagens (outbox) e Funil — o funil veio de Conexões na Fase 4.6, é dado do domínio de mensagens */}
+      <Tabs defaultValue="outbox" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="outbox">Mensagens</TabsTrigger>
+          <TabsTrigger value="funnel">Funil</TabsTrigger>
+        </TabsList>
+        <TabsContent value="outbox" className="mt-4 space-y-6">
+
       {/* Cards de Métricas Principais */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <Card className="border-border shadow-none bg-card">
           <CardContent className="p-4 space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-medium">Aguardando Envio</span>
+              <span className="text-xs font-medium">Aguardando Envio</span>
               <Clock className="h-4 w-4 text-amber-500" />
             </div>
             <p className="text-2xl font-semibold tracking-tight text-amber-600 dark:text-amber-400">
               {metrics.queued}
             </p>
-            <p className="text-[10px] text-muted-foreground">Na fila outbox</p>
+            <p className="text-xs text-muted-foreground">Na fila outbox</p>
           </CardContent>
         </Card>
 
         <Card className="border-border shadow-none bg-card">
           <CardContent className="p-4 space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-medium">Enviados (7d)</span>
+              <span className="text-xs font-medium">Enviados (7d)</span>
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             </div>
             <p className="text-2xl font-semibold tracking-tight text-emerald-600 dark:text-emerald-400">
               {metrics.sent}
             </p>
-            <p className="text-[10px] text-muted-foreground">Despachados com sucesso</p>
+            <p className="text-xs text-muted-foreground">Despachados com sucesso</p>
           </CardContent>
         </Card>
 
         <Card className="border-border shadow-none bg-card">
           <CardContent className="p-4 space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-medium">Lidos (read)</span>
+              <span className="text-xs font-medium">Lidos (read)</span>
               <Eye className="h-4 w-4 text-sky-500" />
             </div>
             <p className="text-2xl font-semibold tracking-tight text-sky-600 dark:text-sky-400">
               {metrics.read}
             </p>
-            <p className="text-[10px] text-muted-foreground">Confirmação de leitura</p>
+            <p className="text-xs text-muted-foreground">Confirmação de leitura</p>
           </CardContent>
         </Card>
 
         <Card className="border-border shadow-none bg-card">
           <CardContent className="p-4 space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-medium">Falhas (7d)</span>
+              <span className="text-xs font-medium">Falhas (7d)</span>
               <AlertCircle className="h-4 w-4 text-red-500" />
             </div>
             <p className="text-2xl font-semibold tracking-tight text-red-600 dark:text-red-400">
               {metrics.failed}
             </p>
-            <p className="text-[10px] text-muted-foreground">Tentativas esgotadas</p>
+            <p className="text-xs text-muted-foreground">Tentativas esgotadas</p>
           </CardContent>
         </Card>
 
         <Card className="border-border shadow-none bg-card">
           <CardContent className="p-4 space-y-1">
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-medium">Descartados</span>
+              <span className="text-xs font-medium">Descartados</span>
               <PauseCircle className="h-4 w-4 text-muted-foreground" />
             </div>
             <p className="text-2xl font-semibold tracking-tight text-muted-foreground">
               {metrics.skipped}
             </p>
-            <p className="text-[10px] text-muted-foreground">Sem template/evento</p>
+            <p className="text-xs text-muted-foreground">Sem template/evento</p>
           </CardContent>
         </Card>
       </div>
@@ -610,17 +836,15 @@ export default function AdminMessages() {
       {/* Barra de Filtros e Busca */}
       <Card className="border-border shadow-none bg-card">
         <CardContent className="p-3.5 space-y-3">
-          <div className="flex flex-col md:flex-row items-center gap-3">
+          <FilterBar>
             {/* Campo de Busca */}
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por telefone, ID do cliente, CPF ou erro..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9 text-xs"
-              />
-            </div>
+            <FilterSearch
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Buscar por telefone, ID do cliente, CPF ou erro..."
+              inputClassName="h-9 text-xs"
+              ariaLabel="Buscar entregas"
+            />
 
             {/* Filtro de Status */}
             <div className="flex items-center gap-2 w-full md:w-auto">
@@ -668,7 +892,10 @@ export default function AdminMessages() {
               </Select>
 
               {/* Limite */}
-              <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
+              <Select
+                value={String(limit)}
+                onValueChange={(v) => setLimit(Number(v))}
+              >
                 <SelectTrigger className="h-9 text-xs w-[110px]">
                   <SelectValue placeholder="Limite" />
                 </SelectTrigger>
@@ -680,18 +907,26 @@ export default function AdminMessages() {
                 </SelectContent>
               </Select>
             </div>
-          </div>
+          </FilterBar>
 
           {/* Barra de Ações em Lote quando há seleção */}
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2.5 p-2.5 rounded-lg bg-muted/40 border border-border animate-[fadeIn_0.15s_ease-out]">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
                 <Badge variant="secondary" className="font-mono text-xs px-2 py-0.5">
-                  {selectedIds.size} selecionado(s)
+                  {plural(selectedDetails.total, "selecionada", "selecionadas")}
                 </Badge>
-                <span className="text-[11px] text-muted-foreground">
-                  ({selectedDetails.failedCount} falha(s), {selectedDetails.queuedCount} pendente(s))
+                <span className="text-xs text-muted-foreground">
+                  {plural(selectedDetails.failedCount, "falha", "falhas")} ·{" "}
+                  {plural(selectedDetails.queuedCount, "pendente", "pendentes")}
                 </span>
+                {/* Diz o que NÃO entra em cada ação — evita a surpresa de reenviar
+                    algo que o cliente já recebeu. */}
+                {selectedDetails.notRetryableCount > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {selectedDetails.notRetryableCount} fora da seleção de reenvio
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -700,13 +935,19 @@ export default function AdminMessages() {
                   size="sm"
                   className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
                   onClick={() => {
-                    setTargetRetryIds(Array.from(selectedIds));
+                    // Só o que está "failed" é reenviável — ver selectedDetails.
+                    setTargetRetryIds(selectedDetails.retryableIds);
                     setRetryDialogOpen(true);
                   }}
-                  disabled={bulkActionLoading}
+                  disabled={bulkActionLoading || selectedDetails.retryableIds.length === 0}
+                  title={
+                    selectedDetails.notRetryableCount > 0
+                      ? `${selectedDetails.notRetryableCount} da seleção não está com falha e não será reenviada`
+                      : undefined
+                  }
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  Reenviar selecionadas ({selectedIds.size})
+                  Reenviar selecionadas ({selectedDetails.retryableIds.length})
                 </Button>
 
                 <Button
@@ -714,21 +955,18 @@ export default function AdminMessages() {
                   size="sm"
                   className="h-8 text-xs gap-1.5 border-red-500/40 text-red-700 dark:text-red-300 hover:bg-red-500/10 cursor-pointer"
                   onClick={() => {
-                    const queuedOnly = Array.from(selectedIds).filter((id) => {
-                      const item = deliveries.find((d) => d.id === id);
-                      return item?.status === "queued";
-                    });
-                    if (queuedOnly.length === 0) {
-                      toast.warning("Nenhuma das mensagens selecionadas está no status 'queued' (pendente).");
-                      return;
-                    }
-                    setTargetCancelIds(queuedOnly);
+                    setTargetCancelIds(selectedDetails.cancellableIds);
                     setCancelDialogOpen(true);
                   }}
-                  disabled={bulkActionLoading}
+                  disabled={bulkActionLoading || selectedDetails.cancellableIds.length === 0}
+                  title={
+                    selectedDetails.notCancellableCount > 0
+                      ? `${selectedDetails.notCancellableCount} da seleção já saiu da fila e não será cancelada`
+                      : undefined
+                  }
                 >
                   <Ban className="h-3.5 w-3.5" />
-                  Cancelar pendentes ({selectedDetails.queuedCount})
+                  Cancelar pendentes ({selectedDetails.cancellableIds.length})
                 </Button>
 
                 <Button
@@ -751,7 +989,12 @@ export default function AdminMessages() {
           <div>
             <CardTitle className="text-sm font-medium">Registros da Outbox</CardTitle>
             <CardDescription className="text-xs">
-              {filteredDeliveries.length} mensagem(ns) encontrada(s) · Última checagem às{" "}
+              {plural(
+              filteredDeliveries.length,
+              "mensagem encontrada",
+              "mensagens encontradas",
+            )}{" "}
+              · Última checagem às{" "}
               {new Date(lastRefreshedAt).toLocaleTimeString("pt-BR")}
             </CardDescription>
           </div>
@@ -786,252 +1029,44 @@ export default function AdminMessages() {
               <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
               <p className="text-xs text-muted-foreground">Consultando fila de entregas...</p>
             </div>
+          ) : error && deliveries.length === 0 ? (
+            <ErrorState
+              title="Falha ao consultar a fila"
+              description={error}
+              onRetry={() => void loadDeliveries()}
+              retrying={loading}
+            />
           ) : filteredDeliveries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center space-y-2">
-              <Layers className="h-9 w-9 text-muted-foreground/40" />
-              <p className="text-sm font-medium text-foreground">Nenhuma notificação encontrada</p>
-              <p className="text-xs text-muted-foreground max-w-sm">
-                Não há registros com os filtros atuais. Experimente sincronizar novas faturas para popular a fila.
-              </p>
-            </div>
+            <EmptyState
+              icon={Layers}
+              size="page"
+              title="Nenhuma notificação encontrada"
+              description="Não há registros com os filtros atuais. Experimente sincronizar novas faturas para popular a fila."
+            />
           ) : (
-            <div className="divide-y divide-border overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30 text-muted-foreground text-[11px] font-medium">
-                    <th className="py-2.5 px-3 w-10 text-center">
-                      <Checkbox
-                        checked={
-                          filteredDeliveries.length > 0 &&
-                          selectedIds.size === filteredDeliveries.length
-                        }
-                        onCheckedChange={toggleSelectAll}
-                        aria-label="Selecionar tudo"
-                        className="cursor-pointer"
-                      />
-                    </th>
-                    <th className="py-2.5 px-4">Status</th>
-                    <th className="py-2.5 px-4">Destino / Cliente</th>
-                    <th className="py-2.5 px-4">Motivo</th>
-                    <th className="py-2.5 px-4">Canal</th>
-                    <th className="py-2.5 px-4">Tentativas</th>
-                    <th className="py-2.5 px-4">Horário / Agendado</th>
-                    <th className="py-2.5 px-4 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {filteredDeliveries.map((item) => {
-                    const statusInfo = STATUS_CONFIG[item.status] || STATUS_CONFIG.queued;
-                    const StatusIcon = statusInfo.icon;
-                    const isSelected = selectedIds.has(item.id);
-
-                    return (
-                      <tr
-                        key={item.id}
-                        className={`transition-colors cursor-pointer ${
-                          isSelected ? "bg-muted/60" : "hover:bg-muted/30"
-                        }`}
-                        onClick={() => setSelectedDelivery(item)}
-                      >
-                        {/* Checkbox de seleção */}
-                        <td
-                          className="py-3 px-3 text-center"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleSelect(item.id);
-                          }}
-                        >
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => toggleSelect(item.id)}
-                            aria-label={`Selecionar ${item.target}`}
-                            className="cursor-pointer"
-                          />
-                        </td>
-
-                        {/* Status */}
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] font-medium gap-1 px-2 py-0.5 border ${statusInfo.border} ${statusInfo.bg} ${statusInfo.text}`}
-                          >
-                            <StatusIcon className={`h-3 w-3 ${item.status === "sending" ? "animate-spin" : ""}`} />
-                            {statusInfo.label}
-                          </Badge>
-                          {item.errorMessage && (
-                            <p className="text-[10px] text-red-600 dark:text-red-400 mt-1 max-w-[200px] truncate" title={item.errorMessage}>
-                              {item.errorMessage}
-                            </p>
-                          )}
-                        </td>
-
-                        {/* Destino e Cliente */}
-                        <td className="py-3 px-4">
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5 font-mono font-medium text-foreground">
-                              {item.channel === "whatsapp" ? (
-                                <Phone className="h-3 w-3 text-emerald-600 shrink-0" />
-                              ) : (
-                                <Send className="h-3 w-3 text-blue-500 shrink-0" />
-                              )}
-                              <span>{item.target}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                              {item.customerName ? (
-                                <span className="flex items-center gap-1 font-medium text-foreground">
-                                  <User className="h-3 w-3 shrink-0" />
-                                  {item.customerName}
-                                </span>
-                              ) : null}
-                              {item.customerId && <span>ID: {item.customerId}</span>}
-                              {item.cpf && <span>CPF: {formatCpfMask(item.cpf)}</span>}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Motivo — régua de origem + estado legível, a resposta direta a "por que esta mensagem" */}
-                        <td className="py-3 px-4 max-w-[260px]">
-                          <div className="space-y-1">
-                            {item.ruleLabel ? (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] font-medium gap-1 px-2 py-0.5 border-violet-500/30 text-violet-700 dark:text-violet-400 bg-violet-500/10"
-                              >
-                                <Sparkles className="h-3 w-3" />
-                                {item.ruleLabel}
-                              </Badge>
-                            ) : null}
-                            {item.reasonLabel ? (
-                              <p className="text-[11px] text-muted-foreground leading-snug" title={item.errorMessage ?? undefined}>
-                                {item.reasonLabel}
-                              </p>
-                            ) : null}
-                            {!item.ruleLabel && !item.reasonLabel ? (
-                              <span className="text-[10px] text-muted-foreground">—</span>
-                            ) : null}
-                          </div>
-                        </td>
-
-                        {/* Canal */}
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <Badge variant="outline" className="text-[10px] uppercase font-mono px-1.5 py-0">
-                              {item.channel}
-                            </Badge>
-                            {item.actions && item.actions.length > 0 && (
-                              <span
-                                className="inline-flex items-center gap-0.5 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1 py-0.5"
-                                title={item.actions.map((a) => a.label).join(" · ")}
-                              >
-                                <MousePointerClick className="h-3 w-3" />
-                                {item.actions.length}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Tentativas */}
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="space-y-0.5">
-                            <span className="font-mono text-foreground font-medium">
-                              {item.attempts} / 4
-                            </span>
-                            {item.errorKey && (
-                              <span className="block text-[10px] text-amber-600 font-mono">
-                                {item.errorKey}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Horário — na fila, "programado" é a informação principal:
-                            quando sai E por que está esperando essa hora */}
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="space-y-0.5">
-                            {item.status === "queued" && item.scheduledFor > 0 ? (
-                              <>
-                                <span className="text-[11px] text-foreground font-medium">
-                                  📅 {formatEpochTime(item.scheduledFor)}
-                                </span>
-                                {item.errorMessage ? (
-                                  <p
-                                    className="text-[10px] text-muted-foreground max-w-[180px] truncate"
-                                    title={item.errorMessage}
-                                  >
-                                    {item.errorMessage}
-                                  </p>
-                                ) : null}
-                              </>
-                            ) : (
-                              <span className="text-[11px] text-foreground font-medium">
-                                {item.sentAt ? `Enviado: ${formatEpochTime(item.sentAt)}` : `Criado: ${formatEpochTime(item.createdAt)}`}
-                              </span>
-                            )}
-                            {item.status !== "queued" && item.sentAt ? (
-                              <p className="text-[10px] text-muted-foreground">
-                                Criado: {formatEpochTime(item.createdAt)}
-                              </p>
-                            ) : null}
-                          </div>
-                        </td>
-
-                        {/* Ações individuais */}
-                        <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                            {/* Reenviar se falhou ou foi descartada */}
-                            {(item.status === "failed" || item.status === "canceled") && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs px-2 gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-                                onClick={() => {
-                                  setTargetRetryIds([item.id]);
-                                  setRetryDialogOpen(true);
-                                }}
-                                title="Reenviar agora"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                Reenviar
-                              </Button>
-                            )}
-
-                            {/* Cancelar se pendente na fila */}
-                            {item.status === "queued" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs px-2 gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                onClick={() => {
-                                  setTargetCancelIds([item.id]);
-                                  setCancelDialogOpen(true);
-                                }}
-                                title="Cancelar envio"
-                              >
-                                <Ban className="h-3 w-3" />
-                                Cancelar
-                              </Button>
-                            )}
-
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 text-xs px-2 gap-1 text-muted-foreground hover:text-foreground"
-                              onClick={() => setSelectedDelivery(item)}
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              Detalhes
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              size="sm"
+              tableClassName="text-left border-collapse text-xs"
+              columns={outboxColumns}
+              data={filteredDeliveries}
+              getRowId={(item) => item.id}
+              onRowClick={(item) => setSelectedDelivery(item)}
+              selectable
+              selectedIds={selectedIds}
+              onToggleRow={toggleSelect}
+              onSelectAll={toggleSelectAll}
+              rowActions={renderOutboxActions}
+            />
           )}
         </CardContent>
       </Card>
+
+        </TabsContent>
+
+        <TabsContent value="funnel" className="mt-4">
+          <EngagementFunnelCard />
+        </TabsContent>
+      </Tabs>
 
       {/* Modal de Detalhes da Notificação */}
       <Dialog open={!!selectedDelivery} onOpenChange={(open) => !open && setSelectedDelivery(null)}>
@@ -1053,10 +1088,10 @@ export default function AdminMessages() {
               {/* Status e Canal */}
               <div className="grid grid-cols-2 gap-3 p-3 rounded-lg border border-border bg-card">
                 <div>
-                  <span className="text-[10px] text-muted-foreground block">Status Atual</span>
+                  <span className="text-xs text-muted-foreground block">Status Atual</span>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] mt-1 font-medium ${
+                    className={`text-xs mt-1 font-medium ${
                       STATUS_CONFIG[selectedDelivery.status]?.bg
                     } ${STATUS_CONFIG[selectedDelivery.status]?.text} ${
                       STATUS_CONFIG[selectedDelivery.status]?.border
@@ -1067,21 +1102,21 @@ export default function AdminMessages() {
                 </div>
 
                 <div>
-                  <span className="text-[10px] text-muted-foreground block">Canal</span>
+                  <span className="text-xs text-muted-foreground block">Canal</span>
                   <strong className="text-xs uppercase font-mono mt-1 block">
                     {selectedDelivery.channel}
                   </strong>
                 </div>
 
                 <div>
-                  <span className="text-[10px] text-muted-foreground block">Destinatário</span>
+                  <span className="text-xs text-muted-foreground block">Destinatário</span>
                   <strong className="text-xs font-mono mt-1 block text-foreground">
                     {selectedDelivery.target}
                   </strong>
                 </div>
 
                 <div>
-                  <span className="text-[10px] text-muted-foreground block">Cliente ID / CPF</span>
+                  <span className="text-xs text-muted-foreground block">Cliente ID / CPF</span>
                   <span className="text-xs mt-1 block text-muted-foreground">
                     {selectedDelivery.customerName ? `${selectedDelivery.customerName} · ` : ""}
                     {selectedDelivery.customerId || "—"} / {formatCpfMask(selectedDelivery.cpf)}
@@ -1098,13 +1133,13 @@ export default function AdminMessages() {
                     {selectedDelivery.ruleLabel ? (
                       <Badge
                         variant="outline"
-                        className="text-[10px] font-medium px-2 py-0 border-violet-500/30 bg-white/50 dark:bg-black/20"
+                        className="text-xs font-medium px-2 py-0 border-violet-500/30 bg-white/50 dark:bg-black/20"
                       >
                         {selectedDelivery.ruleLabel}
                       </Badge>
                     ) : null}
                   </div>
-                  <p className="text-[11px] leading-relaxed">{selectedDelivery.reasonLabel}</p>
+                  <p className="text-xs leading-relaxed">{selectedDelivery.reasonLabel}</p>
                 </div>
               ) : null}
 
@@ -1115,13 +1150,13 @@ export default function AdminMessages() {
                     <AlertCircle className="h-4 w-4 text-red-600" />
                     <span>Erro no Envio ({selectedDelivery.errorKey || "ERRO"})</span>
                   </div>
-                  <p className="text-[11px] leading-relaxed">{selectedDelivery.errorMessage}</p>
+                  <p className="text-xs leading-relaxed">{selectedDelivery.errorMessage}</p>
                 </div>
               )}
 
               {/* Conteúdo Renderizado (Mensagem Real) */}
               <div className="space-y-1.5">
-                <span className="text-[11px] font-semibold text-foreground">
+                <span className="text-xs font-semibold text-foreground">
                   Mensagem Renderizada:
                 </span>
                 {selectedDelivery.rendered ? (
@@ -1135,7 +1170,7 @@ export default function AdminMessages() {
                         href={selectedDelivery.rendered.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-emerald-600 hover:underline mt-2 text-[11px]"
+                        className="inline-flex items-center gap-1 text-emerald-600 hover:underline mt-2 text-xs"
                       >
                         Abrir link da fatura <ExternalLink className="h-3 w-3" />
                       </a>
@@ -1143,14 +1178,14 @@ export default function AdminMessages() {
                     {/* Botões de ação enviados (copiar Pix, código de barras, abrir portal/PDF) */}
                     {selectedDelivery.actions && selectedDelivery.actions.length > 0 && (
                       <div className="mt-3 pt-2.5 border-t border-border/60 space-y-1.5">
-                        <span className="text-[10px] font-medium text-muted-foreground">
+                        <span className="text-xs font-medium text-muted-foreground">
                           Botões enviados com a mensagem:
                         </span>
                         <div className="flex flex-wrap gap-1.5">
                           {selectedDelivery.actions.map((action, index) => (
                             <span
                               key={`${action.label}-${index}`}
-                              className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-2 py-1"
                               title={
                                 action.copy
                                   ? `Botão de cópia: ${action.copy}`
@@ -1172,7 +1207,7 @@ export default function AdminMessages() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-muted-foreground italic text-[11px] p-3 border border-border rounded">
+                  <p className="text-muted-foreground italic text-xs p-3 border border-border rounded">
                     A mensagem ainda não foi renderizada (é processada no momento do disparo para calcular juros e dias de atraso corretos).
                   </p>
                 )}
@@ -1180,8 +1215,8 @@ export default function AdminMessages() {
 
               {/* Dados Técnicos / Auditoria */}
               <div className="space-y-1.5 pt-2">
-                <span className="text-[11px] font-semibold text-foreground">Metadados Técnicos:</span>
-                <div className="p-2.5 rounded border border-border bg-card font-mono text-[10px] space-y-1 text-muted-foreground">
+                <span className="text-xs font-semibold text-foreground">Metadados Técnicos:</span>
+                <div className="p-2.5 rounded border border-border bg-card font-mono text-xs space-y-1 text-muted-foreground">
                   <p>Event ID: {selectedDelivery.eventId}</p>
                   {selectedDelivery.ruleKey && <p>Régua de origem: {selectedDelivery.ruleKey}</p>}
                   {selectedDelivery.providerId && <p>Provider ID: {selectedDelivery.providerId}</p>}
@@ -1243,7 +1278,7 @@ export default function AdminMessages() {
       <ConfirmDialog
         open={retryDialogOpen}
         onOpenChange={setRetryDialogOpen}
-        title={`Reenviar ${targetRetryIds.length} entrega(s)?`}
+        title={`Reenviar ${plural(targetRetryIds.length, "entrega", "entregas")}?`}
         description="O status voltará para 'queued', as tentativas serão zeradas e o envio imediato será acionado."
         confirmLabel="Confirmar e Reenviar"
         actionClassName="bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -1253,13 +1288,21 @@ export default function AdminMessages() {
         <p className="text-muted-foreground text-xs leading-relaxed">
           As entregas selecionadas serão reprocessadas respeitando as cotas de novas conversas do canal. Se o canal estiver dentro da janela ou em modo manual, o envio ocorre imediatamente.
         </p>
+        {retryExcludedCount > 0 && (
+          <p className="text-amber-600 dark:text-amber-400 text-xs leading-relaxed">
+            <strong>{retryExcludedCount}</strong>{" "}
+            {retryExcludedCount === 1 ? "item ficará" : "itens ficarão"} de fora: já foram
+            enviados, entregues, lidos, descartados ou cancelados. Reenviar esses geraria uma
+            segunda mensagem para o mesmo cliente.
+          </p>
+        )}
       </ConfirmDialog>
 
       {/* Diálogo de Confirmação de Cancelamento */}
       <ConfirmDialog
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
-        title={`Cancelar ${targetCancelIds.length} mensagem(ns) pendente(s)?`}
+        title={`Cancelar ${plural(targetCancelIds.length, "mensagem pendente", "mensagens pendentes")}?`}
         description="As mensagens selecionadas sairão da fila de envio e não serão despachadas."
         confirmLabel="Confirmar Cancelamento"
         actionClassName="bg-red-600 hover:bg-red-700 text-white"
@@ -1269,6 +1312,13 @@ export default function AdminMessages() {
         <p className="text-muted-foreground text-xs leading-relaxed">
           O status das entregas selecionadas mudará para <code className="font-mono">canceled</code>. Elas permanecerão no histórico para conferência do provedor, mas não sairão pelo WhatsApp nem Push.
         </p>
+        {cancelExcludedCount > 0 && (
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Só entram nesta ação as mensagens que ainda estão na fila. As outras{" "}
+            <strong>{cancelExcludedCount}</strong> da seleção já foram enviadas ou encerradas e não
+            serão alteradas.
+          </p>
+        )}
       </ConfirmDialog>
 
       {/* Diálogos Compartilhados */}

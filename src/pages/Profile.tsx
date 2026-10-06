@@ -20,25 +20,22 @@ import {
   Phone,
   MapPin,
   Wifi,
-  Shield,
   LogOut,
   Copy,
   CopyCheck,
   AlertCircle,
   Calendar,
   Bell,
-  BellOff,
   Send,
-  Loader2,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useAuth } from "@/lib/auth-context";
-import { formatCpf, maskCpf } from "@/lib/cpf";
+import { formatCpf } from "@/lib/cpf";
 import { formatPhone } from "@/lib/phone";
 import { getTestCustomerData, isTestCpf } from "@/lib/test-user";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { authFetch } from "@/lib/api-config";
-import { useToast } from "@/hooks/use-toast";
+import { toast as sonnerToast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
@@ -113,7 +110,9 @@ export default function Profile() {
         try {
           const body = await response.clone().json();
           errorDetail = body.error || "";
-        } catch {}
+        } catch {
+          // corpo de erro não é JSON — segue com a mensagem genérica abaixo.
+        }
 
         if (!response.ok) {
           throw new Error(errorDetail || `Erro HTTP ${response.status}: Servidor retornou erro ao buscar cliente.`);
@@ -456,7 +455,7 @@ export default function Profile() {
                 </div>
                 <Badge
                   variant="outline"
-                  className="text-[10px] font-medium border-border w-fit sm:w-auto"
+                  className="text-xs font-medium border-border w-fit sm:w-auto"
                 >
                   {planName}
                 </Badge>
@@ -501,7 +500,7 @@ export default function Profile() {
                       <p className="text-xs font-medium text-foreground truncate">
                         {contact.label}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         {formatPhone(contact.phone)}
                       </p>
                     </div>
@@ -550,26 +549,25 @@ function NotificationCard() {
     toggleSubscription,
     isSupported,
   } = usePushNotifications();
-  const { toast } = useToast();
+  // Toast padrão do Design System: sonner direto (Fase 3) — textos e tipo
+  // visual preservados do wrapper antigo.
+  const toast = sonnerToast;
 
   const handleToggle = async () => {
     const result = await toggleSubscription();
     if (result) {
-      toast({
-        title: isSubscribed
-          ? "Notificações desativadas"
-          : "Notificações ativadas!",
-        description: isSubscribed
-          ? "Você não receberá mais lembretes de faturas."
-          : "Você receberá lembretes de faturas pendentes.",
-        variant: "success",
-      });
+      toast.success(
+        isSubscribed ? "Notificações desativadas" : "Notificações ativadas!",
+        {
+          description: isSubscribed
+            ? "Você não receberá mais lembretes de faturas."
+            : "Você receberá lembretes de faturas pendentes.",
+        },
+      );
     } else if (status === "denied") {
-      toast({
-        title: "Notificações bloqueadas",
+      toast.error("Notificações bloqueadas", {
         description:
           "Permita notificações nas configurações do navegador para receber lembretes.",
-        variant: "destructive",
       });
     }
   };
@@ -582,23 +580,17 @@ function NotificationCard() {
       });
 
       if (res.ok) {
-        toast({
-          title: "Teste enviado!",
+        toast.success("Teste enviado!", {
           description: "Verifique se a notificação chegou.",
-          variant: "success",
         });
       } else {
-        toast({
-          title: "Erro ao enviar teste",
+        toast.error("Erro ao enviar teste", {
           description: "Tente novamente mais tarde.",
-          variant: "destructive",
         });
       }
     } catch {
-      toast({
-        title: "Erro de conexão",
+      toast.error("Erro de conexão", {
         description: "Não foi possível enviar o teste.",
-        variant: "destructive",
       });
     }
   };
@@ -615,7 +607,7 @@ function NotificationCard() {
           <Bell className="h-3.5 w-3.5 text-muted-foreground" />
           Notificações
         </CardTitle>
-        <CardDescription className="text-[10px] text-muted-foreground">
+        <CardDescription className="text-xs text-muted-foreground">
           Receba lembretes de faturas pendentes
         </CardDescription>
       </CardHeader>
@@ -633,13 +625,13 @@ function NotificationCard() {
         </div>
 
         {error && (
-          <p className="text-[10px] text-destructive leading-relaxed">
+          <p className="text-xs text-destructive leading-relaxed">
             {error}
           </p>
         )}
 
         {status === "denied" && (
-          <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-relaxed">
+          <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
             Notificações bloqueadas neste navegador. Para ativar, permita
             notificações nas configurações do site.
           </p>

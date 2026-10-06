@@ -52,7 +52,9 @@ function loadTheme(): Theme {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === "light" || stored === "dark") return stored;
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — o tema segue só em memória.
+  }
   return getSystemTheme();
 }
 
@@ -92,7 +94,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     setThemeState(newTheme);
     try {
       localStorage.setItem(THEME_STORAGE_KEY, newTheme);
-    } catch {}
+    } catch {
+      // localStorage indisponível (modo privado/cota) — o tema segue só em memória.
+    }
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -100,7 +104,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       const next = prev === "dark" ? "light" : "dark";
       try {
         localStorage.setItem(THEME_STORAGE_KEY, next);
-      } catch {}
+      } catch {
+        // localStorage indisponível (modo privado/cota) — o tema segue só em memória.
+      }
       return next;
     });
   }, []);

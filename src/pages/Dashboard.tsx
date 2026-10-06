@@ -5,13 +5,8 @@
  */
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { plural } from "@/lib/plural";
 import {
   Calendar,
   AlertTriangle,
@@ -21,6 +16,7 @@ import {
   CreditCard,
   CheckCircle2,
   Clock,
+  FileText,
   TrendingUp,
   Gift,
 } from "lucide-react";
@@ -162,7 +158,9 @@ export default function Dashboard() {
       sessionStorage.setItem(REFERRAL_DISMISS_KEY, "true");
       setDismissedReferral(true);
       setReferralBanner(null);
-    } catch {}
+    } catch {
+      // sessionStorage indisponível — o banner volta a aparecer nesta sessão.
+    }
   };
 
   const dismissReferralBanner = () => {
@@ -170,7 +168,9 @@ export default function Dashboard() {
     setReferralBanner(null);
     try {
       sessionStorage.setItem(REFERRAL_DISMISS_KEY, "true");
-    } catch {}
+    } catch {
+      // sessionStorage indisponível — o banner volta a aparecer nesta sessão.
+    }
   };
 
   // ── Warning banner state ──
@@ -218,7 +218,9 @@ export default function Dashboard() {
 
   const dismissBanner = () => {
     setDismissedBanner(true);
-    try { sessionStorage.setItem("mikweb_dismissed_banner", "true"); } catch {}
+    try { sessionStorage.setItem("mikweb_dismissed_banner", "true"); } catch {
+   // sessionStorage indisponível — o banner volta a aparecer nesta sessão.
+ }
   };
 
   // Stale data detection — checks all billings, not just unpaid
@@ -274,12 +276,12 @@ export default function Dashboard() {
             <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
               {staleDataWarning.title}
             </p>
-            <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+            <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
               {staleDataWarning.message}
             </p>
             <button
               onClick={refetch}
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
             >
               <RefreshCw className="h-3 w-3" />
               Recarregar dados
@@ -388,43 +390,79 @@ export default function Dashboard() {
               : "border-border"
           }`}>
             <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                  nextDueInfo?.isOverdue
-                    ? "bg-red-100 dark:bg-red-900/30"
-                    : nextDueInfo && nextDueInfo.dias <= 3
-                    ? "bg-amber-100 dark:bg-amber-900/30"
-                    : "bg-secondary"
-                }`}>
-                  <Calendar className={`h-4 w-4 ${
+              {/* FASE 6 / item 5 — o card ocupava uma linha inteira e
+                  mostrava SÓ a data, sem valor e sem caminho para pagar.
+                  Agora: rótulo, valor, vencimento, situação (mesma linguagem
+                  refinada do status-config) e CTA direto para a fatura
+                  (onde fica o Pix). Nada de regra de cobrança mudou — os
+                  dados vêm dos mesmos campos que já eram usados. */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${
                     nextDueInfo?.isOverdue
-                      ? "text-red-600 dark:text-red-400"
+                      ? "bg-red-100 dark:bg-red-900/30"
                       : nextDueInfo && nextDueInfo.dias <= 3
-                      ? "text-amber-600 dark:text-amber-400"
-                      : "text-foreground"
-                  }`} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium tracking-tight">
-                    {nextDueInfo?.billing?.vencimento || "—"}
-                  </p>
-                  <p className={`text-xs ${
-                    nextDueInfo?.isOverdue
-                      ? "text-red-600 dark:text-red-400 font-medium"
-                      : nextDueInfo && nextDueInfo.dias <= 3
-                      ? "text-amber-600 dark:text-amber-400 font-medium"
-                      : "text-muted-foreground"
+                      ? "bg-amber-100 dark:bg-amber-900/30"
+                      : "bg-secondary"
                   }`}>
-                    {nextDueInfo?.label || "Nenhuma fatura pendente"}
-                  </p>
+                    <Calendar className={`h-4 w-4 ${
+                      nextDueInfo?.isOverdue
+                        ? "text-red-600 dark:text-red-400"
+                        : nextDueInfo && nextDueInfo.dias <= 3
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-foreground"
+                    }`} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">
+                      {nextDueInfo?.isOverdue ? "Fatura em atraso" : "Próxima fatura"}
+                    </p>
+                    <p className="text-lg font-medium tabular-nums tracking-tight text-foreground">
+                      {nextDueInfo
+                        ? nextDueInfo.billing.valor.toLocaleString("pt-BR", {
+                            style: "currency",
+                            currency: "BRL",
+                          })
+                        : "—"}
+                    </p>
+                    <p className={`text-xs font-medium ${
+                      nextDueInfo?.isOverdue
+                        ? "text-red-600 dark:text-red-400"
+                        : nextDueInfo && nextDueInfo.dias <= 3
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-muted-foreground"
+                    }`}>
+                      {nextDueInfo?.label || "Nenhuma fatura em aberto"}
+                    </p>
+                    {nextDueInfo ? (
+                      <p className="text-xs text-muted-foreground">
+                        Vencimento {nextDueInfo.billing.vencimento}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
+                {nextDueInfo ? (
+                  <Button
+                    size="sm"
+                    className="h-8 shrink-0"
+                    onClick={() => navigate(`/faturas/${nextDueInfo.billing.id}`)}
+                  >
+                    {nextDueInfo.isOverdue ? "Ver fatura" : "Pagar"}
+                  </Button>
+                ) : null}
               </div>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Payment Summary Cards */}
+      {/* Payment Summary Cards
+          FASE 6 / item 5 — rótulos alinhados ao status-config.ts:
+          o que ainda não venceu é "A vencer" (a mesma palavra que o
+          status-config usa para fatura futura), não "Pendente", que
+          soa como cobrança em atraso. "Em aberto" virou "Total em
+          aberto" porque ali o número é uma soma, não uma contagem. "Em aberto" foi mantido (sem "Total") para o rótulo
+          caber em uma linha como os outros três. */}
       {!isLoading && billings.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-[slideUp_0.3s_ease-out_0.1s_both]">
           <Card className="border-border shadow-none">
@@ -437,7 +475,7 @@ export default function Dashboard() {
                   <p className="text-lg font-semibold text-foreground">
                     {overdueBillings.length}
                   </p>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Vencida{overdueBillings.length !== 1 ? "s" : ""}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">{plural(overdueBillings.length, "Vencida", "Vencidas")}</p>
                 </div>
               </div>
             </CardContent>
@@ -453,7 +491,7 @@ export default function Dashboard() {
                   <p className="text-lg font-semibold text-foreground">
                     {pendingBillings.length}
                   </p>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Pendente{pendingBillings.length !== 1 ? "s" : ""}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">{plural(pendingBillings.length, "A vencer", "A vencer")}</p>
                 </div>
               </div>
             </CardContent>
@@ -469,7 +507,7 @@ export default function Dashboard() {
                   <p className="text-lg font-semibold text-foreground">
                     {billings.filter((b: BillingSummary) => b.status === "pago").length}
                   </p>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Paga{billings.filter((b: BillingSummary) => b.status === "pago").length !== 1 ? "s" : ""}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">{plural(billings.filter((b: BillingSummary) => b.status === "pago").length, "Paga", "Pagas")}</p>
                 </div>
               </div>
             </CardContent>
@@ -485,7 +523,7 @@ export default function Dashboard() {
                   <p className="text-lg font-semibold text-foreground">
                     {activeBillings.reduce((s: number, b: BillingSummary) => s + b.valor, 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })}
                   </p>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Em aberto</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Em aberto</p>
                 </div>
               </div>
             </CardContent>
@@ -493,32 +531,42 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Quick Actions */}
+      {/* Quick Actions
+          FASE 6 / item 5 — as duas ações eram "Ver todas as faturas" e
+          "Meu perfil", que repetem exatamente a bottom nav (Dashboard /
+          Faturas / Indique / Perfil). Substituídas pelo atalho que a
+          navegação não oferece: abrir DIRETO a próxima fatura, onde fica
+          o Pix. "Meu perfil" saiu — era o duplicado mais puro e o menos
+          útil. Nenhuma rota, endpoint ou função nova: só o deep link
+          /faturas/:id que já existe. */}
       {!isLoading && billings.length > 0 && (
         <div className="animate-[slideUp_0.3s_ease-out_0.15s_both]">
           <div className="flex items-center gap-3 mb-3">
             <div className="h-px flex-1 bg-border/30" />
-            <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
+            <span className="text-xs font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
               Ações rápidas
             </span>
             <div className="h-px flex-1 bg-border/30" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            {nextDueInfo ? (
+              <Button
+                className="h-auto py-4 sm:flex-1 flex-col gap-2 text-xs"
+                onClick={() => navigate(`/faturas/${nextDueInfo.billing.id}`)}
+              >
+                <CreditCard className="h-5 w-5" />
+                <span>
+                  {nextDueInfo.isOverdue ? "Regularizar fatura" : "Pagar próxima fatura"}
+                </span>
+              </Button>
+            ) : null}
             <Button
               variant="outline"
-              className="h-auto py-4 flex-col gap-2 text-xs"
+              className="h-auto py-4 sm:flex-1 flex-col gap-2 text-xs"
               onClick={() => navigate("/faturas")}
             >
-              <CreditCard className="h-5 w-5 text-muted-foreground" />
+              <FileText className="h-5 w-5 text-muted-foreground" />
               <span>Ver todas as faturas</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-4 flex-col gap-2 text-xs"
-              onClick={() => navigate("/perfil")}
-            >
-              <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
-              <span>Meu perfil</span>
             </Button>
           </div>
         </div>

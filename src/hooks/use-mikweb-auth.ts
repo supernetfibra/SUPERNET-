@@ -14,7 +14,7 @@ import {
   clearTestSession,
   getStoredTestSession,
 } from "@/lib/test-user";
-import { apiUrl, authFetch, storeSessionToken, clearSessionToken } from "@/lib/api-config";
+import { ADMIN_TOKEN_KEY, apiUrl, authFetch, storeSessionToken, clearSessionToken } from "@/lib/api-config";
 
 // ---------------------------------------------------------------------------
 // Admin credentials — CPF específico + senha dedicada para acesso admin
@@ -33,8 +33,6 @@ function generateSessionToken(): string {
   return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
 function isAdminCpf(cpf: string): boolean {
   return cpf.replace(/\D/g, "") === ADMIN_CPF;
 }
@@ -45,14 +43,18 @@ function storeAdminSession(token?: string, expiresAt?: number) {
   try {
     localStorage.setItem(ADMIN_TOKEN_KEY, sessionToken);
     localStorage.setItem(ADMIN_TOKEN_KEY + "_expires", String(exp));
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir a sessão.
+  }
 }
 
 function clearAdminSession() {
   try {
     localStorage.removeItem(ADMIN_TOKEN_KEY);
     localStorage.removeItem(ADMIN_TOKEN_KEY + "_expires");
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir a sessão.
+  }
 }
 
 // ---------------------------------------------------------------------------

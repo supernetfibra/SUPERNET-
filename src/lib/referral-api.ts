@@ -4,31 +4,14 @@
  * Os types espelham o payload de `/referrals/me` (buildReferralMeView no
  * backend). Chamadas do cliente usam `fetch` simples (o backend lê a sessão
  * do header `x-session-token`, mesma técnica de authFetch) e as admin levam
- * o token via `?token=` (padrão das páginas admin).
+ * o token via header `x-admin-token` (consolidado em api-config).
  */
 
-import { apiUrl, authFetch } from "./api-config";
+import { adminFetch, apiUrl, authFetch } from "./api-config";
 
 // ---------------------------------------------------------------------------
-// Admin fetch (mesma convenção das demais páginas admin — token em localStorage)
+// Admin fetch — consolidado em ./api-config (token em localStorage, header x-admin-token)
 // ---------------------------------------------------------------------------
-
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = getAdminToken();
-  const url = new URL(apiUrl(path), window.location.origin);
-  if (token) url.searchParams.set("token", token);
-  return fetch(url.toString(), { ...init, credentials: "include" });
-}
 
 // ---------------------------------------------------------------------------
 // Types

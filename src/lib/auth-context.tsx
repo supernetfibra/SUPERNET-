@@ -4,10 +4,10 @@
  */
 
 import { createContext, useContext, type ReactNode } from "react";
-import { useMikWebAuth, type AuthState } from "@/hooks/use-mikweb-auth";
+import { useMikWebAuth, type AuthState, type LoginResponse } from "@/hooks/use-mikweb-auth";
 
 interface AuthContextValue extends AuthState {
-  login: (cpf: string, password: string, keepConnected?: boolean) => Promise<any>;
+  login: (cpf: string, password: string, keepConnected?: boolean) => Promise<LoginResponse>;
   logout: () => Promise<void>;
   clearError: () => void;
   checkSession: () => Promise<void>;

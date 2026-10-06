@@ -254,7 +254,9 @@ export function clearCache(customerId?: string) {
     if (key) {
       try {
         localStorage.removeItem(key);
-      } catch {}
+      } catch {
+        // localStorage indisponível (modo privado/cota) — seguir sem limpar o cache.
+      }
     }
   } else {
     // Clear all billing caches (used on logout)
@@ -262,6 +264,8 @@ export function clearCache(customerId?: string) {
       Object.keys(localStorage)
         .filter((k) => k.startsWith(CACHE_PREFIX))
         .forEach((k) => localStorage.removeItem(k));
-    } catch {}
+    } catch {
+      // localStorage indisponível (modo privado/cota) — seguir sem limpar o cache.
+    }
   }
 }

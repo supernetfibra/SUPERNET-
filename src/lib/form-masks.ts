@@ -52,7 +52,7 @@ export function createMaskHandler(
   return (e) => {
     const input = e.target;
     const prevLen = input.value.length;
-    const { value, cursor } = maskFn(input.value);
+    const { value } = maskFn(input.value);
     setter(value);
 
     // Restore cursor position after React re-render

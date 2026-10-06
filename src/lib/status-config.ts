@@ -3,12 +3,12 @@
  * Used by Dashboard, Invoices, and InvoiceDetail pages.
  */
 
-import { AlertCircle, CheckCircle2, Clock } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, type LucideIcon } from "lucide-react";
 import { diasAteVencimento } from "./billing-utils";
 
 export const statusConfig: Record<
   string,
-  { label: string; color: string; icon: any }
+  { label: string; color: string; icon: LucideIcon }
 > = {
   pendente: {
     label: "Pendente",

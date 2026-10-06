@@ -47,6 +47,7 @@ import { submitInstallRequest } from "@/lib/install-request";
 import { apiUrl } from "@/lib/api-config";
 import { maskCpf, maskPhone, maskCep } from "@/lib/form-masks";
 import { lookupCep } from "@/lib/cep-lookup";
+import { scrollBehavior } from "@/lib/utils";
 import { Gift } from "lucide-react";
 
 const BRAZILIAN_STATES = [
@@ -191,7 +192,7 @@ export default function Landing() {
   const scrollToForm = () => {
     document
       .getElementById("solicitar-instalacao")
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
   };
 
   // "Solicitar Instalação" na página do aviso abre o formulário.
@@ -278,7 +279,7 @@ export default function Landing() {
       requestAnimationFrame(() =>
         document
           .getElementById("solicitar-instalacao")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" })
+          ?.scrollIntoView({ behavior: scrollBehavior(), block: "start" })
       );
     } else {
       setFormError(result.error || "Não foi possível enviar a solicitação.");
@@ -560,7 +561,7 @@ export default function Landing() {
                       htmlFor="ir-email"
                       className="text-xs font-medium text-muted-foreground"
                     >
-                      E-mail <span className="text-muted-foreground/50">(opcional)</span>
+                      E-mail <span className="text-muted-foreground">(opcional)</span>
                     </Label>
                     <Input
                       id="ir-email"
@@ -670,7 +671,7 @@ export default function Landing() {
                         htmlFor="ir-complement"
                         className="text-xs font-medium text-muted-foreground"
                       >
-                        Complemento <span className="text-muted-foreground/50">(opcional)</span>
+                        Complemento <span className="text-muted-foreground">(opcional)</span>
                       </Label>
                       <Input
                         id="ir-complement"
@@ -728,7 +729,7 @@ export default function Landing() {
                         htmlFor="ir-plan"
                         className="text-xs font-medium text-muted-foreground"
                       >
-                        Plano desejado <span className="text-muted-foreground/50">(opcional)</span>
+                        Plano desejado <span className="text-muted-foreground">(opcional)</span>
                       </Label>
                       <Input
                         id="ir-plan"
@@ -746,7 +747,7 @@ export default function Landing() {
                       htmlFor="ir-message"
                       className="text-xs font-medium text-muted-foreground"
                     >
-                      Observação <span className="text-muted-foreground/50">(opcional)</span>
+                      Observação <span className="text-muted-foreground">(opcional)</span>
                     </Label>
                     <Textarea
                       id="ir-message"
@@ -761,10 +762,10 @@ export default function Landing() {
                   {/* Photo uploads */}
                   <div className="space-y-2">
                     <Label className="text-xs font-medium text-muted-foreground">
-                      Fotos <span className="text-muted-foreground/50">(opcional, mas ajuda na avaliação)
+                      Fotos <span className="text-muted-foreground">(opcional, mas ajuda na avaliação)
                     </span>
                     </Label>
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       Envie fotos da frente da casa, da rua e da sua identidade (frente e verso).
                     </p>
                     <div className="grid grid-cols-2 gap-3">
@@ -789,14 +790,14 @@ export default function Landing() {
                               >
                                 <X className="h-3 w-3" />
                               </button>
-                              <p className="text-[9px] text-muted-foreground mt-0.5 truncate">
+                              <p className="text-xs text-muted-foreground mt-0.5 truncate">
                                 {label}
                               </p>
                             </div>
                           ) : (
                             <label className="flex flex-col items-center justify-center h-24 rounded-sm border border-dashed border-border/80 hover:border-foreground/30 cursor-pointer transition-colors bg-secondary/20">
-                              <Camera className="h-4 w-4 text-muted-foreground/60 mb-1" />
-                              <span className="text-[10px] text-muted-foreground text-center leading-tight px-1">
+                              <Camera className="h-4 w-4 text-muted-foreground mb-1" />
+                              <span className="text-xs text-muted-foreground text-center leading-tight px-1">
                                 {label}
                               </span>
                               <input

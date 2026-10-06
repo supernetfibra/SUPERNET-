@@ -6,7 +6,7 @@
  * component that renders the animated pull-down indicator.
  */
 
-import React, { useRef, useCallback, useState, useEffect, memo, type ReactNode } from "react";
+import React, { useRef, useCallback, useState, useEffect, memo } from "react";
 import { ArrowDown, RefreshCw } from "lucide-react";
 
 interface UsePullToRefreshReturn {

@@ -22,7 +22,7 @@ O project ref é `ssvwlbwsprjpfmevdnvb` — a URL do projeto é `https://ssvwlbw
 
 ```bash
 npx supabase secrets set \
-  MIKWEB_ADMIN_PASSWORD='slackware@' \
+  MIKWEB_ADMIN_PASSWORD='<senha-admin>' \
   MIKWEB_API_URL='https://sua-mikweb.com.br/api' \
   MIKWEB_API_TOKEN='seu-token' \
   VITE_VAPID_PUBLIC_KEY='BB1rMYkRJJHdVuKWc4Ak-6nb-ugfDuRS9Reqgp9XYW_g2Z1bfcyb_FduPCIdh4GNz7cB6Mop--QrahaQjoZubvk' \
@@ -66,7 +66,7 @@ curl https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/version
 # Login admin (deve retornar sessionToken)
 curl -X POST https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/admin/login \
   -H 'Content-Type: application/json' \
-  -d '{"password":"slackware@"}'
+  -d '{"password":"<senha-admin>"}'
 
 # Login cliente teste
 curl -X POST https://ssvwlbwsprjpfmevdnvb.supabase.co/functions/v1/api/mikweb/login \

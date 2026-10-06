@@ -205,13 +205,13 @@ export default function Login() {
                         </div>
                       </div>
                       {showCpfError && (
-                        <p className="flex items-center gap-1.5 text-[11px] text-destructive/80 animate-[fadeIn_0.2s_ease-out]">
+                        <p className="flex items-center gap-1.5 text-xs text-destructive/80 animate-[fadeIn_0.2s_ease-out]">
                           <AlertCircle className="h-3 w-3" />
                           {cpfComplete ? "CPF inválido" : "CPF deve ter 11 dígitos"}
                         </p>
                       )}
                       {showCpfSuccess && (
-                        <p className="flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 animate-[fadeIn_0.2s_ease-out]">
+                        <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 animate-[fadeIn_0.2s_ease-out]">
                           <CheckCircle2 className="h-3 w-3" />
                           CPF válido
                         </p>

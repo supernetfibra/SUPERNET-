@@ -8,7 +8,7 @@
  * another origin, so sessions travel in headers):
  *   - Customer session: header  `x-session-token: <token>`
  *     (also accepted: `Authorization: Bearer <token>`)
- *   - Admin session:    header  `x-admin-token: <token>` (or `?token=`)
+ *   - Admin session:    header  `x-admin-token: <token>`
  *
  * Env vars (set via `supabase secrets set`):
  *   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY  → auto-injected by Supabase
@@ -93,8 +93,17 @@ function env(name: string, fallback = ""): string {
   return Deno.env.get(name) ?? fallback;
 }
 
+/**
+ * Admin password — MANDATORY env var, no fallback.
+ * If MIKWEB_ADMIN_PASSWORD is not configured, admin login fails closed
+ * with a generic 500 (no config details are exposed to the client).
+ */
 function getAdminPassword(): string {
-  return env("MIKWEB_ADMIN_PASSWORD", "slackware@");
+  const password = Deno.env.get("MIKWEB_ADMIN_PASSWORD");
+  if (!password) {
+    throw new Error("MIKWEB_ADMIN_PASSWORD não configurada");
+  }
+  return password;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,17 +231,16 @@ function getSessionToken(request: Request): string | null {
   );
 }
 
+/**
+ * Admin session tokens travel ONLY in the `x-admin-token` header (or the
+ * legacy cookie for same-origin deployments). Query string transport was
+ * removed: tokens in URLs leak via logs, history and Referer headers.
+ */
 function getAdminSessionToken(request: Request): string | null {
   return (
     request.headers.get("x-admin-token") ||
     extractCookie(request, "mikweb_admin_session")
-  ) || (() => {
-    try {
-      return new URL(request.url).searchParams.get("token");
-    } catch {
-      return null;
-    }
-  })();
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1340,6 +1348,10 @@ app.post("/mikweb/action", async (c) => {
 app.post("/admin/login", async (c) => {
   try {
     const body = await c.req.json();
+    const clientIp = getClientIp(c.req.raw);
+    if (!checkRateLimit(`admin-login:${clientIp}`)) {
+      return jsonError("Muitas tentativas. Tente novamente em alguns minutos.", 429);
+    }
     if (body.password !== getAdminPassword()) {
       return jsonError("Senha incorreta.", 401);
     }
@@ -4277,3 +4289,7 @@ app.post("/push/test", async (c) => {
 app.notFound((c) => jsonError("Rota não encontrada.", 404));
 
 Deno.serve(app.fetch);
+
+// Exporta o app Hono para harnesses locais (deno test / supabase functions serve
+// local via Deno.serve). Em produção o Deno.serve acima é o entrypoint.
+export default app;

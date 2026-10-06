@@ -286,13 +286,17 @@ export function storeTestSession() {
   };
   try {
     localStorage.setItem(TEST_SESSION_KEY, JSON.stringify(session));
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir a sessão de teste.
+  }
 }
 
 export function clearTestSession() {
   try {
     localStorage.removeItem(TEST_SESSION_KEY);
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir a sessão de teste.
+  }
 }
 
 export function getStoredTestSession(): TestSession | null {
@@ -342,7 +346,7 @@ export function generateSamplePdf(opts: {
     "0 -20 Td",
     `(Vencimento: ${opts.dueDay}) Tj`,
     "0 -20 Td",
-    `(Valor: R\$ ${opts.value.toFixed(2)}) Tj`,
+    `(Valor: R$ ${opts.value.toFixed(2)}) Tj`,
     "0 -20 Td",
     `(Status: ${opts.status}) Tj`,
     "0 -40 Td",
@@ -356,7 +360,6 @@ export function generateSamplePdf(opts: {
   // Object 5 (stream) — compute byte positions dynamically
   const obj5Header = "5 0 obj";
   const lengthValue = streamContent.length;
-  const beforeStream = `<</Length ${lengthValue}>>stream\n`;
   // We need the byte offset of each object for the xref table
   // Build the full document string first, then parse offsets
   const bodyParts = [

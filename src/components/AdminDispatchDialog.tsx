@@ -26,11 +26,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertCircle,
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   Clock,
-  ExternalLink,
-  Layers,
   Loader2,
   Lock,
   MessageSquare,
@@ -41,28 +38,14 @@ import {
   Sliders,
   Zap,
 } from "lucide-react";
-import { apiUrl } from "@/lib/api-config";
+import { adminFetchHeader as adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ---------------------------------------------------------------------------
-// Helpers de Autenticação
+// Autenticação admin — consolidada em src/lib/api-config.ts. Este dialog sempre
+// enviou o token TAMBÉM no header x-admin-token (variante adminFetchHeader).
 // ---------------------------------------------------------------------------
-
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
 
 // ---------------------------------------------------------------------------
 // Tipos de Resposta (espelho de index.ts e dispatch.ts)
@@ -149,19 +132,6 @@ export interface AdminDispatchDialogProps {
   onDispatchCompleted?: (summary: DispatchSummary) => void;
 }
 
-async function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  const token = getAdminToken();
-  const headers = new Headers(init?.headers);
-  if (token) {
-    headers.set("x-admin-token", token);
-  }
-  return fetch(withAdminToken(apiUrl(url)), {
-    ...init,
-    headers,
-    credentials: "include",
-  });
-}
-
 export function AdminDispatchDialog({
   open,
   onOpenChange,
@@ -175,6 +145,8 @@ export function AdminDispatchDialog({
   // Estados de dados
   const [loading, setLoading] = useState(false);
   const [dispatching, setDispatching] = useState(false);
+  // Confirmação antes do disparo (risco moderado: envia WhatsApp real ao cliente)
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [deliveriesData, setDeliveriesData] = useState<DeliveriesApiResponse | null>(null);
@@ -266,7 +238,7 @@ export function AdminDispatchDialog({
 
       if (summary.sent > 0) {
         toast.success(
-          `Disparo concluído: ${summary.sent} mensagem(ns) enviada(s) com sucesso!`
+          `Disparo concluído: ${plural(summary.sent, "mensagem enviada", "mensagens enviadas")} com sucesso!`
         );
       } else if (summary.paused) {
         toast.warning(
@@ -274,7 +246,7 @@ export function AdminDispatchDialog({
         );
       } else if (summary.released > 0) {
         toast.info(
-          `${summary.released} item(ns) reagendado(s) (cota diária de novas conversas ou cliente).`
+          `${plural(summary.released, "item reagendado", "itens reagendados")} (cota diária de novas conversas ou cliente).`
         );
       } else if (summary.claimed === 0) {
         toast.info("Nenhuma notificação pendente para envio no canal.");
@@ -292,6 +264,7 @@ export function AdminDispatchDialog({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden gap-0">
         {/* Cabeçalho */}
@@ -330,7 +303,7 @@ export function AdminDispatchDialog({
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
               <div className="space-y-0.5">
                 <p className="font-semibold">Erro</p>
-                <p className="text-[11px] leading-relaxed">{error}</p>
+                <p className="text-xs leading-relaxed">{error}</p>
               </div>
             </div>
           )}
@@ -340,13 +313,13 @@ export function AdminDispatchDialog({
             <Card className="border-border shadow-none bg-card">
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-[11px] font-medium">Na Fila (Queued)</span>
+                  <span className="text-xs font-medium">Na Fila (Queued)</span>
                   <Clock className="h-3.5 w-3.5 text-amber-500" />
                 </div>
                 <p className="text-2xl font-semibold tracking-tight text-amber-600 dark:text-amber-400">
                   {queueStats.queued}
                 </p>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {queueStats.queuedWhatsApp} no WhatsApp
                 </p>
               </CardContent>
@@ -355,39 +328,39 @@ export function AdminDispatchDialog({
             <Card className="border-border shadow-none bg-card">
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-[11px] font-medium">Enviados (7d)</span>
+                  <span className="text-xs font-medium">Enviados (7d)</span>
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
                 </div>
                 <p className="text-2xl font-semibold tracking-tight text-emerald-600 dark:text-emerald-400">
                   {queueStats.sent}
                 </p>
-                <p className="text-[10px] text-muted-foreground">Sucesso de entrega</p>
+                <p className="text-xs text-muted-foreground">Sucesso de entrega</p>
               </CardContent>
             </Card>
 
             <Card className="border-border shadow-none bg-card">
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-[11px] font-medium">Falhas (7d)</span>
+                  <span className="text-xs font-medium">Falhas (7d)</span>
                   <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
                 </div>
                 <p className="text-2xl font-semibold tracking-tight text-red-600 dark:text-red-400">
                   {queueStats.failed}
                 </p>
-                <p className="text-[10px] text-muted-foreground">Tentativas esgotadas</p>
+                <p className="text-xs text-muted-foreground">Tentativas esgotadas</p>
               </CardContent>
             </Card>
 
             <Card className="border-border shadow-none bg-card">
               <CardContent className="p-3 space-y-1">
                 <div className="flex items-center justify-between text-muted-foreground">
-                  <span className="text-[11px] font-medium">Cota Novas/Dia</span>
+                  <span className="text-xs font-medium">Cota Novas/Dia</span>
                   <ShieldAlert className="h-3.5 w-3.5 text-blue-500" />
                 </div>
                 <p className="text-2xl font-semibold tracking-tight text-foreground">
                   {waConfig?.dailyNewChatCap ?? "—"}
                 </p>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {waConfig?.limits?.newChatUsed !== undefined && waConfig?.limits?.newChatUsed !== null
                     ? `${waConfig.limits.newChatUsed} usadas hoje`
                     : "Teto diário anti-bloqueio"}
@@ -404,27 +377,27 @@ export function AdminDispatchDialog({
                 <span className="font-medium text-foreground">Status do Provedor WhatsApp:</span>
                 {waConfig ? (
                   waConfig.instance?.connected ? (
-                    <Badge variant="outline" className="text-emerald-700 bg-emerald-500/10 border-emerald-500/30 text-[10px]">
+                    <Badge variant="outline" className="text-emerald-700 bg-emerald-500/10 border-emerald-500/30 text-xs">
                       Conectado ({waConfig.instance.state})
                     </Badge>
                   ) : waConfig.enabled ? (
-                    <Badge variant="outline" className="text-amber-700 bg-amber-500/10 border-amber-500/30 text-[10px]">
+                    <Badge variant="outline" className="text-amber-700 bg-amber-500/10 border-amber-500/30 text-xs">
                       Desconectado / Aguardando QR
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                    <Badge variant="outline" className="text-muted-foreground text-xs">
                       Canal desativado
                     </Badge>
                   )
                 ) : (
-                  <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                  <Badge variant="outline" className="text-muted-foreground text-xs">
                     Carregando...
                   </Badge>
                 )}
               </div>
 
               {waConfig?.pausedUntil ? (
-                <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10 text-[10px] gap-1">
+                <Badge variant="outline" className="text-amber-600 border-amber-500/30 bg-amber-500/10 text-xs gap-1">
                   <Lock className="h-3 w-3" />
                   Time-lock até {new Date(Number(waConfig.pausedUntil)).toLocaleTimeString("pt-BR")}
                 </Badge>
@@ -432,7 +405,7 @@ export function AdminDispatchDialog({
             </div>
 
             {/* Aviso de Janela Horária */}
-            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/60 text-muted-foreground">
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-border/60 text-muted-foreground">
               <span>
                 Janela de envio: <strong>{windowCheck.start ?? 9}h às {windowCheck.end ?? 20}h</strong> (agora: {windowCheck.currentHour}h)
               </span>
@@ -454,7 +427,7 @@ export function AdminDispatchDialog({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Tamanho do Lote */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-muted-foreground font-medium">Tamanho do Lote (limit)</label>
+                <label className="text-xs text-muted-foreground font-medium">Tamanho do Lote (limit)</label>
                 <div className="flex gap-1.5">
                   {[10, 25, 50].map((size) => (
                     <Button
@@ -475,7 +448,7 @@ export function AdminDispatchDialog({
 
               {/* Canal */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-muted-foreground font-medium">Canal de Envio</label>
+                <label className="text-xs text-muted-foreground font-medium">Canal de Envio</label>
                 <div className="flex gap-1.5">
                   <Button
                     type="button"
@@ -504,7 +477,7 @@ export function AdminDispatchDialog({
 
               {/* Política (Manual vs Automatizada) */}
               <div className="space-y-1.5">
-                <label className="text-[11px] text-muted-foreground font-medium">Modo de Envio (policy)</label>
+                <label className="text-xs text-muted-foreground font-medium">Modo de Envio (policy)</label>
                 <div className="flex gap-1.5">
                   <Button
                     type="button"
@@ -534,7 +507,7 @@ export function AdminDispatchDialog({
               </div>
             </div>
 
-            <p className="text-[10px] text-muted-foreground leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {policy === "manual" ? (
                 <span>
                   <strong>Modo Manual:</strong> Força o envio agora, ignorando a restrição de horário comercial e limite por cliente. A cota diária de <em>novas conversas</em> continua rigorosamente ativa para proteger seu número.
@@ -556,7 +529,7 @@ export function AdminDispatchDialog({
                   Resultado da Drenagem
                 </h4>
                 {lastSummary.paused && (
-                  <Badge variant="outline" className="text-amber-700 bg-amber-500/10 border-amber-500/30 text-[10px] gap-1">
+                  <Badge variant="outline" className="text-amber-700 bg-amber-500/10 border-amber-500/30 text-xs gap-1">
                     <PauseCircle className="h-3 w-3" />
                     Canal pausou: {lastSummary.pauseReason}
                   </Badge>
@@ -565,29 +538,29 @@ export function AdminDispatchDialog({
 
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
                 <div className="p-2 rounded bg-card border border-border">
-                  <span className="text-[10px] text-muted-foreground block">Reservados</span>
+                  <span className="text-xs text-muted-foreground block">Reservados</span>
                   <strong className="text-base font-semibold">{lastSummary.claimed}</strong>
                 </div>
                 <div className="p-2 rounded bg-card border border-border">
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block">Enviados</span>
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400 block">Enviados</span>
                   <strong className="text-base font-semibold text-emerald-600 dark:text-emerald-400">
                     {lastSummary.sent}
                   </strong>
                 </div>
                 <div className="p-2 rounded bg-card border border-border">
-                  <span className="text-[10px] text-amber-600 dark:text-amber-400 block">Reagendados</span>
+                  <span className="text-xs text-amber-600 dark:text-amber-400 block">Reagendados</span>
                   <strong className="text-base font-semibold text-amber-600 dark:text-amber-400">
                     {lastSummary.released}
                   </strong>
                 </div>
                 <div className="p-2 rounded bg-card border border-border">
-                  <span className="text-[10px] text-red-600 dark:text-red-400 block">Falhas</span>
+                  <span className="text-xs text-red-600 dark:text-red-400 block">Falhas</span>
                   <strong className="text-base font-semibold text-red-600 dark:text-red-400">
                     {lastSummary.failed}
                   </strong>
                 </div>
                 <div className="p-2 rounded bg-card border border-border">
-                  <span className="text-[10px] text-muted-foreground block">Descartados</span>
+                  <span className="text-xs text-muted-foreground block">Descartados</span>
                   <strong className="text-base font-semibold text-muted-foreground">
                     {lastSummary.skipped}
                   </strong>
@@ -596,14 +569,14 @@ export function AdminDispatchDialog({
 
               {/* Informação sobre novas conversas consumidas */}
               {lastSummary.newChats && (
-                <div className="text-[11px] p-2.5 rounded bg-card border border-border text-muted-foreground space-y-1">
+                <div className="text-xs p-2.5 rounded bg-card border border-border text-muted-foreground space-y-1">
                   <div className="flex items-center justify-between text-foreground font-medium">
                     <span>Consumo de Cotas de Novas Conversas (Hoje):</span>
                     <span>
                       {lastSummary.newChats.usedToday} / {lastSummary.newChats.cap} usadas
                     </span>
                   </div>
-                  <p className="text-[10px]">
+                  <p className="text-xs">
                     Conversas iniciadas neste lote: <strong>{lastSummary.newChats.started}</strong> ·
                     Retidas por teto de cota (reagendadas): <strong>{lastSummary.newChats.heldByCap}</strong>
                   </p>
@@ -613,10 +586,10 @@ export function AdminDispatchDialog({
               {/* Lista dos itens disparados */}
               {lastSummary.results.length > 0 && (
                 <div className="space-y-1.5 pt-1">
-                  <span className="text-[11px] font-medium text-foreground">
+                  <span className="text-xs font-medium text-foreground">
                     Itens processados neste disparo:
                   </span>
-                  <div className="max-h-36 overflow-y-auto space-y-1 font-mono text-[10px] border border-border rounded p-1.5 bg-background">
+                  <div className="max-h-36 overflow-y-auto space-y-1 font-mono text-xs border border-border rounded p-1.5 bg-background">
                     {lastSummary.results.map((res, i) => (
                       <div
                         key={res.deliveryId || i}
@@ -651,10 +624,10 @@ export function AdminDispatchDialog({
           {deliveriesData && deliveriesData.deliveries.length > 0 && (
             <div className="space-y-1.5 pt-2">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-foreground">
+                <span className="text-xs font-medium text-foreground">
                   Avisos mais recentes no Outbox:
                 </span>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   Mostrando {Math.min(deliveriesData.deliveries.length, 50)} registros
                 </span>
               </div>
@@ -662,7 +635,7 @@ export function AdminDispatchDialog({
                 {deliveriesData.deliveries.slice(0, 10).map((row) => (
                   <div
                     key={row.id}
-                    className="p-2 flex items-center justify-between gap-2 text-[11px] hover:bg-muted/30"
+                    className="p-2 flex items-center justify-between gap-2 text-xs hover:bg-muted/30"
                   >
                     <div className="flex items-center gap-2 truncate">
                       <Badge
@@ -677,12 +650,14 @@ export function AdminDispatchDialog({
                       >
                         {row.status}
                       </Badge>
-                      <span className="font-mono text-[10px] text-foreground">{row.target}</span>
-                      <span className="text-[10px] text-muted-foreground">({row.channel})</span>
+                      <span className="font-mono text-xs text-foreground">{row.target}</span>
+                      <span className="text-xs text-muted-foreground">({row.channel})</span>
                     </div>
 
-                    <div className="text-[10px] text-muted-foreground shrink-0 text-right">
-                      {row.attempts > 0 ? `${row.attempts} tentativa(s)` : "Aguardando envio"}
+                    <div className="text-xs text-muted-foreground shrink-0 text-right">
+                      {row.attempts > 0
+                        ? plural(row.attempts, "tentativa", "tentativas")
+                        : "Aguardando envio"}
                     </div>
                   </div>
                 ))}
@@ -693,10 +668,14 @@ export function AdminDispatchDialog({
 
         {/* Rodapé */}
         <DialogFooter className="p-4 border-t border-border shrink-0 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="text-[11px] text-muted-foreground">
+          <div className="text-xs text-muted-foreground">
             {queueStats.queued > 0 ? (
               <span>
-                <strong>{queueStats.queued}</strong> item(ns) aguardando disparo na fila.
+                <strong>{queueStats.queued}</strong>{" "}
+                {queueStats.queued === 1
+                  ? "item aguardando disparo"
+                  : "itens aguardando disparo"}{" "}
+                na fila.
               </span>
             ) : (
               <span>Fila outbox vazia no momento.</span>
@@ -717,7 +696,7 @@ export function AdminDispatchDialog({
               size="sm"
               className="text-xs h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium cursor-pointer"
               disabled={Boolean(dispatching || loading || (waConfig && !waConfig.enabled && channel === "whatsapp"))}
-              onClick={handleDispatch}
+              onClick={() => setConfirmOpen(true)}
             >
               {dispatching ? (
                 <>
@@ -735,5 +714,64 @@ export function AdminDispatchDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Confirmação de disparo — o envio é real e chega ao cliente. */}
+    <ConfirmDialog
+      open={confirmOpen}
+      onOpenChange={setConfirmOpen}
+      title={`Disparar ${plural(Math.min(limit, queueStats.queued), "mensagem", "mensagens")} agora?`}
+      description="O envio sai imediatamente pelos canais configurados, sem esperar o cron."
+      confirmLabel="Disparar agora"
+      actionClassName="bg-emerald-600 hover:bg-emerald-700 text-white"
+      disabled={dispatching || queueStats.queued === 0}
+      onConfirm={async () => {
+        // O diálogo fica aberto durante o envio (spinner + bloqueio do
+        // ConfirmDialog). Só fecha no fim: se falhar, o usuário cai no diálogo
+        // pai, que mostra o erro — fechar antes esconderia os dois.
+        try {
+          await handleDispatch();
+        } finally {
+          setConfirmOpen(false);
+        }
+      }}
+    >
+      <dl className="rounded-sm border border-border bg-secondary/40 divide-y divide-border/60 text-xs">
+        <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+          <dt className="text-muted-foreground">Aguardando na fila</dt>
+          <dd className="font-medium">
+            {plural(queueStats.queued, "item", "itens")} · {queueStats.queuedWhatsApp} no WhatsApp
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+          <dt className="text-muted-foreground">Lote</dt>
+          <dd>até {limit} por execução</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+          <dt className="text-muted-foreground">Política</dt>
+          <dd>
+            {policy === "manual"
+              ? "Manual — ignora horário comercial"
+              : "Automático — respeita janela e cotas"}
+          </dd>
+        </div>
+        <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+          <dt className="text-muted-foreground">Janela de envio</dt>
+          <dd className={windowCheck.inWindow ? "" : "text-amber-600 dark:text-amber-400"}>
+            {windowCheck.inWindow
+              ? "dentro da janela"
+              : `fora da janela (${windowCheck.start}h–${windowCheck.end}h)`}
+          </dd>
+        </div>
+      </dl>
+      {queueStats.queued === 0 ? (
+        <p className="text-destructive">A fila está vazia — não há nada para disparar.</p>
+      ) : (
+        <p className="text-muted-foreground">
+          As mensagens são enviadas como estão na fila. Falhas voltam para &quot;falhou&quot; e podem ser
+          reprocessadas na tela de Mensagens.
+        </p>
+      )}
+    </ConfirmDialog>
+    </>
   );
 }

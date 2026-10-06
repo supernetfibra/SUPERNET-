@@ -12,6 +12,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import {
   LayoutDashboard,
   Home,
   LogOut,
@@ -22,14 +29,12 @@ import {
   CircleUser,
   Activity,
   Settings,
-  Bell,
-  Search,
   FlaskConical,
-  Send,
   MessageSquareText,
   CalendarClock,
   PlugZap,
   Gift,
+  MoreHorizontal,
 } from "lucide-react";
 import { Outlet, useNavigate, useLocation } from "react-router";
 import { useAuth } from "@/lib/auth-context";
@@ -48,8 +53,21 @@ const adminNavigation = [
   { name: "Conexões", short: "Conexões", href: "/admin/connections", icon: PlugZap },
   { name: "Régua de lembretes", short: "Régua", href: "/admin/rules", icon: CalendarClock },
   { name: "Mensagens", short: "Mensagens", href: "/admin/messages", icon: MessageSquareText },
+  { name: "Auditoria", short: "Auditoria", href: "/admin/audit", icon: Activity },
   { name: "Simulador", short: "Prévia", href: "/admin/simulator", icon: FlaskConical },
   { name: "Configurações", short: "Ajustes", href: "/admin/settings", icon: Settings },
+];
+
+/**
+ * Barra inferior do celular: 4 destinos + "Mais".
+ * Os 4 primeiros são o fluxo diário do operador; o resto fica no sheet "Mais",
+ * para a barra caber em 390px sem cortar destinos (9 itens estouravam ~576px).
+ */
+const MOBILE_PRIMARY_HREFS = [
+  "/admin/dashboard",
+  "/admin/install-requests",
+  "/admin/messages",
+  "/admin/audit",
 ];
 
 export default function AdminLayout() {
@@ -65,6 +83,12 @@ export default function AdminLayout() {
   };
 
   const isActive = (href: string) => location.pathname === href;
+
+  /** Destino ativo está na barra inferior ou no sheet "Mais"? */
+  const moreActive = adminNavigation.some(
+    (item) =>
+      !MOBILE_PRIMARY_HREFS.includes(item.href) && location.pathname.startsWith(item.href)
+  );
 
   return (
     <div className="h-screen flex flex-col md:flex-row bg-background overflow-hidden">
@@ -97,6 +121,7 @@ export default function AdminLayout() {
               <button
                 key={item.name}
                 onClick={() => navigate(item.href)}
+                  aria-current={active ? "page" : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm transition-all ${
                   active
                     ? "bg-secondary text-foreground font-medium"
@@ -146,7 +171,7 @@ export default function AdminLayout() {
                   <p className="text-xs font-medium text-foreground truncate">
                     {customer?.name || "Administrador"}
                   </p>
-                  <p className="text-[10px] text-muted-foreground truncate">
+                  <p className="text-xs text-muted-foreground truncate">
                     Conta administrativa
                   </p>
                 </div>
@@ -229,31 +254,82 @@ export default function AdminLayout() {
       {/* ── Mobile bottom navbar ── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur-md" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
         <div className="flex items-center justify-around h-16 max-w-lg mx-auto">
-          {adminNavigation.map((item) => {
-            const active = isActive(item.href);
-            return (
+          {adminNavigation
+            .filter((item) => MOBILE_PRIMARY_HREFS.includes(item.href))
+            .map((item) => {
+              const active = isActive(item.href);
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => navigate(item.href)}
+                  aria-current={active ? "page" : undefined}
+                  className={`relative flex flex-1 flex-col items-center justify-center gap-0.5 py-1 px-2 h-full min-w-0 transition-all ${
+                    active
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {/* Active indicator */}
+                  {active && (
+                    <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-foreground rounded-full" />
+                  )}
+                  <div className="relative">
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <span className="text-xs font-medium leading-none truncate max-w-full">
+                    {item.short}
+                  </span>
+                </button>
+              );
+            })}
+
+          {/* Sheet "Mais" — destinos fora dos 4 principais */}
+          <Sheet>
+            <SheetTrigger asChild>
               <button
-                key={item.name}
-                onClick={() => navigate(item.href)}
-                className={`relative flex flex-col items-center justify-center gap-0.5 py-1 px-4 h-full min-w-[64px] transition-all ${
-                  active
+                className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 py-1 px-2 h-full min-w-0 transition-all ${
+                  moreActive
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
+                aria-label="Mais destinos"
               >
-                {/* Active indicator */}
-                {active && (
+                {moreActive && (
                   <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-foreground rounded-full" />
                 )}
-                <div className="relative">
-                  <item.icon className="h-5 w-5" />
-                </div>
-                <span className="text-[10px] font-medium leading-none">
-                  {item.short}
-                </span>
+                <MoreHorizontal className="h-5 w-5" />
+                <span className="text-xs font-medium leading-none">Mais</span>
               </button>
-            );
-          })}
+            </SheetTrigger>
+            <SheetContent side="bottom" className="rounded-t-lg max-h-[80vh]">
+              <SheetHeader className="pb-3">
+                <SheetTitle className="text-sm font-medium">Outros destinos</SheetTitle>
+              </SheetHeader>
+              <nav className="flex flex-col gap-1 pb-4">
+                {adminNavigation
+                  .filter((item) => !MOBILE_PRIMARY_HREFS.includes(item.href))
+                  .map((item) => {
+                    const active = isActive(item.href);
+                    return (
+                      <button
+                        key={item.name}
+                        onClick={() => navigate(item.href)}
+                  aria-current={active ? "page" : undefined}
+                        className={`flex items-center gap-3 px-3 py-3 rounded-sm text-sm text-left transition-colors ${
+                          active
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                        }`}
+                      >
+                        <item.icon className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{item.name}</span>
+                        {active ? <ChevronRight className="h-4 w-4 ml-auto shrink-0" /> : null}
+                      </button>
+                    );
+                  })}
+              </nav>
+            </SheetContent>
+          </Sheet>
         </div>
       </nav>
     </div>

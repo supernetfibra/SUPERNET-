@@ -1,400 +1,109 @@
 /**
- * Admin Dashboard — API configuration, connection test,
- * and audit log viewer (login attempts, errors, etc.).
+ * AdminDashboard — dashboard OPERACIONAL (Fase 4, ETAPAS 4.2 e 4.3).
  *
- * Passes the admin session token via query params as a fallback for
- * when Secure cookies are rejected by the browser (HTTP dev env).
+ * Antes da Fase 4 concentrava gestão completa de instalações, auditoria,
+ * consulta de cliente + lembrete, sessões, indicações e atalhos. Agora:
+ *
+ *   KPIs de acessos (resumo, fonte: /api/admin/audit-logs)      → permanece (A)
+ *   Resumo de indicações (métricas do mês)                       → permanece (A)
+ *   Instalações (era gestão completa com aprovar/recusar)        → resumo + atalho (4.3)
+ *   Auditoria (log completo)                                     → página própria /admin/audit (4.4)
+ *   Consultar cliente + faturas + lembrete                       → Cliente 360 /admin/customers/:cpf (4.5)
+ *   Sessões ativas (lista completa + revogação)                  → sessões do cliente no Cliente 360 (4.5)
+ *   Sincronizar cobranças / disparar outbox / mensagens          → atalhos (B)
+ *
+ * Nenhuma funcionalidade ficou inacessível: tudo o que saiu do dashboard tem
+ * página dedicada com os MESMOS endpoints e regras. Regras de negócio
+ * (aprovação de instalação, envio de lembrete, revogação de sessão) seguem
+ * intocadas — mudou apenas onde a UI vive.
  */
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Settings,
-  Activity,
-  Users,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  LogOut,
-  Wifi,
-  RefreshCw,
-  Loader2,
-  Eye,
-  EyeOff,
-  ExternalLink,
-  ShieldAlert,
-  UserX,
-  Image,
-  Type,
-  Upload,
-  Search,
-  Send,
-  Bell,
-  Home,
-  ChevronRight,
-  MessageCircle,
-} from "lucide-react";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AdminSyncDialog } from "@/components/AdminSyncDialog";
-import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
-import { mapStatus } from "@/lib/billing-utils";
-import { Gift } from "lucide-react";
-import { useState, useEffect, useCallback, useRef } from "react";
-import type { ReferralMonthMetrics } from "../../supabase/functions/api/notify/referral-metrics.ts";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { apiUrl } from "@/lib/api-config";
+import {
+  Activity,
+  ArrowRight,
+  BadgeCheck,
+  Clock,
+  Coins,
+  Gift,
+  Home,
+  RefreshCw,
+  Search,
+  Send,
+  ShieldAlert,
+  UserX,
+  Users,
+} from "lucide-react";
 
-// ---------------------------------------------------------------------------
-// Token helper — reads from localStorage and appends as query param
-// ---------------------------------------------------------------------------
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-const BRANDING_STORAGE_KEY = "mikweb_branding";
-const CONFIG_STORAGE_KEY = "mikweb_api_config";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function getStoredBranding(): { providerName: string; logoUrl: string } | null {
-  try {
-    const raw = localStorage.getItem(BRANDING_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeBranding(name: string, logo: string) {
-  try {
-    localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify({ providerName: name, logoUrl: logo }));
-  } catch {
-    // localStorage may be full or unavailable
-  }
-}
-
-function getStoredConfig(): { apiUrl: string; apiToken: string } | null {
-  try {
-    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function storeConfig(apiUrl: string, apiToken: string) {
-  try {
-    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ apiUrl, apiToken }));
-  } catch {
-    // localStorage may be full or unavailable
-  }
-}
-
-/** Append ?token=... to a URL for admin API calls */
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface AuditEntry {
-  _id: string;
-  type: string;
-  cpf?: string;
-  customerName?: string;
-  errorMessage?: string;
-  ipAddress?: string;
-  timestamp: number;
-  metadata?: {
-    billingId?: string;
-    reference?: string;
-    value?: number;
-    // Eventos de operação (aba "Operação")
-    test?: boolean;
-    action?: string;
-    scanned?: number;
-    newContacts?: number;
-    updates?: number;
-    enabled?: boolean | null;
-    origin?: string;
-  };
-}
-
-interface AuditSummary {
-  totalLogins: number;
-  totalFailures: number;
-  totalRateLimited: number;
-  totalBillingErrors: number;
-  todayLogins: number;
-  todayFailures: number;
-  last7DaysLogins: number;
-  last7DaysFailures: number;
-  uniqueCpfs: number;
-}
-
-// ---------------------------------------------------------------------------
-// Formatting helpers
-// ---------------------------------------------------------------------------
-
-/** Format a date string (YYYY-MM-DD) as dd/mm/aaaa */
-function formatDate(dateStr: string): string {
-  const [y, m, d] = dateStr.split("-");
-  if (!y || !m || !d) return dateStr;
-  return `${d}/${m}/${y}`;
-}
-
-/** Format a numeric value as BRL */
-function formatValue(value: number | string): string {
-  const n = typeof value === "string" ? parseFloat(value) : value;
-  if (Number.isNaN(n)) return "—";
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-/** Badge classes for a MikWeb billing situation_name */
-function statusBadgeClass(situation: string | null | undefined): string {
-  const s = (situation || "").toLowerCase();
-  if (s.includes("pago")) {
-    return "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-emerald-200 dark:border-emerald-900 shrink-0";
-  }
-  if (s.includes("vencid") || s.includes("atras")) {
-    return "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-red-200 dark:border-red-900 shrink-0";
-  }
-  return "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 text-[10px] font-medium px-1.5 py-0.5 rounded-sm border border-amber-200 dark:border-amber-900 shrink-0";
-}
-
-/** Human-readable relative time */
-function formatRelativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return "agora mesmo";
-  if (min < 60) return `há ${min}min`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `há ${h}h`;
-  const d = Math.floor(h / 24);
-  return `há ${d}d`;
-}
-
-/** Format an 11-digit CPF as 000.000.000-00 */
-function formatCpf(cpf: string): string {
-  const d = cpf.replace(/\D/g, "");
-  if (d.length !== 11) return cpf;
-  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
-}
-
-const installStatusInfo: Record<string, { label: string; color: string }> = {
-  pending: { label: "Pendente", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400" },
-  approved: { label: "Aprovada", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
-  rejected: { label: "Recusada", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
-};
-
-const typeLabels: Record<string, { label: string; color: string }> = {
-  login_success: { label: "Login OK", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
-  login_failure: { label: "Falha Login", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
-  login_rate_limited: { label: "Rate Limit", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400" },
-  billing_error: { label: "Erro Fatura", color: "text-orange-600 bg-orange-50 dark:bg-orange-950/20 dark:text-orange-400" },
-  billing_access: { label: "Acesso Fatura", color: "text-blue-600 bg-blue-50 dark:bg-blue-950/20 dark:text-blue-400" },
-  logout: { label: "Logout", color: "text-gray-500 bg-gray-50 dark:bg-gray-900/20 dark:text-gray-400" },
-  barcode_copied: { label: "Copiou Código", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 dark:text-sky-400" },
-  pix_copied: { label: "Copiou PIX", color: "text-teal-600 bg-teal-50 dark:bg-teal-950/20 dark:text-teal-400" },
-  pdf_viewed: { label: "Acessou PDF", color: "text-violet-600 bg-violet-50 dark:bg-violet-950/20 dark:text-violet-400" },
-  // ── Operação do sistema (aba "Operação"): crons, config salva, testes de envio ──
-  whatsapp_config: { label: "Config WhatsApp", color: "text-slate-600 bg-slate-50 dark:bg-slate-950/20 dark:text-slate-400" },
-  notification_config: { label: "Config Régua", color: "text-slate-600 bg-slate-50 dark:bg-slate-950/20 dark:text-slate-400" },
-  whatsapp_sent: { label: "Envio/Teste OK", color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400" },
-  whatsapp_failed: { label: "Envio/Teste Falhou", color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400" },
-  whatsapp_skipped: { label: "Envio Pulado", color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400" },
-  whatsapp_opt_in: { label: "Import Opt-in", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 dark:text-sky-400" },
-};
-
-/**
- * Eventos de OPERAÇÃO (cron, configuração salva, teste de envio) não têm cliente:
- * são do sistema. A aba "Operação" mostra quem disparou em vez de um nome.
- * Complemento da linha 2 para eventos de operação sem erro/mensagem útil.
- */
-const systemEventSubtitle = (entry: AuditEntry): string | null => {
-  const meta = entry.metadata ?? {};
-  switch (entry.type) {
-    case "whatsapp_opt_in":
-      return meta.action === "cron-import-contacts"
-        ? "Cron diário: reimportação de contatos MikWeb"
-        : "Importação de contatos (painel)";
-    case "whatsapp_sent":
-      return meta.test ? "Teste de envio do painel" : "Envio manual (painel)";
-    case "whatsapp_failed":
-    case "whatsapp_skipped":
-      return meta.test ? "Teste de envio do painel" : null;
-    case "whatsapp_config":
-      return "Configuração do canal salva";
-    case "notification_config":
-      return "Régua de lembretes salva";
-    default:
-      return null;
-  }
-};
-
-interface ReminderBilling {
-  id: string | number;
-  reference?: string;
-  due_day?: string;
-  value?: number | string;
-  situation_name?: string;
-}
-
-/** Resposta de `POST /api/admin/notifications/send-now`. */
-interface ReminderPreview {
-  status: "preview" | "sent" | "queued" | "already_sent" | "failed" | "blocked";
-  reason: string;
-  phoneMasked: string | null;
-  optIn: boolean;
-  preview: { title?: string; body: string } | null;
-}
+import { PageHeader } from "@/components/page-header";
+import { KpiCard } from "@/components/kpi-card";
+import { AdminSyncDialog } from "@/components/AdminSyncDialog";
+import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { adminFetch, ADMIN_TOKEN_KEY } from "@/lib/api-config";
+import type { ReferralMonthMetrics } from "../../supabase/functions/api/notify/referral-metrics.ts";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [isVerified, setIsVerified] = useState<boolean | null>(null);
 
-  // Config da API MikWeb: a edição vive na página Conexões (/admin/connections).
-  // Aqui só sincronizamos o localStorage com o que o servidor tem, para os
-  // handlers de consulta rápida continuarem funcionando sem duplicar UI.
-
-  // Branding
-  const [providerName, setProviderName] = useState("");
-  const [logoUrl, setLogoUrl] = useState("");
-  const [logoInput, setLogoInput] = useState("");
-  const [brandingSaved, setBrandingSaved] = useState(false);
-  const [brandingSaving, setBrandingSaving] = useState(false);
-  const [brandingError, setBrandingError] = useState<string | null>(null);
-
-  // Audit log
-  const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
-  const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null);
-  const [logsLoading, setLogsLoading] = useState(true);
-  const [logFilter, setLogFilter] = useState<string>("all");
-  const [refreshing, setRefreshing] = useState(false);
-
-  // Customer lookup (support tool)
-  const [lookupCpf, setLookupCpf] = useState("");
-  const [lookupResult, setLookupResult] = useState<{
-    customer: any;
-    billings: any[];
-    /** MULTI-CONTA: conta de origem do cliente (slug + label). */
-    connection?: { slug: string; label: string };
+  // KPIs de acessos (resumo do endpoint de auditoria — o mesmo usado por /admin/audit)
+  // todayFailures/last7DaysLogins são opcionais: o endpoint atual não devolve esses campos.
+  const [auditSummary, setAuditSummary] = useState<{
+    todayLogins?: number;
+    todayFailures?: number;
+    last7DaysLogins?: number;
+    uniqueCpfs?: number;
   } | null>(null);
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupError, setLookupError] = useState<string | null>(null);
 
-  // Active sessions
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
-  const [revokingSession, setRevokingSession] = useState<string | null>(null);
-
-  // Sync dialog
-  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
-  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
-
-  // Audit log CPF filter
-  const [auditCpf, setAuditCpf] = useState("");
-  /** scope do log: eventos de clientes (padrão) ou de operação do sistema (cron/config/testes). */
-  const [auditScope, setAuditScope] = useState<"customer" | "system">("customer");
-
-  // Installation requests (new customer signup)
-  const [installRequests, setInstallRequests] = useState<any[]>([]);
+  // Instalações — apenas contadores (a lista e as ações vivem na página dedicada)
   const [installSummary, setInstallSummary] = useState<{
     total: number;
     pending: number;
     approved: number;
     rejected: number;
   } | null>(null);
-  const [installLoading, setInstallLoading] = useState(false);
-  const [installFilter, setInstallFilter] = useState("all");
-  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
-  const [processingRequest, setProcessingRequest] = useState<string | null>(null);
 
-  // Programa de indicações — métricas do card do dashboard
+  // Métricas do programa de indicações
   const [referralMetrics, setReferralMetrics] = useState<ReferralMonthMetrics | null>(null);
   const [referralMigrationPending, setReferralMigrationPending] = useState(false);
   const [referralProgramEnabled, setReferralProgramEnabled] = useState(true);
 
-  // Track if welcome toast has been shown for this session
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [dispatchDialogOpen, setDispatchDialogOpen] = useState(false);
+
   const welcomeShown = useRef(false);
 
-  // Verify admin session on mount.
-  // Always confirm against the server (the session must exist in the DB —
-  // legacy client-only tokens are no longer accepted by the admin endpoints).
-  // Falls back to trusting localStorage only when the server is unreachable.
+  // Verificação de sessão — fluxo idêntico às outras páginas admin
+  // (local + servidor; falha limpa token e pede login — sem mudança de auth).
   useEffect(() => {
     let cancelled = false;
-
-    const localToken = localStorage.getItem(ADMIN_TOKEN_KEY);
-    const expires = localStorage.getItem(ADMIN_TOKEN_KEY + "_expires");
-    const localValid = localToken && expires && Date.now() < Number(expires);
-
-    if (!localValid) {
-      // No valid local session — try server cookie as fallback
-      adminFetch("/api/admin/verify")
-        .then(async (res) => {
-          if (cancelled) return;
-          setIsVerified(res.ok);
-        })
-        .catch(() => {
-          if (!cancelled) setIsVerified(false);
-        });
-      return () => { cancelled = true; };
-    }
-
-    // Local session exists — confirm it server-side (expired/revoked/legacy
-    // tokens are cleared so the admin is prompted to log in again).
-    adminFetch("/api/admin/verify")
-      .then(async (res) => {
+    const check = async () => {
+      try {
+        const res = await adminFetch("/api/admin/verify");
         if (cancelled) return;
-        if (res.ok) {
-          setIsVerified(true);
-        } else {
+        if (!res.ok) {
           localStorage.removeItem(ADMIN_TOKEN_KEY);
           localStorage.removeItem(ADMIN_TOKEN_KEY + "_expires");
           setIsVerified(false);
+        } else {
+          setIsVerified(true);
         }
-      })
-      .catch(() => {
-        // Server unreachable — keep local session (offline fallback)
-        if (!cancelled) setIsVerified(true);
-      });
-
-    return () => { cancelled = true; };
+      } catch {
+        if (!cancelled) setIsVerified(false);
+      }
+    };
+    void check();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Show welcome toast once when session is verified
   useEffect(() => {
     if (isVerified && !welcomeShown.current) {
       welcomeShown.current = true;
@@ -405,354 +114,31 @@ export default function AdminDashboard() {
     }
   }, [isVerified]);
 
-  // Load config and audit data
-  const loadData = useCallback(async () => {
-    if (!isVerified) return;
-
+  const loadSummary = useCallback(async () => {
     try {
-      // Config da API MikWeb: espelha o que o servidor tem no localStorage.
-      // A edição vive em /admin/connections — aqui não há formulário.
-      try {
-        const configRes = await adminFetch("/api/admin/config");
-        if (configRes.ok) {
-          const config = await configRes.json();
-          // Sync URL to localStorage without erasing token
-          const stored = getStoredConfig();
-          storeConfig(config.apiUrl, stored?.apiToken || "");
-        }
-      } catch {
-        // Server unavailable — localStorage segue como está
-      }
-
-      // Try loading branding from the server
-      let loadedBranding = false;
-      try {
-        const brandingRes = await adminFetch("/api/admin/branding");
-        if (brandingRes.ok) {
-          const branding = await brandingRes.json();
-          if (branding.providerName) {
-            setProviderName(branding.providerName);
-            setLogoUrl(branding.logoUrl || "");
-            setLogoInput(branding.logoUrl || "");
-            // Sync to localStorage
-            storeBranding(branding.providerName, branding.logoUrl || "");
-            loadedBranding = true;
-          }
-        }
-      } catch {
-        // Server unavailable — fall through to localStorage
-      }
-
-      // Fallback to localStorage if server failed
-      if (!loadedBranding) {
-        const stored = getStoredBranding();
-        if (stored) {
-          setProviderName(stored.providerName);
-          setLogoUrl(stored.logoUrl);
-          setLogoInput(stored.logoUrl);
-        }
-      }
-    } catch {
-      // Config endpoint might not exist yet; data is loaded from Supabase
-    }
-
-    await loadAuditLogs();
-  }, [isVerified]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const loadAuditLogs = async (type?: string, cpf?: string, scope: "customer" | "system" = auditScope) => {
-    setLogsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (type && type !== "all") params.set("type", type);
-      if (cpf && cpf.trim()) params.set("cpf", cpf.replace(/\D/g, ""));
-      params.set("scope", scope);
-
-      const res = await adminFetch(
-        `/api/admin/audit-logs?${params.toString()}`
-      );
+      // 1 registro basta: o summary vem sempre no payload.
+      const res = await adminFetch("/api/admin/audit-logs?scope=customer");
       if (res.ok) {
         const data = await res.json();
-        // Map snake_case DB columns to camelCase frontend interface
-        const logs = (data.logs || []).map((l: Record<string, unknown>) => ({
-          ...l,
-          customerName: l.customer_name || l.customerName,
-          ipAddress: l.ip_address || l.ipAddress,
-          errorMessage: l.error_message || l.errorMessage,
-        }));
-        setAuditLogs(logs);
         setAuditSummary(data.summary || null);
       }
-    } catch (err) {
-      console.error("Failed to load audit logs:", err);
-    } finally {
-      setLogsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      loadAuditLogs(logFilter, auditCpf, auditScope);
-    }, 400);
-    return () => clearTimeout(t);
-    // loadAuditLogs é recriada a cada render: listá-la rearmaria o polling.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logFilter, isVerified, auditCpf, auditScope]);
-
-  /** Test API directly from the browser */
-  async function testApiFromBrowser(baseUrl: string, token: string) {
-    const testPaths = ["/customers?per_page=1", "/customers"];
-    const testedUrls: string[] = [];
-
-    for (const path of testPaths) {
-      const url = `${baseUrl}${path}`;
-      testedUrls.push(url);
-
-      try {
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        });
-
-        if (response.ok) {
-          return { success: true, message: "Conexão estabelecida com sucesso!" };
-        }
-
-        if (response.status === 404) {
-          continue;
-        }
-
-        if (response.status === 401 || response.status === 403) {
-          return { success: false, message: `Token inválido ou sem permissão (HTTP ${response.status}).` };
-        }
-
-        return { success: false, message: `Erro HTTP ${response.status}: ${response.statusText}` };
-      } catch {
-        continue;
-      }
-    }
-
-    return {
-      success: false,
-      message: `Nenhum endpoint respondeu. URLs testadas:\n${testedUrls.join("\n")}\n\nA URL base está correta (${baseUrl}). Verifique o token de autenticação.`,
-    };
-  }
-
-  const handleLogout = async () => {
-    try {
-      await adminFetch("/api/admin/logout", { method: "POST" });
     } catch {
-      // Ignore logout API errors
-    }
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
-    navigate("/");
-  };
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadAuditLogs(logFilter, auditCpf).finally(() => setRefreshing(false));
-  };
-
-  // ---------------------------------------------------------------------------
-  // Support tools handlers
-  // ---------------------------------------------------------------------------
-
-  const handleLookupCustomer = async () => {
-    const cpf = lookupCpf.replace(/\D/g, "");
-    if (cpf.length !== 11) {
-      setLookupError("Informe um CPF com 11 dígitos.");
-      setLookupResult(null);
-      return;
-    }
-    setLookupLoading(true);
-    setLookupError(null);
-    setLookupResult(null);
-    try {
-      const res = await adminFetch(
-        `/api/admin/customer?cpf=${encodeURIComponent(cpf)}`
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setLookupError(data.error || "Cliente não encontrado.");
-        return;
-      }
-      setLookupResult(data);
-    } catch {
-      setLookupError("Erro ao consultar o cliente.");
-    } finally {
-      setLookupLoading(false);
-    }
-  };
-
-  // ---------------------------------------------------------------------------
-  // WhatsApp — enviar lembrete de fatura (com prévia e confirmação)
-  // ---------------------------------------------------------------------------
-  const [reminderBilling, setReminderBilling] = useState<ReminderBilling | null>(null);
-  const [reminderPreview, setReminderPreview] = useState<ReminderPreview | null>(null);
-  const [reminderLoading, setReminderLoading] = useState(false);
-  const [reminderForce, setReminderForce] = useState(false);
-  const [reminderSending, setReminderSending] = useState(false);
-
-  /** Abre a confirmação já com a mensagem que SERIA enviada (dryRun no backend). */
-  const openReminder = async (billing: ReminderBilling) => {
-    const cpf = lookupCpf.replace(/\D/g, "");
-    if (cpf.length !== 11) {
-      toast.error("Consulte o cliente pelo CPF antes de enviar.");
-      return;
-    }
-    setReminderBilling(billing);
-    setReminderPreview(null);
-    setReminderForce(false);
-    setReminderLoading(true);
-    try {
-      const res = await adminFetch("/api/admin/notifications/send-now", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cpf,
-          billingId: String(billing.id),
-          dryRun: true,
-          // MULTI-CONTA: valida a fatura na conta de origem da busca.
-          connection: lookupResult?.connection?.slug,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.error || "Não foi possível montar a prévia do lembrete.");
-        setReminderBilling(null);
-        return;
-      }
-      setReminderPreview(data);
-    } catch {
-      toast.error("Não foi possível montar a prévia do lembrete.");
-      setReminderBilling(null);
-    } finally {
-      setReminderLoading(false);
-    }
-  };
-
-  const confirmReminder = async () => {
-    if (!reminderBilling) return;
-    setReminderSending(true);
-    try {
-      const res = await adminFetch("/api/admin/notifications/send-now", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cpf: lookupCpf.replace(/\D/g, ""),
-          billingId: String(reminderBilling.id),
-          force: reminderForce,
-          // MULTI-CONTA: mesma conta da prévia — a fatura é validada onde foi encontrada.
-          connection: lookupResult?.connection?.slug,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.error || "Erro ao enviar o lembrete.");
-        return;
-      }
-      if (data.status === "sent") {
-        toast.success(`Lembrete enviado para ${data.phoneMasked ?? "o cliente"}.`);
-      } else if (data.status === "already_sent") {
-        toast.info(data.reason || "Este lembrete já havia sido enviado.");
-      } else {
-        toast.warning(data.reason || "O lembrete não foi enviado.");
-      }
-      setReminderBilling(null);
-    } catch {
-      toast.error("Erro ao enviar o lembrete.");
-    } finally {
-      setReminderSending(false);
-    }
-  };
-
-  /** Bloqueio por falta de opt-in é o único que o admin pode assumir conscientemente. */
-  const reminderOptInBlocked =
-    reminderPreview?.status === "blocked" && String(reminderPreview?.reason || "").includes("opt-in");
-  const reminderCannotSend =
-    reminderLoading ||
-    !reminderPreview ||
-    reminderPreview.status === "already_sent" ||
-    (reminderPreview.status === "blocked" && !reminderOptInBlocked) ||
-    (reminderOptInBlocked && !reminderForce);
-
-  const loadSessions = useCallback(async () => {
-    setSessionsLoading(true);
-    try {
-      const res = await adminFetch("/api/admin/sessions");
-      if (res.ok) {
-        const data = await res.json();
-        setSessions(data.sessions || []);
-      }
-    } catch {
-      // ignore — panel is non-critical
-    } finally {
-      setSessionsLoading(false);
+      // KPIs são acessórios — o dashboard não quebra sem eles.
     }
   }, []);
 
-  useEffect(() => {
-    if (isVerified) loadSessions();
-  }, [isVerified, loadSessions]);
-
-  const handleRevokeSession = async (sessionId: string) => {
-    setRevokingSession(sessionId);
+  const loadInstallSummary = useCallback(async () => {
     try {
-      const res = await adminFetch("/api/admin/sessions/revoke", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      });
-      if (res.ok) {
-        toast.success("Sessão revogada", {
-          description: "O cliente foi desconectado.",
-        });
-        loadSessions();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error || "Erro ao revogar sessão.");
-      }
-    } catch {
-      toast.error("Erro ao revogar sessão.");
-    } finally {
-      setRevokingSession(null);
-    }
-  };
-
-  const loadInstallRequests = useCallback(async () => {
-    setInstallLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (installFilter && installFilter !== "all") {
-        params.set("status", installFilter);
-      }
-      const res = await adminFetch(
-        `/api/admin/install-requests?${params.toString()}`
-      );
+      const res = await adminFetch("/api/admin/install-requests");
       if (res.ok) {
         const data = await res.json();
-        setInstallRequests(data.requests || []);
         setInstallSummary(data.summary || null);
       }
     } catch {
-      // Panel is non-critical — keep previous state on failure
-    } finally {
-      setInstallLoading(false);
+      // idem
     }
-  }, [installFilter]);
+  }, []);
 
-  useEffect(() => {
-    if (isVerified) loadInstallRequests();
-  }, [isVerified, loadInstallRequests]);
-
-  // Métricas do programa de indicações (card). Falha silenciosa: card é
-  // acessório — o dashboard nunca deve quebrar por causa dele.
   const loadReferralMetrics = useCallback(async () => {
     try {
       const res = await adminFetch("/api/admin/referrals/stats");
@@ -770,103 +156,25 @@ export default function AdminDashboard() {
     }
   }, []);
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([loadSummary(), loadInstallSummary(), loadReferralMetrics()]);
+  }, [loadSummary, loadInstallSummary, loadReferralMetrics]);
+
   useEffect(() => {
-    if (isVerified) loadReferralMetrics();
-  }, [isVerified, loadReferralMetrics]);
+    if (!isVerified) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mesmo padrão do dashboard original (loadAuditLogs/loadData)
+    void refreshAll();
+  }, [isVerified, refreshAll]);
 
-  const handleInstallRequestStatus = async (
-    requestId: string,
-    status: "approved" | "rejected"
-  ) => {
-    setProcessingRequest(requestId);
-    try {
-      const res = await adminFetch(
-        `/api/admin/install-requests/${requestId}/status`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status }),
-        }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        toast.error(data.error || "Erro ao atualizar a solicitação.");
-        return;
-      }
-      toast.success(
-        status === "approved"
-          ? "Solicitação aprovada"
-          : "Solicitação recusada",
-        { description: "O status foi atualizado." }
-      );
-      loadInstallRequests();
-    } catch {
-      toast.error("Erro ao atualizar a solicitação.");
-    } finally {
-      setProcessingRequest(null);
-    }
-  };
-
-  const handleSaveBranding = async () => {
-    setBrandingSaving(true);
-    setBrandingError(null);
-    setBrandingSaved(false);
-
-    // Always save to localStorage first for immediate persistence
-    storeBranding(providerName, logoInput);
-    setLogoUrl(logoInput);
-    setBrandingSaved(true);
-
-    // Then try the server — if it fails, the data is still persisted locally
-    try {
-      const res = await adminFetch("/api/admin/branding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerName, logoUrl: logoInput }),
-      });
-
-      if (!res.ok) {
-        console.warn("Branding saved to localStorage only; server rejected:", await res.text());
-      }
-    } catch {
-      console.warn("Branding saved to localStorage only; server unavailable.");
-    } finally {
-      setBrandingSaving(false);
-      setTimeout(() => setBrandingSaved(false), 3000);
-    }
-  };
-
-  const handleLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      setLogoInput(dataUrl);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemoveLogo = () => {
-    setLogoInput("");
-    setLogoUrl("");
-  };
-
-  // ---------------------------------------------------------------------------
-  // Loading state
-  // ---------------------------------------------------------------------------
   if (isVerified === null) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <Activity className="h-5 w-5 animate-pulse text-muted-foreground" />
         <p className="text-xs text-muted-foreground">Verificando sessão...</p>
       </div>
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Session expired / not found
-  // ---------------------------------------------------------------------------
   if (isVerified === false) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-4 animate-[fadeIn_0.3s_ease-out]">
@@ -884,107 +192,119 @@ export default function AdminDashboard() {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Summary cards data
-  // ---------------------------------------------------------------------------
-  const summaryCards = auditSummary
-    ? [
-        {
-          label: "Logins (hoje)",
-          value: auditSummary.todayLogins,
-          icon: Users,
-          color: "text-emerald-500",
-        },
-        {
-          label: "Falhas (hoje)",
-          value: auditSummary.todayFailures,
-          icon: UserX,
-          color: "text-red-500",
-        },
-        {
-          label: "Logins (7 dias)",
-          value: auditSummary.last7DaysLogins,
-          icon: Activity,
-          color: "text-blue-500",
-        },
-        {
-          label: "CPFs únicos",
-          value: auditSummary.uniqueCpfs,
-          icon: Users,
-          color: "text-foreground",
-        },
-      ]
-    : [];
+  const pendingInstallations = installSummary?.pending ?? 0;
 
-  // ---------------------------------------------------------------------------
-  // Main dashboard
-  // ---------------------------------------------------------------------------
   return (
     <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-medium tracking-tight text-foreground">
-            Administração
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Acompanhe acessos, consulte clientes e opere o envio de lembretes. Credenciais
-            em <strong className="font-medium text-foreground">Conexões</strong>.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
-            onClick={() => setSyncDialogOpen(true)}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Sincronizar cobranças
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
-            onClick={() => setDispatchDialogOpen(true)}
-          >
-            <Send className="h-3.5 w-3.5" />
-            Disparar fila outbox
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs h-9 gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/admin/messages")}
-          >
-            <Activity className="h-3.5 w-3.5" />
-            Ver mensagens ao vivo
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Administração"
+        description="Visão operacional do dia: acessos, pendências e atalhos das áreas de trabalho."
+        actions={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+              onClick={() => setSyncDialogOpen(true)}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Sincronizar cobranças
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 cursor-pointer"
+              onClick={() => setDispatchDialogOpen(true)}
+            >
+              <Send className="h-3.5 w-3.5" />
+              Disparar fila outbox
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-9 gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground"
+              onClick={() => navigate("/admin/messages")}
+            >
+              <Activity className="h-3.5 w-3.5" />
+              Ver mensagens ao vivo
+            </Button>
+          </>
+        }
+      />
 
-      {/* Summary Cards */}
-      {auditSummary && (
+      {/* KPIs — acessos de hoje e da semana (resumo; detalhe em /admin/audit) */}
+      {auditSummary ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-          {summaryCards.map((card) => (
-            <Card key={card.label} className="border-border shadow-none animate-[slideUp_0.3s_ease-out]">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <card.icon className={`h-4 w-4 ${card.color}`} />
-                  <div>
-                    <p className="text-lg font-light tracking-tight text-foreground">
-                      {card.value}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">{card.label}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          <KpiCard
+            label="Logins (hoje)"
+            value={auditSummary.todayLogins ?? "—"}
+            icon={Users}
+            tone="success"
+            className="animate-[slideUp_0.3s_ease-out]"
+          />
+          <KpiCard
+            label="Falhas (hoje)"
+            value={auditSummary.todayFailures ?? "—"}
+            icon={UserX}
+            tone="danger"
+            className="animate-[slideUp_0.3s_ease-out]"
+          />
+          <KpiCard
+            label="Logins (7 dias)"
+            value={auditSummary.last7DaysLogins ?? "—"}
+            icon={Activity}
+            tone="info"
+            className="animate-[slideUp_0.3s_ease-out]"
+          />
+          <KpiCard
+            label="CPFs únicos"
+            value={auditSummary.uniqueCpfs ?? "—"}
+            icon={Users}
+            tone="secondary"
+            className="animate-[slideUp_0.3s_ease-out]"
+          />
         </div>
-      )}
+      ) : null}
 
-      {/* Programa de Indicações — métricas do mês (migration 011) */}
+      {/* Instalações — RESUMO + ATALHO (a gestão completa vive em /admin/install-requests) */}
+      <Card
+        className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.05s_both] cursor-pointer hover:bg-secondary/20 transition-colors"
+        onClick={() => navigate("/admin/install-requests")}
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Home className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-medium">Solicitações de Instalação</CardTitle>
+              {pendingInstallations > 0 ? (
+                <Badge
+                  variant="outline"
+                  className="text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border-amber-200 dark:border-amber-900"
+                >
+                  {pendingInstallations} pendente{pendingInstallations === 1 ? "" : "s"}
+                </Badge>
+              ) : null}
+            </div>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              ver instalações
+              <ArrowRight className="h-3 w-3" />
+            </span>
+          </div>
+          <CardDescription className="text-xs text-muted-foreground">
+            Pedidos enviados pela página inicial. Aprovar, recusar, fotos e impressão na página dedicada.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+            <KpiCard label="Total" value={installSummary?.total ?? "—"} icon={Home} />
+            <KpiCard label="Pendentes" value={installSummary?.pending ?? "—"} icon={Clock} tone="warning" />
+            <KpiCard label="Aprovadas" value={installSummary?.approved ?? "—"} icon={BadgeCheck} tone="success" />
+            <KpiCard label="Recusadas" value={installSummary?.rejected ?? "—"} icon={UserX} tone="danger" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Programa de Indicações — métricas do mês (resumo; gestão em /admin/referrals) */}
       {referralMigrationPending ? null : referralMetrics ? (
         <Card className="border-emerald-500/20 shadow-none animate-[slideUp_0.3s_ease-out_0.08s_both]">
           <CardHeader className="pb-3">
@@ -993,14 +313,14 @@ export default function AdminDashboard() {
                 <Gift className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                 <CardTitle className="text-sm font-medium">Indique e Ganhe</CardTitle>
                 {!referralProgramEnabled && (
-                  <Badge variant="secondary" className="text-[10px] font-medium">
+                  <Badge variant="secondary" className="text-xs font-medium">
                     programa desativado
                   </Badge>
                 )}
               </div>
               <button
                 onClick={() => navigate("/admin/referrals")}
-                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
               >
                 Gerenciar
               </button>
@@ -1017,7 +337,7 @@ export default function AdminDashboard() {
                 </p>
                 <p className="text-xs text-muted-foreground">Indicações do mês</p>
                 {referralMetrics.referralsThisMonth > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {referralMetrics.approvedThisMonth} aprovada
                     {referralMetrics.approvedThisMonth === 1 ? "" : "s"}
                   </p>
@@ -1031,7 +351,7 @@ export default function AdminDashboard() {
                 </p>
                 <p className="text-xs text-muted-foreground">Taxa de aprovação (mês)</p>
                 {referralMetrics.approvalRateAllPct !== null && (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {referralMetrics.approvalRateAllPct}% no total
                   </p>
                 )}
@@ -1041,7 +361,7 @@ export default function AdminDashboard() {
                   {referralMetrics.pointsIssuedThisMonth.toLocaleString("pt-BR")}
                 </p>
                 <p className="text-xs text-muted-foreground">Pontos emitidos no mês</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {referralMetrics.pointsIssuedTotal.toLocaleString("pt-BR")} no total
                 </p>
               </div>
@@ -1051,7 +371,7 @@ export default function AdminDashboard() {
                 </p>
                 <p className="text-xs text-muted-foreground">Resgates em análise</p>
                 {referralMetrics.pointsRedeemedTotal > 0 && (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {referralMetrics.pointsRedeemedTotal.toLocaleString("pt-BR")} pts resgatados
                   </p>
                 )}
@@ -1061,749 +381,80 @@ export default function AdminDashboard() {
         </Card>
       ) : null}
 
-      {/* Audit Log — abas: acessos de clientes × operação do sistema */}
-      <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.1s_both]">
-            <CardHeader className="pb-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-muted-foreground" />
-                  <CardTitle className="text-sm font-medium">
-                    Histórico de Acessos
-                  </CardTitle>
-                </div>
-                <div className="flex items-center gap-2">
-                  {auditScope === "customer" && (
-                    <>
-                  <Input
-                    placeholder="CPF..."
-                    value={auditCpf}
-                    onChange={(e) => setAuditCpf(e.target.value)}
-                    className="h-7 text-[10px] w-[110px]"
-                  />
-                  <Select
-                    value={logFilter}
-                    onValueChange={(v) => setLogFilter(v)}
-                  >
-                    <SelectTrigger className="h-7 text-[10px] w-[120px]">
-                      <SelectValue placeholder="Filtrar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all" className="text-xs">
-                        Todos
-                      </SelectItem>
-                      <SelectItem value="login_success" className="text-xs">
-                        Logins OK
-                      </SelectItem>
-                      <SelectItem value="login_failure" className="text-xs">
-                        Falhas
-                      </SelectItem>
-                      <SelectItem value="login_rate_limited" className="text-xs">
-                        Rate Limit
-                      </SelectItem>
-                      <SelectItem value="billing_error" className="text-xs">
-                        Erros Fatura
-                      </SelectItem>
-                      <SelectItem value="barcode_copied" className="text-xs">
-                        Copiou Código
-                      </SelectItem>
-                      <SelectItem value="pix_copied" className="text-xs">
-                        Copiou PIX
-                      </SelectItem>
-                      <SelectItem value="pdf_viewed" className="text-xs">
-                        Acessou PDF
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  </>
-                  )}
-                  <Tabs value={auditScope} onValueChange={(v) => setAuditScope(v as "customer" | "system")}>
-                    <TabsList className="h-7">
-                      <TabsTrigger value="customer" className="text-[10px] px-2 py-0.5">Clientes</TabsTrigger>
-                      <TabsTrigger value="system" className="text-[10px] px-2 py-0.5">Operação</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                  <button
-                    onClick={handleRefresh}
-                    className="text-muted-foreground hover:text-foreground transition-colors"
-                    disabled={refreshing}
-                  >
-                    <RefreshCw
-                      className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-                    />
-                  </button>
-                </div>
+      {/* Atalhos — as ferramentas completas têm página própria */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <Card
+          className="border-border shadow-none cursor-pointer hover:bg-secondary/20 transition-colors animate-[slideUp_0.3s_ease-out_0.12s_both]"
+          onClick={() => navigate("/admin/customers")}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Consultar cliente</CardTitle>
               </div>
-            </CardHeader>
-            <CardContent>
-              {logsLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : auditLogs.length === 0 ? (
-                <div className="text-center py-12">
-                  <Activity className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    Nenhum registro encontrado.
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Os registros aparecerão aqui conforme clientes acessarem o portal.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
-                  {auditLogs.map((entry) => {
-                    const typeInfo = typeLabels[entry.type] || {
-                      label: entry.type,
-                      color: "text-gray-500 bg-gray-50",
-                    };
-                    const date = new Date(entry.timestamp);
-
-                    return (
-                      <div
-                        key={entry._id}
-                        className="flex items-start gap-3 px-3 py-2 rounded-sm hover:bg-secondary/30 transition-colors text-xs"
-                      >
-                        <Badge
-                          variant="outline"
-                          className={`text-[9px] font-medium px-1.5 py-0 border-none shrink-0 mt-0.5 ${typeInfo.color}`}
-                        >
-                          {typeInfo.label}
-                        </Badge>
-
-                        <div className="flex-1 min-w-0">
-                          {/* Line 1: Nome + CPF — eventos de operação não têm cliente,
-                              então mostram quem disparou (cron/painel) em vez de um nome falso */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {entry.customerName ? (
-                              <span className="text-foreground font-medium truncate">
-                                {entry.customerName}
-                              </span>
-                            ) : entry.cpf ? (
-                              <span className="text-foreground font-medium truncate">
-                                Cliente
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground italic">
-                                Sistema
-                              </span>
-                            )}
-                            {entry.cpf && (
-                              <span className="text-[10px] text-muted-foreground font-mono">
-                                CPF {formatCpf(entry.cpf)}
-                              </span>
-                            )}
-                          </div>
-                          {/* Line 2: O que fez (ação) */}
-                          <div className="text-muted-foreground mt-0.5">
-                            {entry.errorMessage && (
-                              <span className="block truncate">
-                                {entry.errorMessage}
-                              </span>
-                            )}
-                            {!entry.errorMessage && systemEventSubtitle(entry) && (
-                              <span className="block truncate">
-                                {systemEventSubtitle(entry)}
-                              </span>
-                            )}
-                            {entry.metadata?.reference && (
-                              <span className="block truncate">
-                                Fatura {entry.metadata.reference}
-                                {typeof entry.metadata.value === "number"
-                                  ? ` · ${formatValue(entry.metadata.value)}`
-                                  : ""}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Line 3: Data + Hora + IP */}
-                        <div className="text-right shrink-0">
-                          <p className="text-[10px] text-muted-foreground">
-                            {date.toLocaleDateString("pt-BR")}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {date.toLocaleTimeString("pt-BR", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </p>
-
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-      {/* Support Tools */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-        {/* Consultar Cliente */}
-        <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.2s_both]">
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">
-                Consultar Cliente
-              </CardTitle>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
             </div>
             <CardDescription className="text-xs text-muted-foreground">
-              Veja as faturas de qualquer CPF direto da API MikWeb.
+              Faturas, sessões e histórico de qualquer CPF no Cliente 360.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="CPF do cliente (11 dígitos)"
-                value={lookupCpf}
-                onChange={(e) => setLookupCpf(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleLookupCustomer()}
-                className="h-9 text-xs font-mono"
-              />
-              <Button
-                size="sm"
-                className="h-9 text-xs shrink-0"
-                onClick={handleLookupCustomer}
-                disabled={lookupLoading}
-              >
-                {lookupLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Search className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </div>
-
-            {lookupError && (
-              <p className="flex items-start gap-2 text-xs text-destructive">
-                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                <span>{lookupError}</span>
-              </p>
-            )}
-
-            {lookupResult && (
-              <div className="space-y-3">
-                <div className="p-3 rounded-sm border border-border bg-secondary/30 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-foreground font-medium">
-                      {lookupResult.customer.full_name}
-                    </p>
-                    {lookupResult.connection ? (
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded-sm border border-border text-muted-foreground shrink-0"
-                        title={`Este cliente pertence à conta MikWeb "${lookupResult.connection.label}"`}
-                      >
-                        {lookupResult.connection.label}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="text-muted-foreground mt-0.5">
-                    {lookupResult.customer.plan?.name || "Plano não informado"}
-                    {lookupResult.customer.due_day
-                      ? ` · Vencimento dia ${lookupResult.customer.due_day}`
-                      : ""}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {lookupResult.customer.city || "—"}
-                    {lookupResult.customer.state
-                      ? `, ${lookupResult.customer.state}`
-                      : ""}
-                  </p>
-                </div>
-
-                <div className="max-h-64 overflow-y-auto space-y-1.5">
-                  {lookupResult.billings.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-6">
-                      Nenhuma fatura encontrada.
-                    </p>
-                  ) : (
-                    lookupResult.billings.map((b: any) => (
-                      <div
-                        key={b.id}
-                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm border border-border/60 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-foreground font-medium truncate">
-                            {b.reference}
-                          </p>
-                          <p className="text-muted-foreground">
-                            {b.due_day ? formatDate(b.due_day) : "Sem vencimento"}{" "}
-                            · {formatValue(b.value)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={statusBadgeClass(b.situation_name)}>
-                            {b.situation_name || "—"}
-                          </span>
-                          {["pendente", "vencido"].includes(
-                            mapStatus(b.situation_name || "")
-                          ) ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2 text-[10px] cursor-pointer"
-                              title="Enviar lembrete por WhatsApp"
-                              onClick={() => openReminder(b)}
-                            >
-                              <MessageCircle className="h-3 w-3 sm:mr-1" />
-                              <span className="hidden sm:inline">Lembrar</span>
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
         </Card>
 
-        {/* Confirmação do lembrete por WhatsApp */}
-        <ConfirmDialog
-          open={Boolean(reminderBilling)}
-          onOpenChange={(open) => {
-            if (!open && !reminderSending) {
-              setReminderBilling(null);
-              setReminderPreview(null);
-            }
-          }}
-          title="Enviar lembrete por WhatsApp?"
-          description={
-            reminderBilling
-              ? `Fatura ${reminderBilling.reference} · vence ${
-                  reminderBilling.due_day ? formatDate(reminderBilling.due_day) : "—"
-                } · ${formatValue(reminderBilling.value ?? 0)}`
-              : undefined
-          }
-          confirmLabel="Enviar lembrete"
-          disabled={reminderCannotSend}
-          onConfirm={confirmReminder}
+        <Card
+          className="border-border shadow-none cursor-pointer hover:bg-secondary/20 transition-colors animate-[slideUp_0.3s_ease-out_0.16s_both]"
+          onClick={() => navigate("/admin/audit")}
         >
-          {reminderLoading ? (
-            <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              montando a prévia...
-            </div>
-          ) : reminderPreview ? (
-            <>
-              <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground">
-                <span className="px-2 py-0.5 rounded-sm border border-border">
-                  destino: {reminderPreview.phoneMasked || "sem celular válido"}
-                </span>
-                <span
-                  className={`px-2 py-0.5 rounded-sm border ${
-                    reminderPreview.optIn
-                      ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                      : "border-amber-500/30 text-amber-600 dark:text-amber-400"
-                  }`}
-                >
-                  opt-in: {reminderPreview.optIn ? "registrado" : "não registrado"}
-                </span>
-              </div>
-
-              {reminderPreview.status === "already_sent" || reminderPreview.status === "blocked" ? (
-                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>{reminderPreview.reason}</span>
-                </div>
-              ) : null}
-
-              {reminderPreview.preview?.body ? (
-                <div className="space-y-1">
-                  <p className="text-[10px] font-medium text-muted-foreground">
-                    Mensagem que será enviada
-                  </p>
-                  <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed rounded-sm border border-border bg-muted/40 p-3 text-foreground max-h-56 overflow-y-auto">
-                    {reminderPreview.preview.body}
-                  </pre>
-                </div>
-              ) : null}
-
-              {reminderOptInBlocked ? (
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={reminderForce}
-                    onChange={(e) => setReminderForce(e.target.checked)}
-                    className="mt-0.5 h-3.5 w-3.5 accent-foreground cursor-pointer"
-                  />
-                  <span className="text-muted-foreground leading-relaxed">
-                    Enviar mesmo sem opt-in registrado. A decisão fica registrada na auditoria.
-                  </span>
-                </label>
-              ) : null}
-            </>
-          ) : null}
-        </ConfirmDialog>
-
-        {/* Sessões Ativas */}
-        <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.25s_both]">
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-sm font-medium">
-                  Sessões Ativas
-                </CardTitle>
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Auditoria</CardTitle>
               </div>
-              <button
-                onClick={loadSessions}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                disabled={sessionsLoading}
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 ${sessionsLoading ? "animate-spin" : ""}`}
-                />
-              </button>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
             </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Log completo de acessos e eventos de operação, com filtros.
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            {sessionsLoading ? (
-              <div className="flex items-center justify-center py-10">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </Card>
+
+        <Card
+          className="border-border shadow-none cursor-pointer hover:bg-secondary/20 transition-colors animate-[slideUp_0.3s_ease-out_0.2s_both]"
+          onClick={() => navigate("/admin/messages")}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Send className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Mensagens e funil</CardTitle>
               </div>
-            ) : sessions.length === 0 ? (
-              <div className="text-center py-10">
-                <Users className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  Nenhuma sessão ativa.
-                </p>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Outbox em tempo real, funil de engajamento e cliques nos botões.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+
+        <Card
+          className="border-border shadow-none cursor-pointer hover:bg-secondary/20 transition-colors animate-[slideUp_0.3s_ease-out_0.24s_both]"
+          onClick={() => navigate("/admin/connections")}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Coins className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm font-medium">Conexões</CardTitle>
               </div>
-            ) : (
-              <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                {sessions.map((s) => (
-                  <div
-                    key={s.sessionId}
-                    className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm border border-border/60 text-xs"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-foreground font-medium truncate">
-                        {s.customerName}
-                      </p>
-                      <p className="text-muted-foreground">
-                        CPF ***{s.cpf.slice(-3)} · {formatRelativeTime(s.lastActivityAt)}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-[10px] shrink-0 text-muted-foreground hover:text-destructive"
-                      onClick={() => handleRevokeSession(s.sessionId)}
-                      disabled={revokingSession === s.sessionId}
-                    >
-                      {revokingSession === s.sessionId ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      ) : (
-                        <UserX className="h-3 w-3 mr-1" />
-                      )}
-                      Revogar
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}            </CardContent>
-          </Card>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <CardDescription className="text-xs text-muted-foreground">
+              Credenciais MikWeb e WhatsApp, alertas e configuração técnica.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       </div>
-
-      {/* Solicitações de Instalação */}
-      <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.35s_both]">
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Home className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium">
-                Solicitações de Instalação
-              </CardTitle>
-              <button
-                onClick={() => navigate("/admin/install-requests")}
-                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors underline"
-              >
-                Ver todas
-              </button>
-              {installSummary && installSummary.pending > 0 && (
-                <Badge
-                  variant="outline"
-                  className="text-[10px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400 border-amber-200 dark:border-amber-900"
-                >
-                  {installSummary.pending} pendente
-                  {installSummary.pending === 1 ? "" : "s"}
-                </Badge>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Select
-                value={installFilter}
-                onValueChange={(v) => setInstallFilter(v)}
-              >
-                <SelectTrigger className="h-7 text-[10px] w-[130px]">
-                  <SelectValue placeholder="Filtrar" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" className="text-xs">
-                    Todas
-                  </SelectItem>
-                  <SelectItem value="pending" className="text-xs">
-                    Pendentes
-                  </SelectItem>
-                  <SelectItem value="approved" className="text-xs">
-                    Aprovadas
-                  </SelectItem>
-                  <SelectItem value="rejected" className="text-xs">
-                    Recusadas
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <button
-                onClick={loadInstallRequests}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                disabled={installLoading}
-              >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 ${installLoading ? "animate-spin" : ""}`}
-                />
-              </button>
-            </div>
-          </div>
-          <CardDescription className="text-xs text-muted-foreground">
-            Pedidos de instalação enviados pela página inicial.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {installLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : installRequests.length === 0 ? (
-            <div className="text-center py-12">
-              <Home className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">
-                Nenhuma solicitação
-                {installFilter !== "all" ? " neste filtro" : ""}.
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Os pedidos da página inicial aparecerão aqui.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-[520px] overflow-y-auto">
-              {installRequests.map((r) => {
-                const statusInfo =
-                  installStatusInfo[r.status] || {
-                    label: r.status,
-                    color: "text-gray-500 bg-gray-50",
-                  };
-                const date = new Date(r.createdAt);
-                const addressParts = [
-                  r.street && `${r.street}${r.number ? `, ${r.number}` : ""}`,
-                  r.neighborhood,
-                  r.city,
-                  r.state,
-                ].filter(Boolean);
-
-                const isExpanded = expandedRequestId === r.id;
-
-                return (
-                  <div
-                    key={r.id}
-                    className={`p-3 rounded-sm border text-xs transition-colors ${
-                      isExpanded
-                        ? "border-border bg-secondary/20"
-                        : "border-border/60 hover:bg-secondary/30 cursor-pointer"
-                    }`}
-                    onClick={() =>
-                      setExpandedRequestId(isExpanded ? null : r.id)
-                    }
-                  >
-                    {/* Summary — always visible */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-foreground font-medium truncate">
-                          {r.fullName}
-                        </p>
-                        <p className="text-muted-foreground">
-                          CPF {formatCpf(r.cpf)} · {r.phone}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge
-                          variant="outline"
-                          className={`text-[9px] font-medium px-1.5 py-0 border-none ${statusInfo.color}`}
-                        >
-                          {statusInfo.label}
-                        </Badge>
-                        <ChevronRight
-                          className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
-                            isExpanded ? "rotate-90" : ""
-                          }`}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Details — only visible when expanded */}
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-border/60 space-y-1.5">
-                        {addressParts.length > 0 && (
-                          <p className="text-muted-foreground">
-                            {addressParts.join(", ")}
-                          </p>
-                        )}
-                        {r.zipCode && (
-                          <p className="text-muted-foreground">
-                            CEP: {r.zipCode}
-                          </p>
-                        )}
-                        {r.email && (
-                          <p className="text-muted-foreground">{r.email}</p>
-                        )}
-                        {r.desiredPlan && (
-                          <p className="text-muted-foreground">
-                            Plano desejado: {r.desiredPlan}
-                          </p>
-                        )}
-                        {r.message && (
-                          <p className="text-muted-foreground italic">
-                            &ldquo;{r.message}&rdquo;
-                          </p>
-                        )}
-                        {r.adminNote && (
-                          <p className="text-muted-foreground">
-                            Nota: {r.adminNote}
-                          </p>
-                        )}
-
-                        {/* Photos */}
-                        {(r.photoHouseFront || r.photoStreet || r.photoIdFront || r.photoIdBack) && (
-                          <div className="grid grid-cols-2 gap-2 mt-2">
-                            {r.photoHouseFront && (
-                              <div>
-                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Frente da casa</p>
-                                <img src={r.photoHouseFront} alt="Frente da casa" className="w-full h-28 object-cover rounded-sm border border-border" />
-                              </div>
-                            )}
-                            {r.photoStreet && (
-                              <div>
-                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Rua</p>
-                                <img src={r.photoStreet} alt="Rua" className="w-full h-28 object-cover rounded-sm border border-border" />
-                              </div>
-                            )}
-                            {r.photoIdFront && (
-                              <div>
-                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Identidade (frente)</p>
-                                <img src={r.photoIdFront} alt="Identidade frente" className="w-full h-28 object-cover rounded-sm border border-border" />
-                              </div>
-                            )}
-                            {r.photoIdBack && (
-                              <div>
-                                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-0.5">Identidade (verso)</p>
-                                <img src={r.photoIdBack} alt="Identidade verso" className="w-full h-28 object-cover rounded-sm border border-border" />
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        <div className="flex items-center justify-between mt-2">
-                          <p className="text-[10px] text-muted-foreground">
-                            {date.toLocaleDateString("pt-BR")} ·{" "}
-                            {date.toLocaleTimeString("pt-BR", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </p>
-                          {r.status === "pending" && (
-                            <div className="flex gap-1.5">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-[10px] shrink-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleInstallRequestStatus(r.id, "approved");
-                                }}
-                                disabled={processingRequest === r.id}
-                              >
-                                {processingRequest === r.id ? (
-                                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                                ) : (
-                                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                                )}
-                                Aprovar
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-[10px] shrink-0 text-destructive hover:text-destructive/80"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleInstallRequestStatus(r.id, "rejected");
-                                }}
-                                disabled={processingRequest === r.id}
-                              >
-                                <XCircle className="h-3 w-3 mr-1" />
-                                Recusar
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Total Stats */}
-      {auditSummary && (
-        <div className="animate-[slideUp_0.3s_ease-out_0.25s_both]">
-          <Card className="border-border shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">
-                Estatísticas Gerais
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <p className="text-2xl font-light text-foreground">
-                    {auditSummary.totalLogins}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Logins bem-sucedidos
-                  </p>
-                </div>
-                <div>
-                  <p className="text-2xl font-light text-foreground">
-                    {auditSummary.totalFailures}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Tentativas com falha
-                  </p>
-                </div>
-                <div>
-                  <p className="text-2xl font-light text-foreground">
-                    {auditSummary.totalRateLimited}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Bloqueios por rate limit
-                  </p>
-                </div>
-                <div>
-                  <p className="text-2xl font-light text-foreground">
-                    {auditSummary.totalBillingErrors}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Erros ao acessar faturas
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
 
       <AdminSyncDialog
         open={syncDialogOpen}

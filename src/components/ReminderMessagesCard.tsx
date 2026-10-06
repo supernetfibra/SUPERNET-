@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { apiUrl } from "@/lib/api-config";
+import { adminFetch } from "@/lib/api-config";
 import {
   renderTemplatePreview,
   TEMPLATE_SAMPLE_PAYLOAD,
@@ -38,26 +39,7 @@ import {
   type TemplatesState,
 } from "@/lib/simulator-report";
 
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
+// Admin auth (token + fetch) vem de src/lib/api-config.ts
 
 /** Rótulo curto do evento para o seletor. */
 function templateEventLabel(eventKey: string): string {
@@ -221,7 +203,7 @@ export function ReminderMessagesCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         {templatesError ? (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          <p className="text-xs text-amber-600 dark:text-amber-400">
             {templatesError} O pipeline continua com os textos padrão do código.
           </p>
         ) : null}
@@ -247,7 +229,7 @@ export function ReminderMessagesCard() {
               className="cursor-pointer"
             />
           ) : null}
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {currentTemplate?.edited || (currentTemplate && editing[currentTemplate.key]) ? "editado" : "texto padrão"}
           </span>
           {currentTemplateDiffersFromDefault ? (
@@ -266,7 +248,7 @@ export function ReminderMessagesCard() {
         {currentTemplate && editingTemplate ? (
           <>
             <div className="space-y-2">
-              <Label className="text-[10px] font-medium text-muted-foreground">
+              <Label className="text-xs font-medium text-muted-foreground">
                 Corpo da mensagem — {"{{campo}}"} substitui, {"{{#campo}}…{{/campo}}"} é opcional
               </Label>
               <Textarea
@@ -277,7 +259,7 @@ export function ReminderMessagesCard() {
               />
               {currentTemplate.channel === "push" ? (
                 <div className="space-y-1.5">
-                  <Label className="text-[10px] font-medium text-muted-foreground">Título do push</Label>
+                  <Label className="text-xs font-medium text-muted-foreground">Título do push</Label>
                   <Input
                     value={editingTemplate.title ?? ""}
                     onChange={(event) => updateEditing(currentTemplate.key, { title: event.target.value })}
@@ -286,7 +268,7 @@ export function ReminderMessagesCard() {
                 </div>
               ) : null}
               {livePreview?.missing.length ? (
-                <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                <p className="text-xs text-amber-600 dark:text-amber-400">
                   Campo desconhecido: {livePreview.missing.map((key) => `{{${key}}}`).join(", ")} — será enviado vazio.
                 </p>
               ) : null}
@@ -294,13 +276,13 @@ export function ReminderMessagesCard() {
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <Label className="text-[10px] font-medium text-muted-foreground">Prévia (como o cliente recebe)</Label>
-                <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
+                <Label className="text-xs font-medium text-muted-foreground">Prévia (como o cliente recebe)</Label>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                  <Checkbox
                     checked={showMinimalSample}
-                    onChange={(event) => setShowMinimalSample(event.target.checked)}
-                    className="accent-foreground"
+                    onCheckedChange={(checked) => setShowMinimalSample(checked === true)}
+                    aria-label="Simular fatura sem Pix/boleto"
+                    className="cursor-pointer"
                   />
                   simular fatura sem Pix/boleto
                 </label>
@@ -326,7 +308,7 @@ export function ReminderMessagesCard() {
             </div>
           </>
         ) : (
-          <p className="text-[10px] text-muted-foreground">Carregando mensagens…</p>
+          <p className="text-xs text-muted-foreground">Carregando mensagens…</p>
         )}
       </CardContent>
     </Card>

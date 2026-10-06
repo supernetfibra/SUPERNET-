@@ -93,6 +93,8 @@ const AdminConnections = lazy(() => import("./pages/AdminConnections"));
 const AdminReferrals = lazy(() => import("./pages/AdminReferrals"));
 const AdminMessages = lazy(() => import("./pages/AdminMessages"));
 const AdminSimulator = lazy(() => import("./pages/AdminSimulator"));
+const AdminAudit = lazy(() => import("./pages/AdminAudit"));
+const AdminCustomer360 = lazy(() => import("./pages/AdminCustomer360"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Invoices = lazy(() => import("./pages/Invoices"));
@@ -182,6 +184,9 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="/admin/connections" element={<Suspense fallback={<DashboardSkeleton />}><AdminConnections /></Suspense>} />
                 <Route path="/admin/settings" element={<Suspense fallback={<DashboardSkeleton />}><AdminSettings /></Suspense>} />
                 <Route path="/admin/simulator" element={<Suspense fallback={<DashboardSkeleton />}><AdminSimulator /></Suspense>} />
+                <Route path="/admin/audit" element={<Suspense fallback={<DashboardSkeleton />}><AdminAudit /></Suspense>} />
+                <Route path="/admin/customers" element={<Suspense fallback={<DashboardSkeleton />}><AdminCustomer360 /></Suspense>} />
+                <Route path="/admin/customers/:cpf" element={<Suspense fallback={<DashboardSkeleton />}><AdminCustomer360 /></Suspense>} />
               </Route>
 
               {/* Protected routes — lazy loaded */}

@@ -30,26 +30,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { apiUrl } from "@/lib/api-config";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-const BRANDING_STORAGE_KEY = "mikweb_branding";
+import { adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
+import { PageHeader } from "@/components/page-header";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
+const BRANDING_STORAGE_KEY = "mikweb_branding";
 
 function getStoredBranding(): { providerName: string; logoUrl: string } | null {
   try {
@@ -68,16 +57,7 @@ function storeBranding(name: string, logo: string) {
   }
 }
 
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(apiUrl(url)), { ...init, credentials: "include" });
-}
+// Admin auth (token + fetch) vem de src/lib/api-config.ts
 
 // ---------------------------------------------------------------------------
 // Component
@@ -168,7 +148,7 @@ export default function AdminSettings() {
         });
       } else {
         toast.success("Notificação enviada", {
-          description: `${data.sent} dispositivo(s) notificado(s).`,
+          description: `${plural(data.sent, "dispositivo notificado", "dispositivos notificados")}.`,
         });
       }
       setPushTitle("");
@@ -184,16 +164,16 @@ export default function AdminSettings() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-medium tracking-tight text-foreground">
-          Configurações
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Marca do provedor e notificações push. Credenciais ficam em{" "}
-          <strong className="font-medium text-foreground">Conexões</strong> e a régua de
-          lembretes em <strong className="font-medium text-foreground">Régua</strong>.
-        </p>
-      </div>
+      <PageHeader
+        title="Configurações"
+        description={
+          <>
+            Marca do provedor e notificações push. Credenciais ficam em{" "}
+            <strong className="font-medium text-foreground">Conexões</strong> e a régua
+            de lembretes em <strong className="font-medium text-foreground">Régua</strong>.
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ── Branding Section ── */}
@@ -350,7 +330,7 @@ export default function AdminSettings() {
             </div>
             <div className="space-y-2">
               <Label className="text-xs font-medium text-muted-foreground">
-                CPF <span className="text-muted-foreground/50">(opcional)</span>
+                CPF <span className="text-muted-foreground">(opcional)</span>
               </Label>
               <Input
                 placeholder="Vazio = todos os clientes inscritos"

@@ -224,8 +224,11 @@ export default function Referrals() {
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
         {loading ? (
           <div className="space-y-4">
-            <Skeleton className="h-36 w-full rounded-xl" />
-            <Skeleton className="h-64 w-full rounded-xl" />
+            {/* FASE 6 / item 3 — o skeleton usava rounded-xl (8px) enquanto o Card que
+                ele substitui usa rounded-lg (4px): o raio mudava no instante em
+                que o conteúdo real aparecia. Alinhado com o Card. */}
+            <Skeleton className="h-36 w-full rounded-lg" />
+            <Skeleton className="h-64 w-full rounded-lg" />
           </div>
         ) : loadError && !view ? (
           <Card>
@@ -446,7 +449,7 @@ export default function Referrals() {
         ) : null}
 
         <Separator className="opacity-40" />
-        <p className="text-[11px] text-muted-foreground text-center leading-relaxed max-w-md mx-auto pb-4">
+        <p className="text-xs text-muted-foreground text-center leading-relaxed max-w-md mx-auto pb-4">
           Pontos creditados quando a instalação indicada é aprovada pela equipe. Resgates sujeitos à confirmação.
           Programa sujeito a alterações.
         </p>

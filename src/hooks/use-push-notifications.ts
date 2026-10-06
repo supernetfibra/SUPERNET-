@@ -10,7 +10,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useToast } from "@/hooks/use-toast";
 import { authFetch } from "@/lib/api-config";
 
 // Public VAPID key — must be set as VITE_VAPID_PUBLIC_KEY in .env
@@ -21,6 +20,11 @@ const VAPID_PUBLIC_KEY =
 // navigator.serviceWorker.ready to get the existing registration.
 
 export type NotificationStatus = "unsupported" | "denied" | "granted" | "prompt" | "loading";
+
+/** `catch (err: unknown)` — extrai a mensagem sem perder a original. */
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
 interface PushNotificationState {
   /** Current permission / subscription status */
@@ -197,11 +201,11 @@ export function usePushNotifications() {
       updateState({ isSubscribed: true, isLoading: false, error: null });
 
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[PUSH] Subscribe error:", err);
       updateState({
         isLoading: false,
-        error: err.message || "Erro ao ativar notifica\u00e7\u00f5es push.",
+        error: errorMessage(err, "Erro ao ativar notifica\u00e7\u00f5es push."),
       });
       return false;
     }
@@ -234,11 +238,11 @@ export function usePushNotifications() {
       updateState({ isSubscribed: false, isLoading: false, error: null });
 
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[PUSH] Unsubscribe error:", err);
       updateState({
         isLoading: false,
-        error: err.message || "Erro ao desativar notifica\u00e7\u00f5es push.",
+        error: errorMessage(err, "Erro ao desativar notifica\u00e7\u00f5es push."),
       });
       return false;
     }

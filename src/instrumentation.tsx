@@ -33,17 +33,27 @@ async function reportToVly(message: string, stack?: string) {
 // DOM removeChild diagnostic — identifies exactly which node is being removed
 // ---------------------------------------------------------------------------
 
+/** `Node.prototype` carrega uma flag e o método patcheado — não é o tipo padrão. */
+interface NodeWithDiagnosticPatch {
+  __vlyPatched?: boolean;
+  removeChild<T extends Node>(child: T): T;
+}
+
 export function installRemoveChildDiagnostic() {
+  // O patch e a flag vivem fora do tipo de Node; `unknown` + guarda mantém a
+  // segurança de tipo sem `any`.
+  const proto = Node.prototype as NodeWithDiagnosticPatch;
+
   // Only patch once
-  if ((Node.prototype as any).__vlyPatched) return;
-  (Node.prototype as any).__vlyPatched = true;
+  if (proto.__vlyPatched) return;
+  proto.__vlyPatched = true;
 
   const originalRemoveChild = Node.prototype.removeChild;
 
-  (Node.prototype as any).removeChild = function <T extends Node>(child: T): T {
+  proto.removeChild = function <T extends Node>(child: T): T {
     try {
       return originalRemoveChild.call(this, child) as T;
-    } catch (err) {
+    } catch {
       // Log a brief warning (not an error — this is a known React 19 bug)
       // where removeChild is called on a text node that's already been
       // disconnected during concurrent route transitions.

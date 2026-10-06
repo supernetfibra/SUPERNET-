@@ -183,19 +183,30 @@ export default store;
 // Global registration — call once from main.tsx
 // ---------------------------------------------------------------------------
 
-export function registerDiagnostics(): void {
-  if (
-    typeof window !== "undefined" &&
-    typeof (window as any).__diagnostics === "undefined"
-  ) {
-    const fn = () => console.log(store.summary());
-    (fn as any).raw = store.all;
-    (fn as any).clear = () => store.clear();
-    (window as any).__diagnostics = fn;
+/** Atalho de console instalado por `registerDiagnostics`. */
+interface DiagnosticsFn {
+  (): void;
+  raw: DiagnosticsStore["all"];
+  clear: () => void;
+}
 
-    console.log(
-      "%c📊 Diagnóstico interno disponível. Digite __diagnostics() no console.",
-      "color: #6b7280; font-size: 11px;",
-    );
-  }
+/** `window` recebe o atalho `__diagnostics` — não faz parte do DOM padrão. */
+interface WindowWithDiagnostics {
+  __diagnostics?: DiagnosticsFn;
+}
+
+export function registerDiagnostics(): void {
+  if (typeof window === "undefined") return;
+  const globalScope = window as WindowWithDiagnostics;
+  if (typeof globalScope.__diagnostics !== "undefined") return;
+
+  const fn = () => console.log(store.summary());
+  fn.raw = store.all;
+  fn.clear = () => store.clear();
+  globalScope.__diagnostics = fn;
+
+  console.log(
+    "%c📊 Diagnóstico interno disponível. Digite __diagnostics() no console.",
+    "color: #6b7280; font-size: 11px;",
+  );
 }

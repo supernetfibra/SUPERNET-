@@ -262,7 +262,7 @@ export default function Invoices() {
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
-                className={`px-3 h-9 rounded-md text-[10px] font-medium uppercase tracking-wider transition-all ${
+                className={`px-3 h-9 rounded-md text-xs font-medium uppercase tracking-wider transition-all ${
                   statusFilter === status
                     ? status === "all"
                       ? "bg-foreground text-background"
@@ -280,7 +280,7 @@ export default function Invoices() {
             <button
               onClick={refetch}
               title="Atualizar lista de faturas"
-              className="ml-auto inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+              className="ml-auto inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
             >
               <RefreshCw className="h-3 w-3" />
               Atualizar
@@ -324,12 +324,12 @@ export default function Invoices() {
             <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
               {staleDataWarning.title}
             </p>
-            <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+            <p className="text-xs text-amber-700 dark:text-amber-300 mt-0.5">
               {staleDataWarning.message}
             </p>
             <button
               onClick={refetch}
-              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:underline"
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline"
             >
               <RefreshCw className="h-3 w-3" />
               Recarregar faturas
@@ -377,7 +377,7 @@ export default function Invoices() {
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-px flex-1 bg-border/30" />
-                <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
+                <span className="text-xs font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
                   {currentBilling ? "Demais faturas" : "Faturas abertas"}
                 </span>
                 <div className="h-px flex-1 bg-border/30" />
@@ -406,12 +406,12 @@ export default function Invoices() {
             <div className="animate-[slideUp_0.3s_ease-out]">
               <div className="flex items-center gap-3 mb-4">
                 <div className="h-px flex-1 bg-border/20" />
-                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/50 shrink-0">
+                <span className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground shrink-0">
                   Pagas
                 </span>
                 <button
                   onClick={toggleAllYears}
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/50 hover:text-foreground/70 transition-colors shrink-0"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground/70 transition-colors shrink-0"
                 >
                   {allExpanded ? "Recolher todos" : "Expandir todos"}
                 </button>
@@ -431,14 +431,14 @@ export default function Invoices() {
                         onClick={() => toggleYear(year)}
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-foreground hover:bg-secondary/30 transition-colors"
                       >
-                        <CalendarDays className="h-4 w-4 text-muted-foreground/60 shrink-0" />
+                        <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
                         <span>{year}</span>
-                        <span className="text-xs text-muted-foreground/60 font-normal">
+                        <span className="text-xs text-muted-foreground font-normal">
                           {count} fatura{count !== 1 ? "s" : ""} · {total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                         </span>
                         <div className="ml-auto">
                           <ChevronDown
-                            className={`h-4 w-4 text-muted-foreground/50 transition-transform duration-200 ${
+                            className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
                               isExpanded ? "rotate-0" : "-rotate-90"
                             }`}
                           />
@@ -470,7 +470,7 @@ export default function Invoices() {
                               >
                                 <button
                                   onClick={() => navigate(`/faturas/${billing.id}`)}
-                                  className="w-full flex items-center justify-between px-3 py-2 rounded-sm text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-secondary/30 transition-all group"
+                                  className="w-full flex items-center justify-between px-3 py-2 rounded-sm text-xs text-muted-foreground hover:text-muted-foreground hover:bg-secondary/30 transition-all group"
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
                                     <CheckCircle2 className="h-3 w-3 text-emerald-500/50 shrink-0" />

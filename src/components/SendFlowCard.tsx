@@ -35,27 +35,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-
-const ADMIN_TOKEN_KEY = "mikweb_admin_token";
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function withAdminToken(url: string): string {
-  const token = getAdminToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}token=${encodeURIComponent(token)}`;
-}
-
-function adminFetch(url: string, init?: RequestInit): Promise<Response> {
-  return fetch(withAdminToken(url), { ...init, credentials: "include" });
-}
+// Admin auth (token + fetch) vem de src/lib/api-config.ts.
+// Divergência da cópia antiga corrigida na consolidação: ela esquecia o apiUrl(),
+// então fazia fetch relativo à origem — agora usa a mesma base das outras telas.
+import { adminFetch } from "@/lib/api-config";
+import { plural } from "@/lib/plural";
 
 interface FlowStatus {
   credentials: { ok: boolean; origin: string };
@@ -238,7 +222,7 @@ export function SendFlowCard() {
       const failed = Number(data?.summary?.failed ?? 0);
       toast.success(
         sent || failed
-          ? `Envio concluído: ${sent} mensagem(ns) saíram${failed ? `, ${failed} falharam (veja a fila)` : ""}.`
+          ? `Envio concluído: ${plural(sent, "mensagem saiu", "mensagens saíram")}${failed ? `, ${failed} falharam (veja a fila)` : ""}.`
           : "Nada a enviar agora — a fila está em dia."
       );
       await load();
@@ -344,7 +328,7 @@ export function SendFlowCard() {
               type="button"
               onClick={() => void load()}
               title="Atualizar agora (auto-refresh a cada 1 min)"
-              className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
             >
               <RefreshCw className="h-3 w-3" />
               {refreshedAt
@@ -354,7 +338,7 @@ export function SendFlowCard() {
                   )}`
                 : "atualizando…"}
             </button>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {doneCount}/{steps.length} prontos
             </span>
           </div>
@@ -393,7 +377,7 @@ export function SendFlowCard() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-medium text-foreground">{step.title}</p>
-              <p className="text-[11px] text-muted-foreground">{step.detail}</p>
+              <p className="text-xs text-muted-foreground">{step.detail}</p>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               {step.action ? (
@@ -415,7 +399,7 @@ export function SendFlowCard() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 text-[11px] cursor-pointer text-muted-foreground"
+                  className="h-7 text-xs cursor-pointer text-muted-foreground"
                   onClick={() => navigate(step.href!)}
                 >
                   {step.hrefLabel ?? "Abrir"}
@@ -431,7 +415,7 @@ export function SendFlowCard() {
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
             <div className="space-y-0.5">
               {blockers.map((b) => (
-                <p key={b} className="text-[11px] text-amber-700 dark:text-amber-400">
+                <p key={b} className="text-xs text-amber-700 dark:text-amber-400">
                   {b}
                 </p>
               ))}
@@ -460,7 +444,7 @@ export function SendFlowCard() {
             <FlaskConical className="h-3.5 w-3.5 mr-1.5" />
             Prever o que sairia
           </Button>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {status.sendGapSeconds
               ? `Ritmo atual: 1 mensagem a cada ${status.sendGapSeconds}s.`
               : "Ritmo atual: padrão humano."}
@@ -469,7 +453,7 @@ export function SendFlowCard() {
             <button
               type="button"
               onClick={() => navigate("/admin/connections")}
-              className="text-[10px] text-amber-600 dark:text-amber-400 cursor-pointer hover:underline"
+              className="text-xs text-amber-600 dark:text-amber-400 cursor-pointer hover:underline"
               title="Configure em Conexões → Alertas de operação"
             >
               🔔 Receba avisos quando o canal parar — configurar alertas
@@ -501,9 +485,9 @@ export function SendFlowCard() {
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <p className="px-3 pb-2.5 pt-1 text-[11px] text-muted-foreground">{tourGuided.detail}</p>
+          <p className="px-3 pb-2.5 pt-1 text-xs text-muted-foreground">{tourGuided.detail}</p>
           <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               Avança sozinho quando o passo ficar ✓
             </span>
             <Button size="sm" variant="ghost" className="h-7 text-xs cursor-pointer" onClick={dismissTour}>

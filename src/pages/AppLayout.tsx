@@ -103,6 +103,7 @@ export default function AppLayout() {
               <button
                 key={item.name}
                 onClick={() => navigate(item.href)}
+                aria-current={active ? "page" : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-sm text-sm transition-all ${
                   active
                     ? "bg-secondary text-foreground font-medium"
@@ -164,7 +165,7 @@ export default function AppLayout() {
                   <p className="text-xs font-medium text-foreground truncate">
                     {customer?.name || "Usuário"}
                   </p>
-                  <p className="text-[10px] text-muted-foreground truncate">
+                  <p className="text-xs text-muted-foreground truncate">
                     {customer?.cpf ? `CPF: ***${customer.cpf.slice(-3)}` : ""}
                   </p>
                 </div>
@@ -263,6 +264,7 @@ export default function AppLayout() {
               <button
                 key={item.name}
                 onClick={() => navigate(item.href)}
+                aria-current={active ? "page" : undefined}
                 className={`relative flex flex-col items-center justify-center gap-0.5 py-1 px-4 h-full min-w-[64px] transition-all ${
                   active
                     ? "text-foreground"
@@ -275,18 +277,38 @@ export default function AppLayout() {
                 )}
                 <div className="relative">
                   <item.icon className="h-5 w-5" />
-                  {/* Badge on Faturas icon */}
+                  {/* Badge on Faturas icon
+                      FASE 6 / item 5 — antes: vermelho se há vencida,
+                      âMBAR em qualquer outro caso. Âmbar é o tom de
+                      "atenção" do produto (status warning), então uma
+                      fatura futura e perfeitamente normal aparecia como
+                      alerta. Agora a cor carrega a urgência REAL:
+                        vermelho = há fatura vencida
+                        âmbar   = vencendo em até 3 dias (expirando)
+                        neutro  = apenas informativo (fatura a vencer)
+                      O `expiringSoon` já era calculado e nunca usado. */}
                   {isFaturas && badge && badge.total > 0 && (
-                    <span className={`absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[16px] h-[16px] rounded-full text-[9px] font-bold leading-none px-1 ${
-                      badge.overdue > 0
-                        ? "bg-red-500 text-white"
-                        : "bg-amber-500 text-white"
-                    }`}>
+                    <span
+                      className={`absolute -top-1.5 -right-1.5 inline-flex items-center justify-center min-w-[16px] h-[16px] rounded-full text-[9px] font-bold leading-none px-1 ${
+                        badge.overdue > 0
+                          ? "bg-red-500 text-white"
+                          : badge.expiringSoon > 0
+                          ? "bg-amber-500 text-white"
+                          : "bg-muted-foreground text-background"
+                      }`}
+                      aria-label={
+                        badge.overdue > 0
+                          ? `${badge.total} faturas, ${badge.overdue} vencida(s)`
+                          : badge.expiringSoon > 0
+                          ? `${badge.total} faturas, vencendo em breve`
+                          : `${badge.total} faturas em aberto`
+                      }
+                    >
                       {badge.total}
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] font-medium leading-none">
+                <span className="text-xs font-medium leading-none">
                   {item.name}
                 </span>
               </button>

@@ -41,7 +41,9 @@ const SESSION_TOKEN_KEY = "mikweb_session_token";
 export function storeSessionToken(token: string): void {
   try {
     localStorage.setItem(SESSION_TOKEN_KEY, token);
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir o token.
+  }
 }
 
 export function getSessionToken(): string | null {
@@ -55,7 +57,9 @@ export function getSessionToken(): string | null {
 export function clearSessionToken(): void {
   try {
     localStorage.removeItem(SESSION_TOKEN_KEY);
-  } catch {}
+  } catch {
+    // localStorage indisponível (modo privado/cota) — seguir sem persistir o token.
+  }
 }
 
 /**
@@ -68,3 +72,44 @@ export function authFetch(path: string, init: RequestInit = {}): Promise<Respons
   if (token) headers.set("x-session-token", token);
   return fetch(apiUrl(path), { ...init, headers, credentials: "include" });
 }
+
+// ---------------------------------------------------------------------------
+// Admin session — token administrativo em localStorage.
+// Fonte ÚNICA de autenticação admin no frontend (consolida 12 cópias locais
+// que existiam em páginas e componentes do painel).
+//
+// O token admin viaja EXCLUSIVAMENTE no header `x-admin-token` (o backend
+// também aceita o cookie mikweb_admin_session em deploys same-origin).
+// Transporte por query string (?token=...) foi REMOVIDO: tokens em URLs
+// vazam por logs de servidor, histórico do browser e header Referer.
+// ---------------------------------------------------------------------------
+
+export const ADMIN_TOKEN_KEY = "mikweb_admin_token";
+
+export function getAdminToken(): string | null {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * fetch para endpoints admin — token via header `x-admin-token` + cookies.
+ */
+export function adminFetch(url: string, init?: RequestInit): Promise<Response> {
+  const token = getAdminToken();
+  const headers = new Headers(init?.headers);
+  if (token) headers.set("x-admin-token", token);
+  return fetch(apiUrl(url), {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+}
+
+/**
+ * Alias legado de `adminFetch` — mantido porque três telas importavam a
+ * variante "header"; hoje ambos enviam o token exclusivamente pelo header.
+ */
+export const adminFetchHeader = adminFetch;

@@ -12,14 +12,8 @@
  */
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -41,121 +35,75 @@ import {
   XCircle,
   Clock,
   Users,
-  Search,
-  X,
   ChevronDown,
-  ChevronRight,
   Phone,
   Mail,
   MapPin,
   Printer,
-  Calendar,
   MessageSquare,
   Image,
   Download,
   Eye,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router";
 import { toast } from "sonner";
-import { apiUrl } from "@/lib/api-config";
+import { adminFetch } from "@/lib/api-config";
+import {
+  fetchInstallRequests,
+  type InstallRequest,
+  type InstallSummary,
+} from "@/lib/install-requests-api";
+import { PageHeader } from "@/components/page-header";
+import { StatusBadge, type StatusTone } from "@/components/status-badge";
+import { KpiCard } from "@/components/kpi-card";
+import { EmptyState } from "@/components/empty-state";
+import { FilterBar, FilterResults, FilterSearch } from "@/components/filter-bar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { formatCpf } from "@/lib/cpf";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types — InstallRequest/InstallSummary vêm de
+// @/lib/install-requests-api, que normaliza o snake_case do banco.
 // ---------------------------------------------------------------------------
-
-interface InstallRequest {
-  id: string;
-  fullName: string;
-  cpf: string;
-  phone: string;
-  email?: string;
-  zipCode?: string;
-  street?: string;
-  number?: string;
-  complement?: string;
-  neighborhood?: string;
-  city?: string;
-  state?: string;
-  desiredPlan?: string;
-  message?: string;
-  agreedToTerms?: boolean;
-  status: "pending" | "approved" | "rejected";
-  adminNote?: string;
-  photoHouseFront?: string;
-  photoStreet?: string;
-  photoIdFront?: string;
-  photoIdBack?: string;
-  createdAt: string;
-  updatedAt?: string;
-}
-
-interface InstallSummary {
-  total: number;
-  pending: number;
-  approved: number;
-  rejected: number;
-}
 
 // ---------------------------------------------------------------------------
 // Status config
 // ---------------------------------------------------------------------------
 
-const STATUS_CONFIG = {
-  pending: {
-    label: "Pendente",
-    color: "text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400",
-    icon: Clock,
-  },
-  approved: {
-    label: "Aprovada",
-    color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-400",
-    icon: CheckCircle2,
-  },
-  rejected: {
-    label: "Recusada",
-    color: "text-red-600 bg-red-50 dark:bg-red-950/20 dark:text-red-400",
-    icon: XCircle,
-  },
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; tone: StatusTone; icon: typeof Clock }
+> = {
+  pending: { label: "Pendente", tone: "warning", icon: Clock },
+  approved: { label: "Aprovada", tone: "success", icon: CheckCircle2 },
+  rejected: { label: "Recusada", tone: "danger", icon: XCircle },
 };
 
 // ---------------------------------------------------------------------------
-// Admin token helper
+// Admin auth (token + fetch) vem de src/lib/api-config.ts — token via header
+// x-admin-token (header-only).
 // ---------------------------------------------------------------------------
-
-function getAdminToken(): string | null {
-  try {
-    return localStorage.getItem("mikweb_admin_token");
-  } catch {
-    return null;
-  }
-}
-
-async function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = getAdminToken();
-  const url = new URL(apiUrl(path));
-  if (token) {
-    url.searchParams.set("token", token);
-  }
-  return fetch(url.toString(), {
-    ...init,
-    credentials: "include",
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export default function AdminInstallRequests() {
-  const navigate = useNavigate();
 
   // Data state
   const [requests, setRequests] = useState<InstallRequest[]>([]);
   const [summary, setSummary] = useState<InstallSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+
+  // Decisão em curso (aprovar/recusar) — ver handleStatus
+  const [decisionOpen, setDecisionOpen] = useState(false);
+  const [decisionTarget, setDecisionTarget] = useState<InstallRequest | null>(null);
+  const [decisionStatus, setDecisionStatus] = useState<"approved" | "rejected" | null>(null);
+  const [decisionNote, setDecisionNote] = useState("");
 
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -172,26 +120,18 @@ export default function AdminInstallRequests() {
   const loadRequests = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (statusFilter !== "all") {
-        params.set("status", statusFilter);
-      }
-      const res = await adminFetch(`/api/admin/install-requests?${params.toString()}`);
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(data.requests || []);
-        setSummary(data.summary || null);
-      } else {
-        toast.error("Erro ao carregar solicitações.");
-      }
+      const { requests: list, summary: sum } = await fetchInstallRequests(statusFilter);
+      setRequests(list);
+      setSummary(sum);
     } catch {
-      toast.error("Erro de conexão.");
+      toast.error("Erro ao carregar solicitações.");
     } finally {
       setLoading(false);
     }
   }, [statusFilter]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carregamento de dados (mesmo padrão das demais páginas admin)
     loadRequests();
   }, [loadRequests]);
 
@@ -203,6 +143,10 @@ export default function AdminInstallRequests() {
     if (!searchQuery.trim()) return requests;
 
     const q = searchQuery.toLowerCase();
+    // Campos numéricos (CPF/telefone) só participam quando a busca tem dígitos:
+    // sem essa guarda, q.replace(/\D/g, "") virava "" e includes("") casava com
+    // TODOS os registros para qualquer termo textual (bug corrigido na Fase 4).
+    const qDigits = q.replace(/\D/g, "");
     return requests.filter((r) => {
       const fullName = (r.fullName || "").toLowerCase();
       const cpf = (r.cpf || "").replace(/\D/g, "");
@@ -212,8 +156,7 @@ export default function AdminInstallRequests() {
 
       return (
         fullName.includes(q) ||
-        cpf.includes(q.replace(/\D/g, "")) ||
-        phone.includes(q.replace(/\D/g, "")) ||
+        (qDigits.length > 0 && (cpf.includes(qDigits) || phone.includes(qDigits))) ||
         email.includes(q) ||
         city.includes(q)
       );
@@ -223,16 +166,41 @@ export default function AdminInstallRequests() {
   const hasActiveFilter = searchQuery.trim() !== "" || statusFilter !== "all";
 
   // ---------------------------------------------------------------------------
-  // Status update
+  // Decisão: aprovar / recusar
+  //
+  // Risco ALTO. Aprovar libera a instalação E credita pontos do programa de
+  // indicação no banco (o backend faz isso de forma idempotente, mas reverter
+  // o status depois não desfaz o crédito). Recusar é reversível na teoria, mas
+  // não há como o atendente desfazer um clique acidental no card.
+  //
+  // O endpoint já aceita `adminNote` (coluna admin_note) — usá-lo NÃO é
+  // contrato novo, é um parâmetro que existia e nunca era enviado.
+  // Aprovar: confirmação simples com identificação do registro.
+  // Recusar: confirmação reforçada + motivo (fica registrado).
   // ---------------------------------------------------------------------------
 
-  const handleStatus = async (requestId: string, status: "approved" | "rejected") => {
-    setProcessingId(requestId);
+  const openDecision = (request: InstallRequest, status: "approved" | "rejected") => {
+    setDecisionTarget(request);
+    setDecisionStatus(status);
+    setDecisionNote(request.adminNote ?? "");
+    setDecisionOpen(true);
+  };
+
+  const handleStatus = async () => {
+    const request = decisionTarget;
+    const status = decisionStatus;
+    if (!request || !status) return;
+
+    setProcessingId(request.id);
     try {
-      const res = await adminFetch(`/api/admin/install-requests/${requestId}/status`, {
+      const res = await adminFetch(`/api/admin/install-requests/${request.id}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({
+          status,
+          // Motivo obrigatório na recusa; opcional na aprovação.
+          adminNote: decisionNote.trim() || undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -241,9 +209,15 @@ export default function AdminInstallRequests() {
       }
       toast.success(
         status === "approved" ? "Solicitação aprovada" : "Solicitação recusada",
-        { description: "Status atualizado com sucesso." }
+        {
+          description:
+            status === "approved"
+              ? `${request.fullName} — a instalação pode seguir.`
+              : `${request.fullName} — motivo registrado.`,
+        }
       );
-      loadRequests();
+      setDecisionOpen(false);
+      void loadRequests();
     } catch {
       toast.error("Erro ao atualizar solicitação.");
     } finally {
@@ -255,24 +229,15 @@ export default function AdminInstallRequests() {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("pt-BR");
+  // `created_at`/`reviewed_at` são BIGINT (epoch ms) — ver install-requests-api.
+  const formatDate = (epochMs: number) => {
+    const d = new Date(epochMs);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
   };
 
-  const formatTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  };
-
-  const buildAddress = (r: InstallRequest) => {
-    const parts = [
-      r.street && `${r.street}${r.number ? `, ${r.number}` : ""}`,
-      r.complement,
-      r.neighborhood,
-      r.city && r.state ? `${r.city}/${r.state}` : r.city || r.state,
-    ].filter(Boolean);
-    return parts.join(", ") || null;
+  const formatTime = (epochMs: number) => {
+    const d = new Date(epochMs);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   };
 
   const getPhotos = (r: InstallRequest) => {
@@ -417,7 +382,6 @@ export default function AdminInstallRequests() {
 
   /** Print client registration/installation request */
   const printRegistration = (r: InstallRequest, mode: "print" | "pdf" = "print") => {
-    const address = buildAddress(r);
     const html = `
       <div class="header">
         <h1>Cadastro de Cliente — Solicitação de Instalação</h1>
@@ -472,109 +436,59 @@ export default function AdminInstallRequests() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Home className="h-4 w-4 text-muted-foreground" />
-          <h1 className="text-xl font-medium tracking-tight text-foreground">
-            Solicitações de Instalação
-          </h1>
-          {summary && summary.pending > 0 && (
+      <PageHeader
+        icon={Home}
+        title="Solicitações de Instalação"
+        badge={
+          summary && summary.pending > 0 ? (
             <Badge
               variant="outline"
-              className="text-[10px] font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400"
+              className="text-xs font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/20 dark:text-amber-400"
             >
               {summary.pending} pendente{summary.pending === 1 ? "" : "s"}
             </Badge>
-          )}
-        </div>
-        <button
-          onClick={loadRequests}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-          disabled={loading}
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </div>
+          ) : undefined
+        }
+        actions={
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={loadRequests}
+                aria-label="Recarregar solicitações"
+                disabled={loading}
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Recarregar</TooltipContent>
+          </Tooltip>
+        }
+      />
 
       <div className="space-y-6">
         {/* Statistics */}
         {summary && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-[slideUp_0.3s_ease-out]">
-            <Card className="border-border shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-secondary flex items-center justify-center shrink-0">
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold">{summary.total}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
-                    <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold">{summary.pending}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Pendentes</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold">{summary.approved}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Aprovadas</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="border-border shadow-none">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
-                    <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-semibold">{summary.rejected}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Recusadas</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <KpiCard label="Total" value={summary.total} icon={Users} />
+            <KpiCard label="Pendentes" value={summary.pending} icon={Clock} tone="warning" />
+            <KpiCard label="Aprovadas" value={summary.approved} icon={CheckCircle2} tone="success" />
+            <KpiCard label="Recusadas" value={summary.rejected} icon={XCircle} tone="danger" />
           </div>
         )}
 
         {/* Search and Filter */}
-        <div className="flex flex-col sm:flex-row gap-3 animate-[slideUp_0.3s_ease-out_0.05s_both]">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Buscar por nome, CPF, telefone, cidade..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-10 pl-10 pr-10 text-sm"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
+        <FilterBar className="animate-[slideUp_0.3s_ease-out_0.05s_both]">
+          <FilterSearch
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Buscar por nome, CPF, telefone, cidade..."
+            onClear={() => setSearchQuery("")}
+            ariaLabel="Buscar solicitações"
+            inputClassName="h-10"
+          />
           <div className="flex gap-2">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="h-10 w-[140px] text-xs">
@@ -588,19 +502,16 @@ export default function AdminInstallRequests() {
               </SelectContent>
             </Select>
           </div>
-        </div>
+        </FilterBar>
 
         {/* Active filter indicator */}
         {hasActiveFilter && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-[fadeIn_0.2s_ease-out]">
-            <span>{filteredRequests.length} resultado{filteredRequests.length !== 1 ? "s" : ""}</span>
-            <button
-              onClick={() => { setSearchQuery(""); setStatusFilter("all"); }}
-              className="text-foreground hover:underline"
-            >
-              Limpar filtros
-            </button>
-          </div>
+          <FilterResults
+            count={filteredRequests.length}
+            unit="resultado"
+            onClear={() => { setSearchQuery(""); setStatusFilter("all"); }}
+            className="animate-[fadeIn_0.2s_ease-out]"
+          />
         )}
 
         {/* Loading state */}
@@ -612,15 +523,12 @@ export default function AdminInstallRequests() {
 
         {/* Empty state */}
         {!loading && filteredRequests.length === 0 && (
-          <div className="text-center py-16">
-            <Home className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-            <p className="text-sm font-medium text-foreground">
-              {hasActiveFilter ? "Nenhuma solicitação corresponde aos filtros" : "Nenhuma solicitação recebida"}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {hasActiveFilter ? "Tente alterar os filtros de busca" : "As solicitações da página inicial aparecerão aqui"}
-            </p>
-          </div>
+          <EmptyState
+            icon={Home}
+            size="page"
+            title={hasActiveFilter ? "Nenhuma solicitação corresponde aos filtros" : "Nenhuma solicitação recebida"}
+            description={hasActiveFilter ? "Tente alterar os filtros de busca" : "As solicitações da página inicial aparecerão aqui"}
+          />
         )}
 
         {/* Request list */}
@@ -630,7 +538,6 @@ export default function AdminInstallRequests() {
               const statusConfig = STATUS_CONFIG[request.status] || STATUS_CONFIG.pending;
               const StatusIcon = statusConfig.icon;
               const isExpanded = expandedId === request.id;
-              const address = buildAddress(request);
               const photos = getPhotos(request);
 
               return (
@@ -651,13 +558,12 @@ export default function AdminInstallRequests() {
                           <h3 className="text-sm font-medium text-foreground">
                             {request.fullName}
                           </h3>
-                          <Badge
-                            variant="outline"
-                            className={`text-[9px] font-medium px-1.5 py-0 border-none ${statusConfig.color}`}
-                          >
-                            <StatusIcon className="h-2.5 w-2.5 mr-1" />
-                            {statusConfig.label}
-                          </Badge>
+                          <StatusBadge
+                            tone={statusConfig.tone}
+                            icon={StatusIcon}
+                            label={statusConfig.label}
+                            className="text-[9px] font-medium px-1.5 py-0"
+                          />
                         </div>
                         <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                           <span className="font-mono">CPF {formatCpf(request.cpf)}</span>
@@ -674,7 +580,7 @@ export default function AdminInstallRequests() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-muted-foreground hidden sm:block">
+                        <span className="text-xs text-muted-foreground hidden sm:block">
                           {formatDate(request.createdAt)} · {formatTime(request.createdAt)}
                         </span>
                         <ChevronDown
@@ -692,63 +598,63 @@ export default function AdminInstallRequests() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {/* Column 1: Personal data */}
                           <div className="space-y-3">
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                               Dados pessoais
                             </h4>
                             <div className="space-y-2 text-xs">
                               <div className="flex items-center gap-2">
                                 <Users className="h-3 w-3 shrink-0 text-muted-foreground" />
                                 <span className="text-muted-foreground w-16 shrink-0">Nome</span>
-                                <span className="text-foreground">{request.fullName || <span className="text-muted-foreground/50 italic">—</span>}</span>
+                                <span className="text-foreground">{request.fullName || <span className="text-muted-foreground italic">—</span>}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
                                 <span className="text-muted-foreground w-16 shrink-0">CPF</span>
-                                <span className="text-foreground font-mono">{formatCpf(request.cpf) || <span className="text-muted-foreground/50 italic">—</span>}</span>
+                                <span className="text-foreground font-mono">{formatCpf(request.cpf) || <span className="text-muted-foreground italic">—</span>}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <Phone className="h-3 w-3 shrink-0 text-muted-foreground" />
                                 <span className="text-muted-foreground w-16 shrink-0">Telefone</span>
-                                <span className="text-foreground">{request.phone || <span className="text-muted-foreground/50 italic">—</span>}</span>
+                                <span className="text-foreground">{request.phone || <span className="text-muted-foreground italic">—</span>}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <Mail className="h-3 w-3 shrink-0 text-muted-foreground" />
                                 <span className="text-muted-foreground w-16 shrink-0">E-mail</span>
-                                <span className="text-foreground">{request.email || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                                <span className="text-foreground">{request.email || <span className="text-muted-foreground italic">Não informado</span>}</span>
                               </div>
                             </div>
                           </div>
 
                           {/* Column 2: Address */}
                           <div className="space-y-3">
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                               Endereço
                             </h4>
                             <div className="space-y-2 text-xs">
                               <div className="flex items-center gap-2">
                                 <MapPin className="h-3 w-3 shrink-0 text-muted-foreground" />
                                 <span className="text-muted-foreground w-16 shrink-0">Rua</span>
-                                <span className="text-foreground">{request.street || <span className="text-muted-foreground/50 italic">Não informado</span>}{request.number ? `, ${request.number}` : ''}</span>
+                                <span className="text-foreground">{request.street || <span className="text-muted-foreground italic">Não informado</span>}{request.number ? `, ${request.number}` : ''}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
                                 <span className="text-muted-foreground w-16 shrink-0">Bairro</span>
-                                <span className="text-foreground">{request.neighborhood || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                                <span className="text-foreground">{request.neighborhood || <span className="text-muted-foreground italic">Não informado</span>}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
                                 <span className="text-muted-foreground w-16 shrink-0">Cidade</span>
-                                <span className="text-foreground">{request.city || <span className="text-muted-foreground/50 italic">Não informado</span>}{request.state ? `/${request.state}` : ''}</span>
+                                <span className="text-foreground">{request.city || <span className="text-muted-foreground italic">Não informado</span>}{request.state ? `/${request.state}` : ''}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
                                 <span className="text-muted-foreground w-16 shrink-0">CEP</span>
-                                <span className="text-foreground font-mono">{request.zipCode || <span className="text-muted-foreground/50 italic">Não informado</span>}</span>
+                                <span className="text-foreground font-mono">{request.zipCode || <span className="text-muted-foreground italic">Não informado</span>}</span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <span className="h-3 w-3 shrink-0" />
                                 <span className="text-muted-foreground w-16 shrink-0">Compl.</span>
-                                <span className="text-foreground">{request.complement || <span className="text-muted-foreground/50 italic">—</span>}</span>
+                                <span className="text-foreground">{request.complement || <span className="text-muted-foreground italic">—</span>}</span>
                               </div>
                             </div>
                           </div>
@@ -760,11 +666,11 @@ export default function AdminInstallRequests() {
                             <div className="flex items-center gap-2">
                               <span className="text-muted-foreground w-[60px] sm:w-[68px] shrink-0 font-medium">Plano</span>
                               {request.desiredPlan ? (
-                                <Badge variant="outline" className="text-[10px] font-medium border-border">
+                                <Badge variant="outline" className="text-xs font-medium border-border">
                                   {request.desiredPlan}
                                 </Badge>
                               ) : (
-                                <span className="text-muted-foreground/50 italic">Não informado</span>
+                                <span className="text-muted-foreground italic">Não informado</span>
                               )}
                             </div>
                             <div className="flex items-center gap-2">
@@ -776,7 +682,7 @@ export default function AdminInstallRequests() {
 
                         {/* Message */}
                         <div className="space-y-1">
-                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
                             <MessageSquare className="h-3 w-3" />
                             Observação do cliente
                           </h4>
@@ -785,7 +691,7 @@ export default function AdminInstallRequests() {
                               &ldquo;{request.message}&rdquo;
                             </p>
                           ) : (
-                            <p className="text-xs text-muted-foreground/50 italic bg-secondary/30 rounded-sm p-3">
+                            <p className="text-xs text-muted-foreground italic bg-secondary/30 rounded-sm p-3">
                               Nenhuma observação informada
                             </p>
                           )}
@@ -793,7 +699,7 @@ export default function AdminInstallRequests() {
 
                         {/* Admin note */}
                         <div className="space-y-1">
-                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                             Nota do admin
                           </h4>
                           {request.adminNote ? (
@@ -801,7 +707,7 @@ export default function AdminInstallRequests() {
                               {request.adminNote}
                             </p>
                           ) : (
-                            <p className="text-xs text-muted-foreground/50 italic bg-secondary/30 rounded-sm p-3">
+                            <p className="text-xs text-muted-foreground italic bg-secondary/30 rounded-sm p-3">
                               Nenhuma nota registrada
                             </p>
                           )}
@@ -810,7 +716,7 @@ export default function AdminInstallRequests() {
                         {/* Photos */}
                         {photos.length > 0 && (
                           <div className="space-y-2">
-                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
                               <Image className="h-3 w-3" />
                               Fotos ({photos.length})
                             </h4>
@@ -832,7 +738,7 @@ export default function AdminInstallRequests() {
                                   <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-sm">
                                     <Eye className="h-5 w-5 text-white" />
                                   </div>
-                                  <p className="text-[9px] text-muted-foreground mt-1 truncate">
+                                  <p className="text-xs text-muted-foreground mt-1 truncate">
                                     {photo.label}
                                   </p>
                                 </button>
@@ -843,7 +749,7 @@ export default function AdminInstallRequests() {
 
                         {/* Actions */}
                         <div className="flex items-center justify-between pt-2 border-t border-border/60">
-                          <p className="text-[10px] text-muted-foreground">
+                          <p className="text-xs text-muted-foreground">
                             Recebida em {formatDate(request.createdAt)} às {formatTime(request.createdAt)}
                           </p>
                           {request.status === "pending" && (
@@ -854,7 +760,7 @@ export default function AdminInstallRequests() {
                                 className="h-8 text-xs text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleStatus(request.id, "approved");
+                                  openDecision(request, "approved");
                                 }}
                                 disabled={processingId === request.id}
                               >
@@ -871,7 +777,7 @@ export default function AdminInstallRequests() {
                                 className="h-8 text-xs text-destructive hover:text-destructive/80 border-destructive/30"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleStatus(request.id, "rejected");
+                                  openDecision(request, "rejected");
                                 }}
                                 disabled={processingId === request.id}
                               >
@@ -882,18 +788,17 @@ export default function AdminInstallRequests() {
                           )}
                           {request.status !== "pending" && (
                             <div className="flex items-center gap-2">
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] font-medium px-2 py-0.5 border-none ${statusConfig.color}`}
-                              >
-                                {statusConfig.label}
-                              </Badge>
+                              <StatusBadge
+                                tone={statusConfig.tone}
+                                label={statusConfig.label}
+                                className="text-[10px] font-medium px-2 py-0.5"
+                              />
                               {request.status === "approved" && (
                                 <div className="flex gap-1">
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       printTerms(request, "print");
@@ -905,7 +810,7 @@ export default function AdminInstallRequests() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       printTerms(request, "pdf");
@@ -917,7 +822,7 @@ export default function AdminInstallRequests() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       printRegistration(request, "print");
@@ -929,7 +834,7 @@ export default function AdminInstallRequests() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 text-[10px] text-muted-foreground hover:text-foreground"
+                                    className="h-7 text-xs text-muted-foreground hover:text-foreground"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       printRegistration(request, "pdf");
@@ -972,6 +877,115 @@ export default function AdminInstallRequests() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ── Decisão: aprovar / recusar (risco alto) ── */}
+      <ConfirmDialog
+        open={decisionOpen}
+        onOpenChange={(open) => {
+          setDecisionOpen(open);
+          if (!open) setDecisionTarget(null);
+        }}
+        title={
+          decisionStatus === "approved"
+            ? "Aprovar esta instalação?"
+            : "Recusar esta solicitação?"
+        }
+        description={
+          decisionStatus === "approved"
+            ? "A solicitação sai da fila de pendentes e a instalação pode seguir. Se ela veio por indicação, os pontos do indicador são creditados automaticamente."
+            : "A solicitação sai da fila de pendentes. O motivo fica registrado nesta tela e não é enviado ao cliente automaticamente."
+        }
+        confirmLabel={decisionStatus === "approved" ? "Aprovar instalação" : "Recusar solicitação"}
+        actionClassName={
+          decisionStatus === "approved"
+            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+            : "bg-red-600 hover:bg-red-700 text-white"
+        }
+        disabled={
+          decisionStatus === "rejected" && decisionNote.trim().length < 3
+        }
+        onConfirm={handleStatus}
+      >
+        {decisionTarget && (
+          <div className="space-y-3">
+            {/* Identificação do registro afetado */}
+            <dl className="rounded-sm border border-border bg-secondary/40 divide-y divide-border/60 text-xs">
+              <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                <dt className="text-muted-foreground shrink-0">Cliente</dt>
+                <dd className="text-foreground font-medium truncate">{decisionTarget.fullName || "—"}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                <dt className="text-muted-foreground shrink-0">CPF</dt>
+                <dd className="text-foreground font-mono">{formatCpf(decisionTarget.cpf)}</dd>
+              </div>
+              <div className="flex items-start justify-between gap-3 px-2.5 py-1.5">
+                <dt className="text-muted-foreground shrink-0">Endereço</dt>
+                <dd className="text-foreground text-right min-w-0">
+                  {decisionTarget.street ? (
+                    <>
+                      {decisionTarget.street}
+                      {decisionTarget.number ? `, ${decisionTarget.number}` : ""}
+                      {decisionTarget.neighborhood ? ` · ${decisionTarget.neighborhood}` : ""}
+                      {decisionTarget.city ? ` · ${decisionTarget.city}` : ""}
+                      {decisionTarget.state ? `/${decisionTarget.state}` : ""}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground italic">não informado</span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                <dt className="text-muted-foreground shrink-0">Plano solicitado</dt>
+                <dd className="text-foreground truncate">
+                  {decisionTarget.desiredPlan || (
+                    <span className="text-muted-foreground italic">não informado</span>
+                  )}
+                </dd>
+              </div>
+              {decisionStatus === "approved" && decisionTarget.referralCode && (
+                <div className="flex items-center justify-between gap-3 px-2.5 py-1.5">
+                  <dt className="text-muted-foreground shrink-0">Indicação</dt>
+                  <dd className="text-foreground font-mono">{decisionTarget.referralCode}</dd>
+                </div>
+              )}
+            </dl>
+
+            {/* Motivo — obrigatório na recusa, opcional na aprovação */}
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="decision-note"
+                className="text-xs text-foreground flex items-center gap-1.5"
+              >
+                {decisionStatus === "approved" ? "Observação (opcional)" : "Motivo da recusa"}
+                {decisionStatus === "rejected" ? (
+                  <span className="text-destructive text-xs font-normal">obrigatório</span>
+                ) : null}
+              </Label>
+              <Textarea
+                id="decision-note"
+                value={decisionNote}
+                onChange={(e) => setDecisionNote(e.target.value)}
+                placeholder={
+                  decisionStatus === "approved"
+                    ? "Ex.: cobertura confirmada, instalação agendada para sexta."
+                    : "Ex.: endereço fora da área de cobertura."
+                }
+                className="text-xs min-h-[68px]"
+                maxLength={280}
+              />
+              {decisionStatus === "rejected" && decisionNote.trim().length < 3 ? (
+                <p className="text-xs text-destructive">
+                  Escreva o motivo antes de recusar — é o que orienta a reavaliação.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Fica registrado na solicitação e aparece na impressão.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

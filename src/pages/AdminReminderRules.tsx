@@ -15,23 +15,22 @@ import { CalendarClock } from "lucide-react";
 import { Link } from "react-router";
 import { ReminderRulesCard } from "@/components/ReminderRulesCard";
 import { ReminderMessagesCard } from "@/components/ReminderMessagesCard";
+import { PageHeader } from "@/components/page-header";
 
 export default function AdminReminderRules() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <CalendarClock className="h-5 w-5 text-muted-foreground" />
-          <h1 className="text-xl font-medium tracking-tight text-foreground">
-            Régua de lembretes
-          </h1>
-        </div>
-        <p className="text-sm text-muted-foreground mt-1">
-          Define quais avisos saem por WhatsApp e com qual texto. Mudanças valem para as
-          próximas sincronizações — mensagens já na fila não são alteradas.
-        </p>
-      </div>
+      <PageHeader
+        icon={CalendarClock}
+        title="Régua de lembretes"
+        description={
+          <>
+            Define quais avisos saem por WhatsApp e com qual texto. Mudanças valem
+            para as próximas sincronizações — mensagens já na fila não são alteradas.
+          </>
+        }
+      />
 
       <ReminderRulesCard />
 
