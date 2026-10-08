@@ -25,7 +25,7 @@ import { buildPushPayload, type PushSubscription as WebPushSubscription, type Pu
 
 // Núcleo puro dos lembretes de fatura (dry-run) — sem I/O, compartilhado com a CLI
 // `scripts/simulate-reminders.ts`. Ver `LEMBRETES-WHATSAPP.md`.
-import { addDays, civilToday, isCivilDate, normalizeBrMobile, pickCustomerPhone, type PhoneFailure } from "./notify/model.ts";
+import { addDays, classifyBilling, civilToday, isCivilDate, normalizeBrMobile, pickCustomerPhone, toMikwebDate, type PhoneFailure } from "./notify/model.ts";
 import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
 import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
 import { describeSync } from "./notify/sync.ts";
@@ -65,6 +65,8 @@ import {
   normalizeAdminAlerts,
 } from "./notify/admin-alerts.ts";
 import { sendAdminAlert } from "./notify/admin-alerts-send.ts";
+import { computeWhatsAppHealth, type HealthCheck } from "./notify/health.ts";
+import { shouldSendWeeklySummary, buildWeeklySummaryMessage } from "./notify/admin-alerts.ts";
 import type { DispatchSummary } from "./notify/dispatch.ts";
 import { aggregateFunnel, buildFunnelWeeks, funnelTotals, weekStartToMs } from "./notify/engagement.ts";
 import {
@@ -1882,7 +1884,59 @@ function whatsappRuntime() {
     db,
     getEnv: (name: string, fallback?: string) => env(name, fallback),
     log: (message: string, extra?: Record<string, unknown>) => console.log(`[WHATSAPP] ${message}`, extra ?? ""),
+    revalidateBilling,
   });
+}
+
+/**
+ * Revalida a situação da fatura na MikWeb ANTES do envio (chamada pelo dispatcher
+ * com cache por lote — uma consulta por fatura, não por lembrete).
+ *
+ * Regras do veredito:
+ *   - paga/cancelada (situação reconhecida OU `date_payment` presente) → `paid`
+ *     → o dispatcher cancela o lembrete com o motivo documentado;
+ *   - em aberto / situação desconhecida → `open` (situação que não sabemos
+ *     classificar NÃO bloqueia — o mesmo conservadorismo ao contrário seria
+ *     parar o canal por causa de uma situação nova do ERP);
+ *   - fatura não encontrada na janela → `open`: as guardas de data do dispatcher
+ *     (`scheduleMismatch`) já protegem o resto, e dados que sumiram da consulta
+ *     não podem virar laço de adiamento;
+ *   - rede/ERP fora do ar → `unknown` → o dispatcher ADIA sem gastar tentativa.
+ */
+async function revalidateBilling(input: {
+  connection: string | null;
+  customerId: string;
+  invoiceId: string;
+  dueDate: string | null;
+  eventKey: string;
+}): Promise<{ status: "open"; situation?: string | null } | { status: "paid"; situation?: string | null } | { status: "unknown"; error: string }> {
+  const connections = await activeMikWebConnections();
+  const connection = (input.connection ? connections.find((c) => c.slug === input.connection) : undefined) ?? connections[0];
+  if (!connection) return { status: "unknown", error: "nenhuma conta MikWeb ativa" };
+
+  const { rawId: rawCustomerId } = parsePrefixedCustomerId(input.customerId);
+  if (!rawCustomerId) return { status: "open" };
+
+  // Janela de vencimento ao redor do vencimento do evento (mesmo filtro da
+  // varredura do sync): fatura paga continua listada na janela dela.
+  const ref = isCivilDate(input.dueDate) ? input.dueDate! : civilToday();
+  const path =
+    `/billings?customer_id=${encodeURIComponent(rawCustomerId)}` +
+    `&type_date=due_day&start_date=${toMikwebDate(addDays(ref, -60))}&end_date=${toMikwebDate(addDays(ref, 1))}&per_page=50`;
+
+  try {
+    const { data } = await mikwebApiGetFullFor<MikWebBilling[]>(connection, path);
+    const list = Array.isArray(data) ? data : [];
+    const billing = list.find((b) => String(b?.id ?? "") === input.invoiceId);
+    if (!billing) return { status: "open" };
+
+    if (billing.date_payment) return { status: "paid", situation: billing.situation_name };
+    const state = classifyBilling(billing.situation_name);
+    if (state === "paid" || state === "canceled") return { status: "paid", situation: billing.situation_name };
+    return { status: "open", situation: billing.situation_name };
+  } catch (error) {
+    return { status: "unknown", error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 function uazapiClientFrom(config: { baseUrl: string; instanceToken: string; adminToken: string }) {
@@ -2657,6 +2711,132 @@ app.get("/admin/whatsapp/flow-status", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/admin/whatsapp/health — score do canal + checklist do que falta.
+// Cada checagem diz ONDE resolver (fix = rota do painel): o card do dashboard
+// vira o atalho. Consulta pontual na UazAPI (status da instância) — rota de
+// leitura, nunca bloqueia nada.
+app.get("/admin/whatsapp/health", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const runtime = whatsappRuntime();
+  try {
+    const config = await runtime.getConfig();
+    const checks: HealthCheck[] = [];
+
+    const hasCreds = Boolean(config.baseUrl && config.instanceToken);
+    checks.push({
+      key: "credentials",
+      label: "Credenciais da UazAPI configuradas",
+      ok: hasCreds,
+      critical: true,
+      fix: "/admin/connections",
+      detail: config.origin === "env" ? "fixadas por secret" : config.origin === "db" ? "salvas no painel" : "ausentes",
+    });
+
+    checks.push({
+      key: "enabled",
+      label: "Canal ativo",
+      ok: config.enabled,
+      critical: true,
+      fix: "/admin/connections",
+      detail: config.enabled ? undefined : "switch desligado na configuração",
+    });
+
+    checks.push({
+      key: "instance",
+      label: "Instância conectada",
+      ok: false,
+      critical: true,
+      fix: "/admin/connections",
+    });
+    if (hasCreds && config.enabled) {
+      try {
+        const status = await uazapiClientFrom(config).instanceStatus();
+        const instanceCheck = checks[checks.length - 1]!;
+        instanceCheck.ok = status.connected;
+        instanceCheck.detail = `estado: ${status.state}`;
+        if (config.lastStatus && config.lastStatus !== status.state) {
+          instanceCheck.detail += ` (painel via atualização automática)`;
+        }
+      } catch (error) {
+        checks[checks.length - 1]!.detail = `sem resposta: ${error instanceof Error ? error.message : String(error)}`.slice(0, 120);
+      }
+    } else {
+      checks[checks.length - 1]!.detail = "depende das credenciais e do canal ativo";
+    }
+
+    checks.push({
+      key: "paused",
+      label: "Sem pausa de time-lock",
+      ok: !(config.pausedUntil && config.pausedUntil > now()),
+      critical: true,
+      fix: "/admin/connections",
+      detail: config.pausedUntil && config.pausedUntil > now()
+        ? `pausado até ${new Date(config.pausedUntil).toLocaleString("pt-BR")}`
+        : undefined,
+    });
+
+    checks.push({
+      key: "webhook-secret",
+      label: "Webhook com secret",
+      ok: Boolean(env("UAZAPI_WEBHOOK_SECRET")),
+      critical: false,
+      fix: "/admin/connections",
+      detail: env("UAZAPI_WEBHOOK_SECRET") ? undefined : "status/opt-out podem não chegar (aceita qualquer origem)",
+    });
+
+    const loaded = await runtime.getSettings();
+    const activeRules = loaded.settings.rules.filter((rule) => rule.active);
+    checks.push({
+      key: "rules",
+      label: "Régua de lembretes ativa",
+      ok: activeRules.length > 0,
+      critical: true,
+      fix: "/admin/simulator",
+      detail: activeRules.length ? `${activeRules.length} regra(s) ativa(s)` : "nenhuma regra ligada — nada é enfileirado",
+    });
+
+    let optIns = 0;
+    try {
+      const { count } = await db()
+        .from("whatsapp_contacts")
+        .select("customer_id", { count: "exact", head: true })
+        .eq("opt_in", true);
+      optIns = Number(count ?? 0);
+    } catch {
+      optIns = 0;
+    }
+    checks.push({
+      key: "optins",
+      label: "Base de opt-ins",
+      ok: optIns > 0,
+      critical: false,
+      fix: "/admin/connections",
+      detail: optIns > 0 ? `${optIns} cliente(s) autorizado(s)` : "nenhum opt-in — sync não teria destino",
+    });
+
+    // Informacional: descreve operação, não entra na nota.
+    let uncertain = 0;
+    try {
+      uncertain = (await runtime.outbox.listUncertain({ limit: 100 })).length;
+    } catch {
+      uncertain = 0;
+    }
+    checks.push({
+      key: "uncertain",
+      label: "Envios incertos",
+      ok: uncertain === 0,
+      informational: true,
+      fix: "/admin/messages",
+      detail: uncertain > 0 ? `${uncertain} aguardando conciliação (podem ter saído)` : "nenhum",
+    });
+
+    const health = computeWhatsAppHealth(checks);
+    return json({ success: true, health, optIns, uncertain });
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : "Falha ao avaliar a saúde do canal.", 500);
+  }
+});
+
 // POST /api/admin/whatsapp/webhook-apply — registra a URL do webhook na UazAPI
 //
 // O operador não precisa entrar no painel da UazAPI para colar a URL: este
@@ -3243,6 +3423,49 @@ app.post("/admin/notifications/send-now", async (c) => {
 // (régua de origem, extraída da dedupe_key do evento), `customerName` (mapa com
 // whatsapp_contacts) e `reasonLabel` (frase legível do estado/agendamento).
 // Aceita `rule=` para filtrar por régua e `search=` também casa nome do cliente.
+// GET /api/admin/notifications/uncertain — envios com resultado INCERTO
+// (NETWORK_UNCERTAIN): o timeout abortou a resposta, mas a mensagem PODE ter
+// saído. A listagem existe para a conciliação manual — o sistema não chuta.
+app.get("/admin/notifications/uncertain", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const runtime = whatsappRuntime();
+  try {
+    const rows = await runtime.outbox.listUncertain({ limit: 100 });
+    const viewNow = now();
+    return json({
+      success: true,
+      deliveries: rows.map((d) => toDeliveryView(d, { customerName: null, now: viewNow })),
+    });
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : "Falha ao listar envios incertos.", 500);
+  }
+});
+
+// POST /api/admin/notifications/uncertain/:id/resolve — conciliação com veredito
+// humano: "sent" (a mensagem saiu — marca `sent`) ou "not_sent" (não saiu —
+// volta para a fila com tentativas zeradas para o dispatcher reenviar).
+app.post("/admin/notifications/uncertain/:id/resolve", async (c) => {
+  if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
+  const id = c.req.param("id");
+  let body: { outcome?: unknown; note?: unknown } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    body = {};
+  }
+  const outcome = body.outcome === "sent" ? "sent" : body.outcome === "not_sent" ? "not_sent" : null;
+  if (!outcome) return jsonError("outcome precisa ser \"sent\" ou \"not_sent\".", 400);
+  const note = typeof body.note === "string" && body.note.trim() ? body.note.trim() : undefined;
+  const runtime = whatsappRuntime();
+  try {
+    const row = await runtime.outbox.resolveUncertain({ deliveryId: id, outcome, note, now: now() });
+    if (!row) return jsonError("Entrega não encontrada.", 404);
+    return json({ success: true, delivery: toDeliveryView(row, { customerName: null, now: now() }) });
+  } catch (error) {
+    return jsonError(error instanceof Error ? error.message : "Falha ao conciliar.", 500);
+  }
+});
+
 app.get("/admin/notifications/deliveries", async (c) => {
   if (!(await requireAdmin(c.req.raw))) return jsonError("Não autorizado.", 401);
   const url = new URL(c.req.raw.url);
@@ -3303,6 +3526,43 @@ app.get("/admin/notifications/deliveries", async (c) => {
           name.includes(q)
         )
       }).slice(0, limit);
+    }
+
+    // EXPORT CSV — o dono audita os disparos fora do painel (planilha, contador).
+    // Mesmos filtros da consulta; stream simples, sem paginação extra.
+    if (url.searchParams.get("format") === "csv") {
+      const esc = (value: unknown) => {
+        const text = value === null || value === undefined ? "" : String(value);
+        return `"${text.replace(/"/g, '""')}"`;
+      };
+      const header = [
+        "id", "status", "canal", "cliente", "cpf", "destino", "regra", "motivo",
+        "criado_em", "agendado_para", "enviado_em", "tentativas",
+        "codigo_erro", "detalhe_erro",
+      ];
+      const lines = [header.join(",")];
+      for (const d of deliveries) {
+        lines.push(
+          [
+            d.id, d.status, d.channel, d.customerName ?? "", d.cpf ?? "", d.target,
+            d.ruleKey ?? "", d.reasonLabel ?? "",
+            d.createdAt ? new Date(d.createdAt).toISOString() : "",
+            d.scheduledFor ? new Date(d.scheduledFor).toISOString() : "",
+            d.sentAt ? new Date(d.sentAt).toISOString() : "",
+            d.attempts ?? 0,
+            d.errorKey ?? "", d.errorMessage ?? "",
+          ]
+            .map(esc)
+            .join(",")
+        );
+      }
+      const csv = "\uFEFF" + lines.join("\r\n"); // BOM: Excel abre acentos direito
+      return new Response(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="mensagens-${civilDayBr(viewNow)}.csv"`,
+        },
+      });
     }
 
     return json({ deliveries, stats, ruleKeys: Object.keys(RULE_KEY_LABELS), migrationPending: false });
@@ -3887,6 +4147,71 @@ app.on(["GET", "POST"], "/cron/notify-sync", async (c) => {
         }
       } catch (error) {
         console.error("[ADMIN_DAILY_SUMMARY_ERROR]", error);
+      }
+    }
+
+    // RESUMO SEMANAL de disparos — uma vez a cada 7 dias, mesma varredura, mesmo
+    // canal dos alertas. Autonomia: o dono abre a semana sabendo entregue/lido/
+    // falha/opt-out sem abrir o painel. Best-effort como o resto do cron.
+    if (!dryRunRequested) {
+      try {
+        const runtime = whatsappRuntime();
+        const loaded = await runtime.getSettings();
+        const alerts = loaded.settings.adminAlerts;
+        if (alerts.dailySummary && alerts.phone) {
+          const state = await db().from("admin_alerts_state").select("state").eq("key", "default").maybeSingle();
+          const lastAt = Number((state.data as { state?: Record<string, unknown> } | null)?.state?.["weekly-summary"] ?? 0);
+          const nowMs = Date.now();
+          if (shouldSendWeeklySummary(lastAt > 0 ? lastAt : null, nowMs)) {
+            const since = nowMs - 7 * 24 * 60 * 60 * 1000;
+            const stats = await runtime.outbox.stats({ since });
+            let uncertain = 0;
+            try {
+              uncertain = (await runtime.outbox.listUncertain({ limit: 100 })).length;
+            } catch {
+              uncertain = 0;
+            }
+            let optOuts = 0;
+            try {
+              const { count } = await db()
+                .from("whatsapp_contacts")
+                .select("customer_id", { count: "exact", head: true })
+                .gt("opt_out_at", since);
+              optOuts = Number(count ?? 0);
+            } catch {
+              optOuts = 0;
+            }
+            await sendAdminAlert(
+              {
+                db,
+                getWhatsAppConfig: () => runtime.getConfig(),
+                sendPushToAdmins,
+                log: (message, extra) => console.log(`[ADMIN_ALERT] ${message}`, extra ?? ""),
+              },
+              {
+                key: "weekly-summary",
+                config: { ...alerts, alertDispatchFailures: true },
+                title: "Resumo semanal de lembretes",
+                message: buildWeeklySummaryMessage({
+                  stats: {
+                    sent: Number(stats["sent"] ?? 0) + Number(stats["delivered"] ?? 0) + Number(stats["read"] ?? 0),
+                    delivered: Number(stats["delivered"] ?? 0) + Number(stats["read"] ?? 0),
+                    read: Number(stats["read"] ?? 0),
+                    failed: Number(stats["failed"] ?? 0),
+                    optOuts,
+                    uncertain,
+                  },
+                  at: nowMs,
+                }),
+                phone: alerts.phone,
+                now: nowMs,
+                buttons: adminAlertButtons(alerts, loaded.settings.portalBaseUrl, "/admin/messages"),
+              }
+            );
+          }
+        }
+      } catch (error) {
+        console.error("[ADMIN_WEEKLY_SUMMARY_ERROR]", error);
       }
     }
 

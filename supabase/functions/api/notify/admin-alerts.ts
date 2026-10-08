@@ -45,7 +45,11 @@ export const DEFAULT_ADMIN_ALERTS: AdminAlertsConfig = {
   alertDispatchFailures: true,
   alertStuckQueue: true,
   failureThreshold: 5,
-  dailySummary: false,
+  // Digest diário LIGADO por padrão (autonomia): o dono do provedor abre o dia
+  // sabendo o que saiu, sem abrir o painel. Quem não quiser desliga no painel
+  // (Conexões → Alertas de operação); se a config salva já trouxer a chave
+  // explícita, ela vence — nada muda para quem já escolheu.
+  dailySummary: true,
   buttons: [{ label: "Abrir painel", url: "" }],
 };
 
@@ -91,7 +95,7 @@ export function normalizeAdminAlerts(raw: unknown, base: AdminAlertsConfig = DEF
 // Regras de disparo (puras — o index.ts só executa o que daqui sai)
 // ---------------------------------------------------------------------------
 
-export type AlertKey = "channel-down" | "dispatch-failures" | "quota-paused" | "daily-summary" | "stuck-queue";
+export type AlertKey = "channel-down" | "dispatch-failures" | "quota-paused" | "daily-summary" | "stuck-queue" | "weekly-summary";
 
 export interface AlertRuleInput {
   key: AlertKey;
@@ -220,6 +224,45 @@ export function buildDailySummaryMessage(input: { buckets: SummaryBuckets; at: n
     bucketLine("Vencidas há mais de 5 dias", input.buckets.late6plus),
     bucketLine("Vencem nos próximos dias", input.buckets.upcoming),
     `Os lembretes do dia já foram enfileirados pela régua.`,
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Resumo SEMANAL de disparos — autonomia: o dono do provedor recebe uma vez por
+// semana o retrato do canal (enviados, entregues, lidos, falhas, opt-outs) sem
+// abrir o painel. Sai pela MESMA régua de alertas (phone + push de fallback).
+// ---------------------------------------------------------------------------
+
+/** Uma vez a cada 7 dias (o dia exato segue o cron do sync — não promete segunda). */
+export function shouldSendWeeklySummary(lastSentAt: number | null, now: number): boolean {
+  if (!lastSentAt) return true;
+  return now - lastSentAt >= 7 * 24 * 60 * 60 * 1000;
+}
+
+export interface WeeklySummaryStats {
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  optOuts: number;
+  uncertain: number;
+}
+
+export function buildWeeklySummaryMessage(input: { stats: WeeklySummaryStats; at: number }): string {
+  const period = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" }).format(
+    input.at - 6 * 24 * 60 * 60 * 1000
+  );
+  const end = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "America/Sao_Paulo" }).format(input.at);
+  const pct = (part: number, total: number) => (total > 0 ? ` (${Math.round((part / total) * 100)}%)` : "");
+  return [
+    `📊 Resumo semanal de lembretes — ${period} a ${end}`,
+    `• Enviados: ${input.stats.sent}`,
+    `• Entregues: ${input.stats.delivered}${pct(input.stats.delivered, input.stats.sent)}`,
+    `• Lidos: ${input.stats.read}${pct(input.stats.read, input.stats.sent)}`,
+    `• Falhas: ${input.stats.failed}`,
+    ...(input.stats.uncertain > 0 ? [`• ⚠️ ${input.stats.uncertain} envio(s) incerto(s) aguardando conciliação em Mensagens`] : []),
+    ...(input.stats.optOuts > 0 ? [`• 🚫 ${input.stats.optOuts} opt-out(s) — clientes que pediram PARAR`] : []),
+    `Detalhes: painel → Mensagens.`,
   ].join("\n");
 }
 
@@ -376,7 +419,7 @@ export type AdminAlertsState = Partial<Record<AlertKey, number>>;
 export function sanitizeAlertsState(raw: unknown, now: number): AdminAlertsState {
   const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const out: AdminAlertsState = {};
-  for (const key of ["channel-down", "dispatch-failures", "quota-paused", "daily-summary", "stuck-queue"] as AlertKey[]) {
+  for (const key of ["channel-down", "dispatch-failures", "quota-paused", "daily-summary", "stuck-queue", "weekly-summary"] as AlertKey[]) {
     const value = Number(record[key]);
     // Timestamp futuro (relógio adiantado/cold start) é descartado: liberaria o
     // alerta imediatamente e, pior, “congelaria” o cooldown por dias.

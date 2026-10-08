@@ -175,7 +175,13 @@ export interface OutboxApi {
    * "já enviado em <data>" quando o enfileiramento idempotente não cria nada.
    */
   findDelivery(input: { eventId: string; channel: Channel; target: string }): Promise<DeliveryRow | null>;
-  updateContactOutcome(input: { customerId: string | null; target: string; error: string | null }): Promise<void>;
+  updateContactOutcome(input: {
+    customerId: string | null;
+    target: string;
+    error: string | null;
+    /** Marca o contato como `invalid` — destino morto (tombstone). */
+    invalidate?: boolean;
+  }): Promise<void>;
   /**
    * Envios já COMPROMETIDOS (sent/delivered/read) para o cliente desde `since` — a
    * base da cota por cliente. Não conta `sending`: a entrega em curso pode ser a
@@ -212,6 +218,23 @@ export interface OutboxApi {
   }): Promise<NewChatSlot>;
   list(input: { limit: number; status?: DeliveryStatus | "all"; customerId?: string }): Promise<DeliveryRow[]>;
   stats(input: { since: number }): Promise<Record<string, number>>;
+  /**
+   * Entregas com resultado INCERTO (`NETWORK_UNCERTAIN`): o timeout abortou a
+   * resposta, mas a mensagem PODE ter saído. A fila não decide sozinha — a
+   * conciliação (manual, com o WhatsApp na mão) é o que devolve a verdade.
+   */
+  listUncertain(input?: { limit?: number }): Promise<DeliveryRow[]>;
+  /**
+   * Concilia uma entrega incerta com um veredito humano:
+   *   "sent"     → a mensagem saiu (confere no WhatsApp): marca `sent`;
+   *   "not_sent" → NÃO saiu: volta para a fila (zerando tentativas) para reenviar.
+   */
+  resolveUncertain(input: {
+    deliveryId: string;
+    outcome: "sent" | "not_sent";
+    note?: string;
+    now?: number;
+  }): Promise<DeliveryRow | null>;
 }
 
 export function createOutbox(db: () => SupabaseLike): OutboxApi {
@@ -365,7 +388,46 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
       return Array.isArray(data) ? data.length : 0;
     },
 
-    async updateContactOutcome({ customerId, target, error }) {
+    async listUncertain({ limit = 50 } = {}) {
+      const { data, error } = await db()
+        .from("notification_deliveries")
+        .select("*")
+        .eq("status", "failed")
+        .in("error_key", ["NETWORK_UNCERTAIN", "UNCERTAIN"])
+        .order("status_at", { ascending: false })
+        .limit(limit);
+      if (error) throw new Error(`listagem de entregas incertas falhou: ${error.message ?? error}`);
+      return ((data ?? []) as Record<string, unknown>[]).map(toDeliveryRow);
+    },
+
+    async resolveUncertain({ deliveryId, outcome, note, now: at }) {
+      const ts = at ?? Date.now();
+      const patch: Record<string, unknown> =
+        outcome === "sent"
+          ? {
+              status: "sent",
+              sent_at: ts,
+              status_at: ts,
+              error_key: "RECONCILED_SENT",
+              error_message: note ?? "conciliado manualmente: a mensagem saiu",
+            }
+          : {
+              // De volta à fila, com tentativas zeradas: a falha anterior foi
+              // incerteza, não esgotamento. O dispatcher normal assume daqui.
+              status: "queued",
+              scheduled_for: ts,
+              status_at: ts,
+              attempts: 0,
+              error_key: "RECONCILED_NOT_SENT",
+              error_message: note ?? "conciliado manualmente: a mensagem NÃO saiu — reenviando",
+            };
+      const { error } = await db().from("notification_deliveries").update(patch).eq("id", deliveryId);
+      if (error) throw new Error(`conciliação falhou: ${error.message ?? error}`);
+      const row = await db().from("notification_deliveries").select("*").eq("id", deliveryId).maybeSingle();
+      return row?.data ? toDeliveryRow(row.data as Record<string, unknown>) : null;
+    },
+
+    async updateContactOutcome({ customerId, target, error, invalidate }) {
       const patch: Record<string, unknown> = { updated_at: Date.now() };
       if (error) {
         patch.last_error = error;
@@ -374,6 +436,9 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
         patch.last_error = null;
         patch.last_error_at = null;
       }
+      // Tombstone: destino provadamente morto (número malformado / fora do
+      // WhatsApp) não volta a entrar na fila — o sync e o simulador leem o status.
+      if (invalidate) patch.status = "invalid";
       let query = db().from("whatsapp_contacts").update(patch);
       query = customerId ? query.eq("customer_id", customerId) : query.eq("phone_e164", target);
       await query;

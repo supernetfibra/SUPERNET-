@@ -27,6 +27,8 @@ import {
   Loader2,
   MessageSquare,
   PauseCircle,
+  Download,
+  HelpCircle,
   Phone,
   RefreshCw,
   RotateCcw,
@@ -452,6 +454,50 @@ export default function AdminMessages() {
     void loadDeliveries();
   }, [loadDeliveries]);
 
+  // Envios incertos (NETWORK_UNCERTAIN): saíram? não saíram? conciliação com veredito humano.
+  const [uncertain, setUncertain] = useState<OutboxDelivery[]>([]);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  const loadUncertain = useCallback(async () => {
+    try {
+      const res = await adminFetch("/api/admin/notifications/uncertain?limit=100");
+      if (!res.ok) {
+        setUncertain([]);
+        return;
+      }
+      const data = (await res.json()) as { deliveries?: OutboxDelivery[] };
+      setUncertain(data.deliveries ?? []);
+    } catch {
+      setUncertain([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUncertain();
+  }, [loadUncertain]);
+
+  const resolveUncertain = useCallback(
+    async (id: string, outcome: "sent" | "not_sent") => {
+      setResolvingId(id);
+      try {
+        const res = await adminFetch(`/api/admin/notifications/uncertain/${id}/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ outcome }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : `Erro HTTP ${res.status}`);
+        toast.success(outcome === "sent" ? "Conciliado como ENVIADO." : "Devolvido à fila para reenvio.");
+        await Promise.all([loadUncertain(), loadDeliveries(true)]);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Falha ao conciliar.");
+      } finally {
+        setResolvingId(null);
+      }
+    },
+    [loadUncertain, loadDeliveries]
+  );
+
   // Polling automático
   useEffect(() => {
     if (autoRefreshInterval <= 0) return;
@@ -741,6 +787,40 @@ export default function AdminMessages() {
               <Send className="h-3.5 w-3.5" />
               Disparar lote agora
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-9 gap-1.5 cursor-pointer"
+              title="Baixa a listagem atual (com os filtros aplicados) em CSV"
+              onClick={() => {
+                // O download leva o token no HEADER (sessão admin é header-only,
+                // sem cookie): fetch autenticado → blob → link temporário.
+                const params = new URLSearchParams();
+                if (statusFilter !== "all") params.set("status", statusFilter);
+                if (ruleFilter !== "all") params.set("rule", ruleFilter);
+                if (searchQuery.trim()) params.set("search", searchQuery.trim());
+                params.set("limit", "500");
+                params.set("format", "csv");
+                void (async () => {
+                  try {
+                    const res = await adminFetch(`/api/admin/notifications/deliveries?${params.toString()}`);
+                    if (!res.ok) throw new Error(`Erro HTTP ${res.status}`);
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const anchor = document.createElement("a");
+                    anchor.href = url;
+                    anchor.download = `mensagens-${new Date().toISOString().slice(0, 10)}.csv`;
+                    anchor.click();
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : "Falha ao exportar CSV.");
+                  }
+                })();
+              }}
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
           </>
         }
       />
@@ -753,6 +833,51 @@ export default function AdminMessages() {
             <p className="leading-relaxed">
               A tabela de outbox (<code className="font-mono">notification_deliveries</code>) ainda não foi criada no banco de dados Supabase. Execute a migration 003 no SQL Editor do Supabase para ativar a gravação da fila e histórico.
             </p>
+          </div>
+        </div>
+      )}
+
+      {uncertain.length > 0 && (
+        <div className="space-y-2 p-4 rounded-lg bg-violet-50 border border-violet-200 dark:bg-violet-950/30 dark:border-violet-900 text-xs text-violet-900 dark:text-violet-200">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <HelpCircle className="h-4 w-4" />
+            {uncertain.length} envio(s) com resultado incerto — a mensagem pode ter saído
+          </div>
+          <p className="leading-relaxed">
+            O timeout abortou a resposta do WhatsApp antes de confirmar. Confira no celular do cliente (ou no WhatsApp Web,
+            pelo número abaixo) e concilie: reenviar sem conferir pode duplicar a mensagem.
+          </p>
+          <div className="space-y-1.5">
+            {uncertain.map((item) => (
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background/60 px-2.5 py-1.5">
+                <span className="min-w-0 truncate font-mono">
+                  {item.customerName || item.cpf || "cliente"} · {item.target}
+                  {item.errorMessage ? <span className="font-sans text-muted-foreground"> — {item.errorMessage.slice(0, 80)}</span> : null}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px] cursor-pointer"
+                    disabled={resolvingId === item.id}
+                    onClick={() => void resolveUncertain(item.id, "sent")}
+                  >
+                    {resolvingId === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                    Saiu
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px] cursor-pointer"
+                    disabled={resolvingId === item.id}
+                    onClick={() => void resolveUncertain(item.id, "not_sent")}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Não saiu — reenviar
+                  </Button>
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

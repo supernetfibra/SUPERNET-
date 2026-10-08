@@ -33,9 +33,31 @@
  */
 
 import { civilDayStartMs, civilHour, civilToday, diffDays, isCivilDate, type Channel } from "./model.ts";
-import { renderFor, EVENT_DUE_DATE, EVENT_URL, EVENT_ACTIONS, type ChannelTemplate, type TemplatePayload } from "./templates.ts";
+import {
+  renderFor,
+  EVENT_DUE_DATE,
+  EVENT_URL,
+  EVENT_ACTIONS,
+  EVENT_INVOICE_ID,
+  EVENT_CUSTOMER_ID,
+  type ChannelTemplate,
+  type TemplatePayload,
+} from "./templates.ts";
+import { parsePrefixedCustomerId } from "./connections.ts";
 import type { ChannelRegistry, Rendered } from "./channel.ts";
 import type { ClaimedDelivery, OutboxApi, OutboxEvent } from "./outbox.ts";
+
+/**
+ * Veredito da revalidação da fatura na fonte (MikWeb), feita na hora do envio.
+ *   "open"    → segue para o envio;
+ *   "paid"    → a fatura foi quitada (ou cancelada) depois do agendamento: cancela;
+ *   "unknown" → a fonte não respondeu: ADIA (nunca envia sem saber, nunca marca
+ *               como falha — erro de rede do ERP não é culpa do lembrete).
+ */
+export type BillingRevalidation =
+  | { status: "open"; situation?: string | null }
+  | { status: "paid"; situation?: string | null }
+  | { status: "unknown"; error: string };
 
 export interface DispatchDeps {
   outbox: OutboxApi;
@@ -63,6 +85,23 @@ export interface DispatchDeps {
    * que faz o `defer_window` do relatório ser verdade em produção.
    */
   window?: (channel: Channel) => Promise<{ start: number; end: number } | null> | { start: number; end: number } | null;
+  /**
+   * Revalida a situação da fatura na fonte ANTES de enviar (`billing.*` com
+   * `__invoiceId` no payload). É o que fecha o risco restante de lembrete para
+   * fatura paga: o sync enfileira o dia (não o horizonte) exatamente porque o
+   * dispatcher não relia a situação — agora ele relê.
+   * Erro de rede aqui NÃO é tentativa: a entrega volta para a fila sem gastar
+   * `attempts` (o alerta de fila empacada é o cinto de segurança do laço).
+   */
+  revalidateBilling?: (input: {
+    /** Slug da conta MikWeb de origem (multi-conta), quando prefixado. */
+    connection: string | null;
+    /** customer_id do evento, com ou sem prefixo de conta. */
+    customerId: string;
+    invoiceId: string;
+    dueDate: string | null;
+    eventKey: string;
+  }) => Promise<BillingRevalidation>;
   log?: (message: string, extra?: Record<string, unknown>) => void;
 }
 
@@ -117,6 +156,10 @@ export interface DispatchSummary {
   pauseReason?: string;
   /** `null` quando o canal não tem cota de novas conversas (ou nenhuma foi informada). */
   newChats: NewChatQuotaSummary | null;
+  /** Faturas revalidadas na fonte antes do envio (presente só com `revalidateBilling`). */
+  revalidated?: number;
+  /** Envios cancelados POR CAUSA da revalidação: fatura já paga/cancelada. */
+  canceledPaid?: number;
   results: DispatchItemResult[];
 }
 
@@ -320,6 +363,10 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
   }
   if (newChatCap !== null) summary.newChats = { cap: newChatCap, started: 0, heldByCap: 0, usedToday: 0 };
 
+  // Revalidação por rodada: uma fatura com dois lembretes no mesmo lote é
+  // consultada UMA vez (o lote inteiro sai em segundos; a fatura não muda nele).
+  const revalidationCache = new Map<string, BillingRevalidation>();
+
   for (let index = 0; index < claimed.length; index++) {
     const delivery = claimed[index]!;
     const target = delivery.target;
@@ -370,6 +417,58 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
       push({ ok: false, status: "skipped", reason: "vencimento já passou — o aviso de atraso assume" });
       await deps.outbox.markSkipped(delivery.id, "vencimento já passou — o aviso de atraso assume");
       continue;
+    }
+
+    // REVALIDAÇÃO — o envio relê a fatura na fonte. Pagar entre o agendamento e o
+    // envio é o caso comum (o cliente recebe o aviso, paga, e a régua seguinte
+    // ainda estava na fila). Antes disto, a proteção era só o sync enfileirar um
+    // dia por vez; agora a janela de risco é a rodada de dispatch, não o dia.
+    if (deps.revalidateBilling && event.eventKey.startsWith("billing.")) {
+      const invoiceId = typeof event.payload[EVENT_INVOICE_ID] === "string" ? (event.payload[EVENT_INVOICE_ID] as string) : "";
+      const customerIdRaw = typeof event.payload[EVENT_CUSTOMER_ID] === "string" ? (event.payload[EVENT_CUSTOMER_ID] as string) : "";
+      if (invoiceId) {
+        const { slug } = parsePrefixedCustomerId(customerIdRaw);
+        const cacheKey = `${slug ?? ""}:${invoiceId}`;
+        let verdict = revalidationCache.get(cacheKey);
+        if (!verdict) {
+          try {
+            verdict = await deps.revalidateBilling({
+              connection: slug,
+              customerId: customerIdRaw,
+              invoiceId,
+              dueDate: dueDateIso,
+              eventKey: event.eventKey,
+            });
+          } catch (error) {
+            verdict = { status: "unknown", error: error instanceof Error ? error.message : String(error) };
+          }
+          revalidationCache.set(cacheKey, verdict);
+        }
+        summary.revalidated = (summary.revalidated ?? 0) + 1;
+
+        if (verdict.status === "paid") {
+          summary.skipped++;
+          summary.canceledPaid = (summary.canceledPaid ?? 0) + 1;
+          const reason = `fatura paga — lembrete cancelado (situação na fonte: ${verdict.situation || "paga"})`;
+          push({ ok: false, status: "skipped", reason });
+          await deps.outbox.markSkipped(delivery.id, reason);
+          continue;
+        }
+        if (verdict.status === "unknown") {
+          // A fonte não respondeu: ADIA sem gastar tentativa. Enviar sem saber
+          // arrisca cobrar fatura paga; marcar falha permanente mentiria sobre
+          // o motivo. O alerta de fila empacada cobre o laço prolongado.
+          const retryAt = now() + 15 * 60_000;
+          summary.released++;
+          push({ ok: false, status: "queued", reason: `revalidação indisponível (${verdict.error}) — reagendado` });
+          await deps.outbox.release({
+            deliveryId: delivery.id,
+            scheduledFor: retryAt,
+            reason: "fonte de faturas indisponível para revalidar",
+          });
+          continue;
+        }
+      }
     }
 
     const rendered = renderAtSendTime({ event, channel, sendDate: todayIso, templates: await templatesForRun() });

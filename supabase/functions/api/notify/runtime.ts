@@ -27,7 +27,7 @@ import {
   type ConfigSaveInput,
   type WhatsAppConfig,
 } from "./config.ts";
-import { dispatchQueue, type DispatchOptions, type DispatchSummary } from "./dispatch.ts";
+import { dispatchQueue, type BillingRevalidation, type DispatchOptions, type DispatchSummary } from "./dispatch.ts";
 import {
   loadTemplates,
   saveTemplates,
@@ -47,6 +47,18 @@ export interface RuntimeDeps {
   templates?: ChannelTemplate[];
   portalBaseUrl?: string;
   companyName?: string;
+  /**
+   * Revalidação da fatura na fonte antes de enviar (implementada no `index.ts`,
+   * onde vivem as credenciais MikWeb). Opcional: sem ela o dispatcher se comporta
+   * como antes (confia no enfileiramento do dia).
+   */
+  revalidateBilling?: (input: {
+    connection: string | null;
+    customerId: string;
+    invoiceId: string;
+    dueDate: string | null;
+    eventKey: string;
+  }) => Promise<BillingRevalidation>;
 }
 
 export interface WhatsAppRuntime {
@@ -108,6 +120,9 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
     getConfig,
     outbox,
     setPausedUntil: (until) => setWhatsAppPausedUntil(configDeps, until),
+    // Estado da instância espelhado na config: queda/reconexão aparecem no painel
+    // sem esperar a próxima checagem manual.
+    setStatus: (status) => setWhatsAppStatus(configDeps, status),
     // Ritmo configurável ("pausa entre mensagens", em segundos): min = valor
     // configurado, máx = dobro (jitter). 0/ausente → o adapter usa o default humano.
     minDelayMs: async () => (await getConfig()).sendGapSeconds * 1000 || undefined,
@@ -128,6 +143,7 @@ export function createWhatsAppRuntime(deps: RuntimeDeps): WhatsAppRuntime {
         templates: () => resolveTemplates(),
         now: deps.now,
         log: deps.log,
+        revalidateBilling: deps.revalidateBilling,
         perCustomerCap: async () => (await getSettings()).settings.whatsapp.perCustomerCapPerDay,
         // A cota de novas conversas é a MESMA que o simulador projeta
         // (`newChatCapPerDay`): sem isto, o relatório prometia um teto que o envio

@@ -228,6 +228,12 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
     : null;
   if (digitable) payload.linha_digitavel = digitable;
 
+  // Metadados de revalidação (prefixo `__`: o dispatcher lê, `toTemplatePayload`
+  // descarta). O customer_id entra PREFIXADO — o slug da conta viaja junto, e é
+  // ele que manda a revalidação para a conta MikWeb certa.
+  payload[EVENT_INVOICE_ID] = rawBillingId;
+  payload[EVENT_CUSTOMER_ID] = String(billing.customer_id ?? "");
+
   return payload;
 }
 
@@ -250,6 +256,14 @@ export function buildPayload(input: PayloadInput): TemplatePayload {
  */
 export const EVENT_DUE_DATE = "__dueDate";
 export const EVENT_URL = "__url";
+
+/**
+ * Metadados de REVALIDAÇÃO: com eles o dispatcher reconferência a situação da
+ * fatura na fonte (MikWeb) ANTES de enviar — fechando o único buraco que restava
+ * de "cobrar fatura paga" (o cliente pode pagar entre o agendamento e o envio).
+ */
+export const EVENT_INVOICE_ID = "__invoiceId";
+export const EVENT_CUSTOMER_ID = "__customerId";
 
 export const EVENT_ACTIONS = "__actions";
 

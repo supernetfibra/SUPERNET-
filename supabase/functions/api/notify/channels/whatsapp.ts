@@ -31,6 +31,12 @@ export interface WhatsAppAdapterDeps {
   now?: () => number;
   /** Validade do cache de `ready()`, para não consultar status a cada mensagem. */
   readinessTtlMs?: number;
+  /** Intervalo mínimo ENTRE tentativas de reconexão automática (default 10 min). */
+  reconnectCooldownMs?: number;
+  /** Espera entre `connect()` e a re-checagem de status (default 2.5s; 0 pula — testes). */
+  reconnectSettleMs?: number;
+  /** Persiste o estado da instância (`whatsapp_config.last_status`) para o painel. */
+  setStatus?: (status: string) => Promise<void>;
   /** Ritmo configurável: pausa mínima entre mensagens (ms). Async: lê a config na hora do envio. Número: fixo (testes). */
   minDelayMs?: number | (() => Promise<number | undefined> | number | undefined);
   /** Pausa máxima (ms) — o sorteio entre min e máx é o jitter humano. */
@@ -46,6 +52,9 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
     createUazapiClient({ baseUrl: config.baseUrl, token: config.instanceToken, adminToken: config.adminToken }));
 
   let cachedReadiness: { at: number; value: ChannelReadiness } | null = null;
+  let lastReconnectAt = 0;
+  const RECONNECT_COOLDOWN_MS = 10 * 60_000;
+  const RECONNECT_SETTLE_MS = 2_500;
 
   async function readReadiness(): Promise<ChannelReadiness> {
     const config = await deps.getConfig();
@@ -57,11 +66,45 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
     if (config.pausedUntil && config.pausedUntil > now()) {
       return { ok: false, reason: "canal em pausa por restrição do WhatsApp", retryAt: config.pausedUntil };
     }
-    const status = await clientFactory(config).instanceStatus();
+    const client = clientFactory(config);
+    let status = await client.instanceStatus();
+    await recordStatus(config, status.state);
+
+    // AUTO-RECONECTAR: queda de sessão do WhatsApp é rotina (celular desligado,
+    // instância hibernada). Uma tentativa de `connect` por janela — NÃO um laço:
+    // se a sessão não volta sozinha, é QRCode na mão de gente, e o alerta de
+    // instância caída já avisa o admin.
+    if (!status.connected && now() - lastReconnectAt > (deps.reconnectCooldownMs ?? RECONNECT_COOLDOWN_MS)) {
+      lastReconnectAt = now();
+      try {
+        await client.connect();
+      } catch {
+        // QR/pairing indisponível não muda o veredito — o status de baixo decide.
+      }
+      const settle = deps.reconnectSettleMs ?? RECONNECT_SETTLE_MS;
+      if (settle > 0) await new Promise((resolve) => setTimeout(resolve, settle));
+      try {
+        status = await client.instanceStatus();
+        await recordStatus(config, status.state);
+      } catch {
+        // mantém o primeiro veredito
+      }
+    }
+
     if (!status.connected) {
       return { ok: false, reason: `instância do WhatsApp não está conectada (${status.state})`, retryAt: now() + 15 * 60_000 };
     }
     return { ok: true };
+  }
+
+  /** Espelha o estado na config (painel mostra o momento real). Best-effort. */
+  async function recordStatus(config: WhatsAppConfig, state: string): Promise<void> {
+    if (config.lastStatus === state) return;
+    try {
+      await deps.setStatus?.(state);
+    } catch {
+      // persistir estado é cosmético — nunca bloqueia o canal
+    }
   }
 
   return {
@@ -156,11 +199,14 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
 
     async onPermanentFailure(target, result) {
       // Número inválido/inexistente: registra no contato para o painel mostrar o
-      // problema em vez de tentar de novo para sempre.
+      // problema em vez de tentar de novo para sempre. Quando o erro PROVA que o
+      // destino está morto, o contato vira tombstone (`status: invalid`) — o sync
+      // e o simulador deixam de planejar envios para ele.
       await deps.outbox.updateContactOutcome({
         customerId: null,
         target,
         error: result.errorMessage ?? result.errorKey ?? "falha permanente",
+        invalidate: isDeadTargetError(result),
       });
     },
 
@@ -171,6 +217,19 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
       cachedReadiness = null;
     },
   };
+}
+
+/**
+ * O erro PROVA que o destino é morto? Só quando há certeza — `INVALID_TARGET` é
+ * nosso (regex E.164) e a recusa do provedor costuma citar o número. Erro de
+ * autenticação (401) é problema da INSTÂNCIA, não do destino: tombstonar todos
+ * os contatos por causa de token expirado seria apagar a base de opt-ins.
+ */
+const DEAD_TARGET_RE = /(n[ãa]o est[ãa] no whatsapp|nao esta no whatsapp|not on whatsapp|invalid (number|phone|wa_id)|n[úu]mero inv[áa]lido|number.*(not|n[ãa]o).*(whatsapp|exist))/i;
+
+function isDeadTargetError(result: { errorKey?: string | null; errorMessage?: string | null }): boolean {
+  if (result.errorKey === "INVALID_TARGET") return true;
+  return DEAD_TARGET_RE.test(String(result.errorMessage ?? ""));
 }
 
 /** Semente estável a partir do id do evento, para o delay variar por mensagem. */

@@ -45,6 +45,7 @@ import { PageHeader } from "@/components/page-header";
 import { KpiCard } from "@/components/kpi-card";
 import { AdminSyncDialog } from "@/components/AdminSyncDialog";
 import { AdminDispatchDialog } from "@/components/AdminDispatchDialog";
+import { ChannelHealthCard } from "@/components/ChannelHealthCard";
 import { adminFetch, ADMIN_TOKEN_KEY } from "@/lib/api-config";
 import type { ReferralMonthMetrics } from "../../supabase/functions/api/notify/referral-metrics.ts";
 
@@ -231,6 +232,9 @@ export default function AdminDashboard() {
           </>
         }
       />
+
+      {/* Saúde do canal WhatsApp — o "posso confiar no canal hoje?" antes de qualquer número */}
+      <ChannelHealthCard />
 
       {/* KPIs — acessos de hoje e da semana (resumo; detalhe em /admin/audit) */}
       {auditSummary ? (

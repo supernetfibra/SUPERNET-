@@ -82,6 +82,7 @@ function formatCpf(cpf: string): string {
 
 interface CustomerLookupResponse {
   customer: {
+    id?: string | number;
     full_name?: string;
     plan?: { name?: string } | null;
     due_day?: string | number | null;
@@ -228,6 +229,113 @@ const customerAuditColumns: DataTableColumn<CustomerAuditRow>[] = [
     render: (row) => formatDateTimeBR(row.entry.timestamp),
   },
 ];
+
+/**
+ * Timeline de mensagens do cliente — a "documentação dos disparos" no lugar
+ * onde o atendente já está: o que foi planejado, o que saiu, o status real
+ * (entregue/lido) e o motivo de cada estado. Consome a MESMA listagem da
+ * página Mensagens (`?customerId=`), com o id PREFIXADO que a consulta por
+ * CPF já devolve — nenhuma rota nova.
+ */
+interface CustomerMessageRow {
+  id: string;
+  channel: string;
+  status: string;
+  ruleLabel?: string | null;
+  reasonLabel?: string | null;
+  scheduledFor: number;
+  sentAt: number | null;
+}
+
+const MESSAGE_STATUS_TONE: Record<string, string> = {
+  queued: "border-amber-500/40 text-amber-600 dark:text-amber-400",
+  sending: "border-sky-500/40 text-sky-600 dark:text-sky-400",
+  sent: "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+  delivered: "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+  read: "border-emerald-600/40 text-emerald-700 dark:text-emerald-300",
+  failed: "border-red-500/40 text-red-600 dark:text-red-400",
+  skipped: "border-border text-muted-foreground",
+  canceled: "border-border text-muted-foreground",
+};
+
+const MESSAGE_STATUS_LABEL: Record<string, string> = {
+  queued: "Na fila",
+  sending: "Enviando",
+  sent: "Enviada",
+  delivered: "Entregue",
+  read: "Lida",
+  failed: "Falhou",
+  skipped: "Não enviada",
+  canceled: "Cancelada",
+};
+
+function CustomerMessagesCard({ customerId }: { customerId: string | undefined }) {
+  const [rows, setRows] = useState<CustomerMessageRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRows(null);
+    setError(null);
+    if (!customerId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await adminFetch(`/api/admin/notifications/deliveries?customerId=${encodeURIComponent(customerId)}&limit=25`);
+        const json = (await res.json().catch(() => ({}))) as { deliveries?: CustomerMessageRow[]; migrationPending?: boolean };
+        if (!alive) return;
+        setRows(json.deliveries ?? []);
+      } catch (err) {
+        if (alive) setError(err instanceof Error ? err.message : "Falha ao carregar as mensagens.");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [customerId]);
+
+  return (
+    <Card className="border-border shadow-none">
+      <CardHeader className="pb-4">
+        <CardTitle className="text-sm font-medium">Mensagens enviadas</CardTitle>
+        <CardDescription className="text-xs text-muted-foreground">
+          Toda notificação deste cliente — planejada, enviada, entregue, lida ou o motivo de não ter saído.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {customerId === undefined ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">Sem identificador interno do cliente nesta consulta.</p>
+        ) : error ? (
+          <p className="text-xs text-red-600 dark:text-red-400 py-4 text-center">{error}</p>
+        ) : rows === null ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-4 text-center">
+            Nenhuma mensagem registrada — nada foi enfileirado para este cliente ainda.
+          </p>
+        ) : (
+          <ol className="space-y-2.5">
+            {rows.map((row) => (
+              <li key={row.id} className="flex items-start gap-3 text-xs">
+                <span className="w-28 shrink-0 text-muted-foreground">
+                  {formatDateTimeBR(row.sentAt ?? row.scheduledFor)}
+                </span>
+                <span className={`shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] ${MESSAGE_STATUS_TONE[row.status] ?? "border-border text-muted-foreground"}`}>
+                  {MESSAGE_STATUS_LABEL[row.status] ?? row.status}
+                </span>
+                <span className="min-w-0">
+                  <span className="font-medium">{row.ruleLabel || "Mensagem manual"}</span>
+                  {row.reasonLabel ? <span className="text-muted-foreground"> — {row.reasonLabel}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function AdminCustomer360() {
   const navigate = useNavigate();
@@ -789,6 +897,8 @@ export default function AdminCustomer360() {
               )}
             </CardContent>
           </Card>
+
+          <CustomerMessagesCard customerId={data?.customer?.id !== undefined && data?.customer?.id !== null ? String(data.customer.id) : undefined} />
         </>
       ) : null}
 

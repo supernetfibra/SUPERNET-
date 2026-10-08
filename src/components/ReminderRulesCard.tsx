@@ -31,6 +31,7 @@ import { adminFetch } from "@/lib/api-config";
 import {
   paramsFromSettings,
   validateRules,
+  RULE_PRESETS,
   type SimParams,
   type SimSettings,
   type SimRule,
@@ -101,6 +102,12 @@ export function ReminderRulesCard() {
 
   const problems = useMemo(() => validateRules(rules, baseline?.maxRules ?? 12), [rules, baseline?.maxRules]);
 
+  /** Preset preenche a régua inteira; salvar continua explícito (nada sai sem o botão). */
+  const applyPreset = (preset: (typeof RULE_PRESETS)[number]) => {
+    setRules(preset.rules.map((rule) => ({ ...rule })));
+    setHorizon(preset.horizonDays);
+  };
+
   const updateRule = (index: number, patch: Partial<SimRule>) =>
     setRules((current) => current.map((rule, position) => (position === index ? { ...rule, ...patch } : rule)));
 
@@ -128,6 +135,25 @@ export function ReminderRulesCard() {
 
   return (
     <Card className="border-border shadow-none animate-[slideUp_0.3s_ease-out_0.2s_both]">
+      <div className="flex flex-wrap items-center gap-2 px-6 pt-4">
+        <span className="text-xs text-muted-foreground">Presets:</span>
+        {RULE_PRESETS.map((preset) => (
+          <Button
+            key={preset.key}
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs cursor-pointer"
+            disabled={!baseline || saving}
+            title={`${preset.description} — preenche a régua; nada é salvo sem o botão Salvar`}
+            onClick={() => {
+              applyPreset(preset);
+              toast.info(`Preset "${preset.label}" aplicado — revise e salve para valer.`);
+            }}
+          >
+            {preset.label}
+          </Button>
+        ))}
+      </div>
       <CardHeader className="pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">

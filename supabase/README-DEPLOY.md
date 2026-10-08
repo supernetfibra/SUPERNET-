@@ -39,8 +39,8 @@ npx supabase secrets set \
   MIKWEB_ADMIN_PASSWORD='<senha-admin>' \
   MIKWEB_API_URL='https://sua-mikweb.com.br/api' \
   MIKWEB_API_TOKEN='seu-token-aqui' \
-  VITE_VAPID_PUBLIC_KEY='BB1rMYkRJJHdVuKWc4Ak-6nb-ugfDuRS9Reqgp9XYW_g2Z1bfcyb_FduPCIdh4GNz7cB6Mop--QrahaQjoZubvk' \
-  VAPID_PRIVATE_KEY='l5a_M7FGWIpiYNLlhPoiGrZy3Jsadv5-_X42_9nnwwQ' \
+  VITE_VAPID_PUBLIC_KEY='<chave-publica-vapid>' \
+  VAPID_PRIVATE_KEY='<chave-privada-vapid>' \
   VAPID_SUBJECT='mailto:admin@minhasupernet.com'
 ```
 

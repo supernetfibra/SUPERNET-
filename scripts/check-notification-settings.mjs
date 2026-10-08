@@ -1763,6 +1763,184 @@ eq(
 );
 
 // ---------------------------------------------------------------------------
+// 21. Revalidação da fatura antes do envio + conciliação de incertos
+// ---------------------------------------------------------------------------
+
+section("21. Revalidação da fatura antes do envio (dispatcher)");
+
+/**
+ * O dispatcher relê a fatura na fonte (MikWeb) ANTES de enviar. Três vereditos:
+ * "paid" cancela com motivo documentado; "unknown" adia sem gastar tentativa;
+ * "open" envia. Também prova os metadados `__invoiceId`/`__customerId` do
+ * `buildPayload` — é por eles que o dispatcher sabe O que revalidar.
+ */
+function revalHarness(revalidateBilling, eventKey = "billing.due_soon") {
+  const calls = { revalidate: [], delivered: [], skipped: [], released: [], sent: [] };
+  const rows = [
+    { id: "d1", eventId: "e1", channel: "whatsapp", customerId: "a:c1", cpf: null, target: "5511900000001", status: "sending", attempts: 1, scheduledFor: NOON, createdAt: NOON },
+  ];
+  const events = new Map([
+    [
+      "e1",
+      {
+        id: "e1",
+        eventKey,
+        customerId: "a:c1",
+        cpf: null,
+        dedupeKey: "billing:a:1:due_soon",
+        payload: { referencia: "SET/26", primeiro_nome: "Cliente", __dueDate: "2026-09-23", __invoiceId: "1", __customerId: "a:c1" },
+        priority: "transactional",
+      },
+    ],
+  ]);
+  const outbox = {
+    async claim() { return rows; },
+    async eventsByIds() { return events; },
+    async countRecentForCustomer() { return 0; },
+    async reserveNewChatSlot() { return { allowed: true, isNewChat: false, usedToday: 0, cap: 5 }; },
+    async release(input) { calls.released.push(input); },
+    async markSent(id) { calls.sent.push(id); },
+    async markFailed() {},
+    async markSkipped(id, reason) { calls.skipped.push({ id, reason }); },
+    async updateContactOutcome() {},
+  };
+  const adapter = { key: "whatsapp", async ready() { return { ok: true }; }, async deliver() { calls.delivered.push(rows[0].target); return { ok: true, providerId: "p1" }; } };
+  const deps = {
+    outbox,
+    registry: { get: () => adapter },
+    now: () => NOON,
+    perCustomerCap: () => 1,
+    newChatCap: () => 5,
+    window: () => ({ start: 9, end: 20 }),
+    ...(revalidateBilling ? { revalidateBilling: async (input) => { calls.revalidate.push(input); return revalidateBilling(input); } } : {}),
+  };
+  calls.deps = deps;
+  return calls;
+}
+
+// sem revalidação configurada: comportamento anterior, nada muda
+const noReval = revalHarness(null);
+const noRevalSummary = await dispatchQueue(noReval.deps, { policy: "automated" });
+eq("sem revalidateBilling: envio segue como antes", [noRevalSummary.sent, noReval.revalidate.length], [1, 0]);
+
+// fatura PAGA desde o agendamento: cancela, não envia, documenta o motivo
+const paid = revalHarness(() => ({ status: "paid", situation: "Pago" }));
+const paidSummary = await dispatchQueue(paid.deps, { policy: "automated" });
+eq("fatura paga: nada é entregue", paid.delivered.length, 0);
+eq("fatura paga: cancelada, não falha", [paidSummary.skipped, paidSummary.canceledPaid, paidSummary.released], [1, 1, 0]);
+eq("fatura paga: motivo documentado na entrega", paid.skipped[0]?.reason?.includes("fatura paga"), true);
+eq("fatura paga: revalidação recebeu fatura e cliente", [paid.revalidate[0]?.invoiceId, paid.revalidate[0]?.customerId], ["1", "a:c1"]);
+eq("fatura paga: revalidação recebeu a conta de origem (slug)", paid.revalidate[0]?.connection, "a");
+
+// fonte indisponível: ADIA sem gastar tentativa (não é falha, não é envio às cegas)
+const unknown = revalHarness(() => ({ status: "unknown", error: "MikWeb 502" }));
+const unknownSummary = await dispatchQueue(unknown.deps, { policy: "automated" });
+eq("fonte fora do ar: nada é entregue", unknown.delivered.length, 0);
+eq("fonte fora do ar: devolvida à fila", unknownSummary.released, 1);
+eq("fonte fora do ar: sem marcação de falha permanente", unknown.skipped.length, 0);
+check(
+  "fonte fora do ar: reagendada para daqui a pouco (não para amanhã)",
+  unknown.released[0]?.scheduledFor === NOON + 15 * 60_000,
+  unknown.released[0]
+);
+
+// fatura em aberto confirmada na fonte: envia normalmente
+const open = revalHarness(() => ({ status: "open", situation: "Em Aberto" }));
+const openSummary = await dispatchQueue(open.deps, { policy: "automated" });
+eq("fatura em aberto confirmada: envia", [openSummary.sent, open.delivered.length], [1, 1]);
+
+// evento que não é de fatura nunca é revalidado (instalação, indicação…)
+const nonBilling = revalHarness(() => { throw new Error("não deveria ser chamado"); }, "referral.approved");
+const nonBillingSummary = await dispatchQueue(nonBilling.deps, { policy: "automated" });
+eq("evento não-billing: envia sem revalidar", [nonBillingSummary.sent, nonBilling.revalidate.length], [1, 0]);
+
+// o buildPayload carrega os metadados que a revalidação lê
+const revalPayload = toStoredPayload(
+  buildPayload({
+    customer: { id: "a:77", full_name: "Ana Souza", cpf_cnpj: null },
+    billing: { id: "a:123", customer_id: "a:77", value: 100, due_day: "2026-09-20", situation_name: "Em Aberto" },
+    dueDate: "2026-09-20",
+    reference: "SET/26",
+    referenceDate: "2026-09-20",
+    portalBaseUrl: "https://portal.test",
+    companyName: "Provedora",
+  }),
+  "2026-09-20"
+);
+eq("payload da fatura carrega __invoiceId cru", revalPayload.__invoiceId, "123");
+eq("payload da fatura carrega __customerId prefixado (conta via junto)", revalPayload.__customerId, "a:77");
+
+// ---------------------------------------------------------------------------
+// 22. Health score do canal + resumo semanal + presets de régua
+// ---------------------------------------------------------------------------
+
+section("22. Health score, resumo semanal e presets");
+
+import { computeWhatsAppHealth } from "../supabase/functions/api/notify/health.ts";
+import { shouldSendWeeklySummary, buildWeeklySummaryMessage } from "../supabase/functions/api/notify/admin-alerts.ts";
+import { RULE_PRESETS } from "../src/lib/simulator-report.ts";
+
+// nota 100 com tudo ok; quebrado crítico derruba `ok` mesmo com nota alta
+const allOk = computeWhatsAppHealth([
+  { key: "a", label: "Um", ok: true, critical: true },
+  { key: "b", label: "Dois", ok: true },
+  { key: "c", label: "Três", ok: true },
+]);
+eq("tudo ok: nota 100 e canal ok", [allOk.score, allOk.ok], [100, true]);
+
+const brokenCritical = computeWhatsAppHealth([
+  { key: "a", label: "Credenciais", ok: false, critical: true },
+  { key: "b", label: "Régua", ok: true },
+  { key: "c", label: "Opt-ins", ok: true },
+  { key: "d", label: "Webhook", ok: true },
+]);
+eq("crítico quebrado: 3/4 = nota 75", brokenCritical.score, 75);
+eq("crítico quebrado: ok=false (nota alta não engana)", brokenCritical.ok, false);
+check("crítico quebrado: o resumo NÃO diz que está tudo bem", !brokenCritical.summary.includes("saudável"), brokenCritical.summary);
+
+// pendência não-crítica: canal ok, mas a lista aponta o que falta
+const warnOnly = computeWhatsAppHealth([
+  { key: "a", label: "Crítico", ok: true, critical: true },
+  { key: "b", label: "Secret do webhook", ok: false },
+]);
+eq("só pendência não-crítica: canal segue ok", warnOnly.ok, true);
+eq("pendência não-crítica: nota 50", warnOnly.score, 50);
+
+// informacional não entra na nota
+const withInfo = computeWhatsAppHealth([
+  { key: "a", label: "Crítico", ok: true, critical: true },
+  { key: "info", label: "Incertos", ok: false, informational: true },
+]);
+eq("informacional não penaliza a nota", withInfo.score, 100);
+
+// resumo semanal: uma vez por janela de 7 dias
+const WEEK = Date.UTC(2026, 9, 6, 12, 0, 0);
+eq("primeira semana: envia", shouldSendWeeklySummary(null, WEEK), true);
+eq("seis dias depois: NÃO envia", shouldSendWeeklySummary(WEEK - 6 * 86400_000, WEEK), false);
+eq("sete dias depois: envia", shouldSendWeeklySummary(WEEK - 7 * 86400_000, WEEK), true);
+
+const weekly = buildWeeklySummaryMessage({
+  stats: { sent: 40, delivered: 36, read: 20, failed: 2, optOuts: 1, uncertain: 3 },
+  at: WEEK,
+});
+check("semanal: cita enviados", weekly.includes("Enviados: 40"), weekly);
+check("semanal: taxa de entrega no texto", weekly.includes("(90%)"), weekly);
+check("semanal: expõe incertos para conciliação", weekly.includes("incerto"), weekly);
+check("semanal: cita opt-outs", weekly.includes("opt-out"), weekly);
+
+// presets: 5 regras, diferença é o que está ligado
+eq("três presets", RULE_PRESETS.length, 3);
+check(
+  "todo preset mantém as 5 regras",
+  RULE_PRESETS.every((preset) => preset.rules.length === 5),
+  RULE_PRESETS.map((p) => p.rules.length)
+);
+const byKey = Object.fromEntries(RULE_PRESETS.map((preset) => [preset.key, preset]));
+eq("conservadora: só vencimento + 5 dias", byKey.conservative.rules.filter((r) => r.active).map((r) => r.key).join(","), "due_day,late_5");
+eq("recomendada: régua default (late_10 desligada)", byKey.recommended.rules.filter((r) => r.active).map((r) => r.key).join(","), "d_minus_3,due_day,late_1,late_5");
+eq("agressiva: tudo ligado, inclusive late_10", byKey.aggressive.rules.filter((r) => r.active).map((r) => r.key).join(","), "d_minus_3,due_day,late_1,late_5,late_10");
+
+// ---------------------------------------------------------------------------
 
 console.log(`\n${failures.length === 0 ? "✓" : "✗"} ${pass} verificações passaram, ${failures.length} falharam`);
 for (const item of failures) console.log(`  ✗ ${item}`);

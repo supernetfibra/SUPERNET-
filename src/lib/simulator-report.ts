@@ -215,6 +215,54 @@ export function paramsFromSettings(settings: SimSettings): SimParams {
 }
 
 /** Comparação estável de régua (ordem não importa para a configuração efetiva). */
+/**
+ * Presets de régua — "não me faça pensar": o dono escolhe uma postura e recebe
+ * a régua inteira pronta (ainda revisável na tabela abaixo e salva só no botão
+ * Salvar). Todas as 5 regras existem nos três; o que muda é o que está ligado.
+ */
+export interface RulePreset {
+  key: string;
+  label: string;
+  description: string;
+  rules: SimRule[];
+  horizonDays: number;
+}
+
+function presetRules(activeKeys: string[]): SimRule[] {
+  const all: Array<Pick<SimRule, "key" | "eventKey" | "offsetDays" | "sortOrder" | "label">> = [
+    { key: "d_minus_3", eventKey: "billing.due_soon", offsetDays: -3, sortOrder: 30, label: "3 dias antes do vencimento" },
+    { key: "due_day", eventKey: "billing.due_today", offsetDays: 0, sortOrder: 10, label: "no dia do vencimento" },
+    { key: "late_1", eventKey: "billing.late", offsetDays: 1, sortOrder: 20, label: "1 dia de atraso" },
+    { key: "late_5", eventKey: "billing.late", offsetDays: 5, sortOrder: 40, label: "5 dias de atraso" },
+    { key: "late_10", eventKey: "billing.late", offsetDays: 10, sortOrder: 50, label: "10 dias de atraso" },
+  ];
+  return all.map((rule) => ({ ...rule, active: activeKeys.includes(rule.key) }));
+}
+
+export const RULE_PRESETS: RulePreset[] = [
+  {
+    key: "conservative",
+    label: "Conservadora",
+    description: "Só no vencimento e no 5º dia de atraso",
+    rules: presetRules(["due_day", "late_5"]),
+    horizonDays: 7,
+  },
+  {
+    key: "recommended",
+    label: "Recomendada",
+    description: "Aviso antes, lembrete no dia, cobrança em 1 e 5 dias",
+    rules: presetRules(["d_minus_3", "due_day", "late_1", "late_5"]),
+    horizonDays: 7,
+  },
+  {
+    key: "aggressive",
+    label: "Agressiva",
+    description: "Tudo, inclusive o aviso final de 10 dias",
+    rules: presetRules(["d_minus_3", "due_day", "late_1", "late_5", "late_10"]),
+    horizonDays: 14,
+  },
+];
+
 export function serializeRules(rules: SimRule[]): string {
   return [...rules]
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
