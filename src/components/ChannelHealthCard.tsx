@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { AlertTriangle, CheckCircle2, ChevronRight, Circle, Loader2, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Circle, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
