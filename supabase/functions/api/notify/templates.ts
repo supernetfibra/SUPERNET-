@@ -110,6 +110,23 @@ export const DEFAULT_TEMPLATES: ChannelTemplate[] = [
   },
   {
     channel: "whatsapp",
+    eventKey: "billing.observation",
+    name: "Acordo ativo / fatura em observação (WhatsApp)",
+    // Fatura em observação = acordo pedido pelo cliente. Este texto INFORMA o acordo,
+    // não cobra: nada de juros, atraso ou "pague hoje". Ligado só quando o admin
+    // habilita a regra `observation` na régua (nasce desligada).
+    active: true,
+    body: [
+      "Olá, {{primeiro_nome}}! 👋",
+      "Sobre a fatura {{referencia}} (vencimento {{vencimento}}): o acordo combinado está ativo no seu cadastro.",
+      "Valor: {{valor}}",
+      "Ver os detalhes no portal do cliente: {{link}}",
+      "",
+      "Se precisar de algo, é só responder por aqui. 🙂",
+    ].join("\n"),
+  },
+  {
+    channel: "whatsapp",
     eventKey: "test",
     name: "Mensagem de teste (WhatsApp)",
     active: true,

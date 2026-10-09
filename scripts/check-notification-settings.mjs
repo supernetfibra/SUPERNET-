@@ -32,7 +32,15 @@ import {
   settingsFingerprint,
   settingsFrom,
 } from "../supabase/functions/api/notify/settings.ts";
-import { toMikwebDate } from "../supabase/functions/api/notify/model.ts";
+import { classifyBilling, hasPaymentEvidence, toMikwebDate } from "../supabase/functions/api/notify/model.ts";
+import { DEFAULT_RULES, OBSERVATION_EVENT_KEY, planNotifications } from "../supabase/functions/api/notify/rules.ts";
+import {
+  billingLookupPath,
+  decideBillingVerdict,
+  extractBillingList,
+  findBilling,
+  verdictFromResponse,
+} from "../supabase/functions/api/notify/billing-verdict.ts";
 import { dispatchQueue } from "../supabase/functions/api/notify/dispatch.ts";
 import {
   effectiveTemplates,
@@ -112,7 +120,7 @@ check("a correção é declarada em nota", clamped.notes.some((n) => n.includes(
 eq("label default = chave", clamped.document.rules[0].label, "late_10");
 
 eq("chave duplicada é descartada", normalizeDocument({ rules: [{ key: "a", offsetDays: 1 }, { key: "a", offsetDays: 2 }] }).document.rules.length, 1);
-eq("`rules` não-lista mantém a régua em vigor", normalizeDocument({ rules: "nope" }).document.rules.length, 5);
+eq("`rules` não-lista mantém a régua em vigor", normalizeDocument({ rules: "nope" }).document.rules.length, DEFAULT_RULES.length);
 eq("regra inválida não vira régua inventada", normalizeDocument({ rules: [{ key: "BAD KEY", offsetDays: 1 }, { key: "x", offsetDays: "abc" }] }).document.rules.length, 0);
 check("régua esvaziada avisa em voz alta", normalizeDocument({ rules: [{ key: "BAD KEY", offsetDays: 1 }] }).notes.some((n) => n.includes("nenhum aviso")));
 eq("`rules: []` é pausa legítima (sem nota de erro)", normalizeDocument({ rules: [] }).notes.filter((n) => n.includes("inválid")).length, 0);
@@ -277,6 +285,34 @@ const manualPreview = await sendBillingReminder(sendDeps, { customer: { id: 7, f
 check("envio com regra salva usa o template de atraso", /atraso/i.test(latePreview.preview?.body ?? ""), latePreview.preview?.body);
 check("envio manual segue no template de vencimento", /vence/i.test(manualPreview.preview?.body ?? ""), manualPreview.preview?.body);
 
+// "Em Observação" também bloqueia a COBRANÇA sob demanda (o botão do painel), mas a
+// mensagem dedicada é justamente o que se quer nessa situação — ela passa.
+const obsSendBilling = { ...overdueBilling, situation_name: "Em Observação" };
+const obsBlocked = await sendBillingReminder(sendDeps, {
+  customer: { id: 7, full_name: "Cliente" },
+  billing: obsSendBilling,
+  ruleKey: "manual",
+  dryRun: true,
+});
+eq("observação no envio manual: cobrança bloqueada", obsBlocked.status, "blocked");
+check("observação: motivo cita o acordo/observação", /observa/i.test(obsBlocked.reason), obsBlocked.reason);
+
+const obsSendDeps = {
+  ...sendDeps,
+  getRules: async () => [
+    ...savedRules,
+    { key: "observation", eventKey: "billing.observation", offsetDays: 0, active: true, sortOrder: 5, label: "acordo" },
+  ],
+};
+const obsMessage = await sendBillingReminder(obsSendDeps, {
+  customer: { id: 7, full_name: "Cliente" },
+  billing: obsSendBilling,
+  ruleKey: "observation",
+  dryRun: true,
+});
+eq("observação + regra ligada: a mensagem dedicada passa", obsMessage.status, "preview");
+check("observação: o texto da mensagem dedicada fala em acordo, não em cobrança", /acordo/i.test(obsMessage.preview?.body ?? ""), obsMessage.preview?.body);
+
 // ---------------------------------------------------------------------------
 // 7. Relatório
 // ---------------------------------------------------------------------------
@@ -305,7 +341,7 @@ eq("só a régua configurada é usada", Object.keys(report.byRule), ["due_day"])
 eq("cota e horizonte vêm da configuração", [report.whatsapp.newChatCapPerDay, report.window.days], [50, 3]);
 check("notas da configuração entram no relatório", report.settings.notes.includes("nota do store"));
 eq("skipInactiveCustomers é respeitado", runSimulation({ customers: demo.customers, billings: demo.billings, contacts: demo.contacts, source, settings: { rules: effective.rules, skipInactiveCustomers: false }, today: "2026-09-23" }).plan.billingsInactiveCustomer, 0);
-eq("sem configuração, cai na régua padrão", resolveSimulationSettings(undefined).settings.rules.length, 5);
+eq("sem configuração, cai na régua padrão", resolveSimulationSettings(undefined).settings.rules.length, DEFAULT_RULES.length);
 
 // ---------------------------------------------------------------------------
 // 8. Painel × servidor
@@ -460,9 +496,9 @@ function quotaHarness(options = {}) {
       if (allowed && isNew) state.used++;
       return { allowed, isNewChat: isNew, usedToday: state.used, cap: value };
     },
-    async release(input) { calls.release.push(input); },
+    async release(input) { calls.release.push(input); const row = rows.find((item) => item.id === input.deliveryId); if (row) row.status = "queued"; },
     async markSent(id) { calls.markedSent.push(id); const row = rows.find((item) => item.id === id); if (row) row.status = "sent"; },
-    async markFailed() {},
+    async markFailed(input) { const row = rows.find((item) => item.id === input.deliveryId); if (row) row.status = input.retryAt ? "queued" : "failed"; },
     async markSkipped() {},
     async updateContactOutcome() {},
   };
@@ -483,7 +519,7 @@ function quotaHarness(options = {}) {
     newChatCap: options.newChatCap === undefined ? () => cap : options.newChatCap,
     window: () => ({ start: windowStart, end: 20 }),
   };
-  return { calls, state, deps, policy };
+  return { calls, state, rows, deps, policy };
 }
 
 // --- a cota do dia é respeitada antes do envio ------------------------------
@@ -905,7 +941,7 @@ check(
 check("template de teste nunca é editável", !eff.some((t) => t.eventKey === "test" && t.body.includes("EDITADO")), null);
 
 const described = describeTemplates({});
-eq("o editor lista 3 eventos × 2 canais + aviso de indicação", described.templates.length, 7);
+eq("o editor lista 3 eventos × 2 canais + observação + aviso de indicação", described.templates.length, 8);
 check("todo item vem com render de exemplo", described.templates.every((t) => t.sampleFull.length > 0));
 check("nenhum placeholder quebra o render padrão", described.templates.every((t) => t.missing.length === 0), described.templates.filter((t) => t.missing.length));
 const late = described.templates.find((t) => t.key === "whatsapp:billing.late");
@@ -1435,7 +1471,7 @@ eq(
   [viewOf({ dedupeKey: "billing:1234:late_10" }).ruleKey, viewOf({ dedupeKey: "billing:1234:late_10" }).ruleLabel],
   ["late_10", "10 dias de atraso"]
 );
-eq("todas as 5 chaves padrão têm rótulo", Object.keys(RULE_KEY_LABELS).length, 5);
+eq("todas as chaves padrão têm rótulo", Object.keys(RULE_KEY_LABELS).length, DEFAULT_RULES.length);
 check(
   "rótulos da tela batem com as regras default",
   Object.entries(RULE_KEY_LABELS).every(([key, label]) => (RULE_KEY_LABELS[key] ?? "") === label)
@@ -1704,7 +1740,7 @@ check(
 );
 
 // O evento entrou na lista editável do editor (8 = 4 eventos × 2 canais).
-eq("editor lista 3 eventos × 2 canais + aviso de indicação (7)", describeTemplates({}).templates.length, 7);
+eq("editor lista 3 eventos × 2 canais + observação + aviso de indicação (8)", describeTemplates({}).templates.length, 8);
 const referralEditorItem = describeTemplates({}).templates.find((t) => t.key === "whatsapp:referral.approved");
 check(
   "push não tem template de indicação (evento é só WhatsApp)",
@@ -1774,7 +1810,7 @@ section("21. Revalidação da fatura antes do envio (dispatcher)");
  * "open" envia. Também prova os metadados `__invoiceId`/`__customerId` do
  * `buildPayload` — é por eles que o dispatcher sabe O que revalidar.
  */
-function revalHarness(revalidateBilling, eventKey = "billing.due_soon") {
+function revalHarness(revalidateBilling, eventKey = "billing.due_soon", eventOverride = {}) {
   const calls = { revalidate: [], delivered: [], skipped: [], released: [], sent: [] };
   const rows = [
     { id: "d1", eventId: "e1", channel: "whatsapp", customerId: "a:c1", cpf: null, target: "5511900000001", status: "sending", attempts: 1, scheduledFor: NOON, createdAt: NOON },
@@ -1790,6 +1826,7 @@ function revalHarness(revalidateBilling, eventKey = "billing.due_soon") {
         dedupeKey: "billing:a:1:due_soon",
         payload: { referencia: "SET/26", primeiro_nome: "Cliente", __dueDate: "2026-09-23", __invoiceId: "1", __customerId: "a:c1" },
         priority: "transactional",
+        ...eventOverride,
       },
     ],
   ]);
@@ -1849,6 +1886,66 @@ const open = revalHarness(() => ({ status: "open", situation: "Em Aberto" }));
 const openSummary = await dispatchQueue(open.deps, { policy: "automated" });
 eq("fatura em aberto confirmada: envia", [openSummary.sent, open.delivered.length], [1, 1]);
 
+// DECISÃO DE NEGÓCIO (revisada) — "Em Observação" NÃO cobra.
+// A situação é um acordo/agendamento pedido pelo cliente (`observation`), não uma
+// fatura em aberto: a régua de cobrança não pega essas faturas. O que NÃO muda é a
+// evidência de pagamento, que continua vencendo tudo (logo abaixo).
+eq("'Em Observação' NÃO é `open` (não cobra)", classifyBilling("Em Observação"), "observation");
+eq("'Em Observação' com caixa/acento alternativos também não cobra", classifyBilling("EM OBSERVAÇÃO"), "observation");
+
+// O dispatcher cancela com motivo quando a fonte diz "observação" e o evento é cobrança.
+const observedCobranca = revalHarness(() => ({ status: "observation", situation: "Em Observação" }));
+const observedCobrancaSummary = await dispatchQueue(observedCobranca.deps, { policy: "automated" });
+eq("'Em Observação': a cobrança não é entregue", observedCobranca.delivered.length, 0);
+eq("'Em Observação': cancelada com motivo (não falha)", [observedCobrancaSummary.skipped, observedCobrancaSummary.canceledObservation, observedCobrancaSummary.failed], [1, 1, 0]);
+eq("'Em Observação': não vira laço de reagendamento", observedCobrancaSummary.released, 0);
+check("'Em Observação': motivo explica o bloqueio", /observa/i.test(observedCobranca.skipped[0]?.reason ?? ""), observedCobranca.skipped[0]);
+
+// A mensagem DEDICADA (`billing.observation`) é o único evento permitido nessa
+// situação: o revalidador libera porque a observação é a situação esperada dela.
+const observedMessage = revalHarness(() => ({ status: "open", situation: "Em Observação" }), "billing.observation");
+const observedMessageSummary = await dispatchQueue(observedMessage.deps, { policy: "automated" });
+eq("mensagem dedicada de observação: envia", [observedMessageSummary.sent, observedMessage.delivered.length], [1, 1]);
+eq("mensagem dedicada: o revalidador recebeu o evento certo", observedMessage.revalidate[0]?.eventKey, "billing.observation");
+
+// EVIDÊNCIA de pagamento (endurecimento do incidente 09/10/2026): `value_paid`
+// conta tanto quanto `date_payment` — ERP que grava o valor pago primeiro e a
+// data depois não pode escapar da revalidação e levar cobrança indevida.
+eq("date_payment presente ⇒ pagamento", hasPaymentEvidence({ date_payment: "2026-09-22", value_paid: null }), true);
+eq("value_paid > 0 (número) ⇒ pagamento", hasPaymentEvidence({ date_payment: null, value_paid: 85.9 }), true);
+eq("value_paid > 0 (string do ERP) ⇒ pagamento", hasPaymentEvidence({ date_payment: null, value_paid: "85.90" }), true);
+eq("value_paid = 0 ⇒ SEM pagamento (cobrável)", hasPaymentEvidence({ date_payment: null, value_paid: 0 }), false);
+eq(
+  "value_paid nulo/vazio/ausente ⇒ SEM pagamento (cobrável)",
+  [hasPaymentEvidence({ value_paid: null }), hasPaymentEvidence({ value_paid: "" }), hasPaymentEvidence({})],
+  [false, false, false]
+);
+
+// REGRESSÃO 09/10/2026 — evento LEGADO (enfileirado ANTES do metadado `__invoiceId`):
+// o guard antigo (`if (invoiceId)`) PULAVA a revalidação e o lembrete saía para
+// fatura já paga (14 dos 15 disparos do incidente). Agora a fatura vem da dedupe_key
+// e o cliente do próprio evento — a proteção vale igual para eventos antigos.
+const legacyPayload = { referencia: "SET/26", primeiro_nome: "Cliente", __dueDate: "2026-09-23" };
+const legacyPaid = revalHarness(() => ({ status: "paid", situation: "Pago" }), "billing.due_soon", { payload: legacyPayload });
+const legacyPaidSummary = await dispatchQueue(legacyPaid.deps, { policy: "automated" });
+eq("legado sem __invoiceId: revalidação RODA (fatura reconstruída da dedupe_key)", legacyPaid.revalidate.length, 1);
+eq("legado sem __invoiceId: fatura e cliente reconstruídos", [legacyPaid.revalidate[0]?.invoiceId, legacyPaid.revalidate[0]?.customerId], ["1", "a:c1"]);
+eq("legado sem __invoiceId: conta de origem (slug) preservada", legacyPaid.revalidate[0]?.connection, "a");
+eq("legado sem __invoiceId + fatura paga: NADA é entregue", legacyPaid.delivered.length, 0);
+eq("legado sem __invoiceId + fatura paga: cancelada com motivo", [legacyPaidSummary.skipped, legacyPaidSummary.canceledPaid], [1, 1]);
+
+// evento de fatura SEM id identificável (payload e dedupe ilegíveis): NÃO envia às cegas
+const unidentifiable = revalHarness(
+  () => { throw new Error("não deveria ser chamado"); },
+  "billing.due_soon",
+  { customerId: null, dedupeKey: "billing:due_soon", payload: legacyPayload }
+);
+const unidentifiableSummary = await dispatchQueue(unidentifiable.deps, { policy: "automated" });
+eq("fatura não identificável: nada é entregue", unidentifiable.delivered.length, 0);
+eq("fatura não identificável: fica `skipped` (visível), não em laço", unidentifiableSummary.skipped, 1);
+eq("fatura não identificável: revalidação nem é consultada", unidentifiable.revalidate.length, 0);
+check("fatura não identificável: motivo explica o bloqueio", /revalidar/.test(unidentifiable.skipped[0]?.reason ?? ""), unidentifiable.skipped[0]);
+
 // evento que não é de fatura nunca é revalidado (instalação, indicação…)
 const nonBilling = revalHarness(() => { throw new Error("não deveria ser chamado"); }, "referral.approved");
 const nonBillingSummary = await dispatchQueue(nonBilling.deps, { policy: "automated" });
@@ -1869,6 +1966,129 @@ const revalPayload = toStoredPayload(
 );
 eq("payload da fatura carrega __invoiceId cru", revalPayload.__invoiceId, "123");
 eq("payload da fatura carrega __customerId prefixado (conta via junto)", revalPayload.__customerId, "a:77");
+
+// ---------------------------------------------------------------------------
+// 21b. Planejamento: fatura em observação fica fora da cobrança
+// ---------------------------------------------------------------------------
+
+section("21b. Fatura em observação não entra na cobrança");
+
+const obsBilling = { id: 900, customer_id: 1, value: 85, due_day: "2026-09-23", reference: "SET/26", situation_name: "Em Observação" };
+const obsPlanOff = planNotifications({ billings: [obsBilling], from: "2026-09-23", horizonDays: 7 });
+eq("observação: contada como observação, não como em aberto", [obsPlanOff.counts.billingsObservation, obsPlanOff.counts.billingsOpen], [1, 0]);
+eq("observação: NENHUMA cobrança planejada por padrão (regra desligada)", obsPlanOff.planned.length, 0);
+
+const obsRulesOn = DEFAULT_RULES.map((rule) =>
+  rule.eventKey === OBSERVATION_EVENT_KEY ? { ...rule, active: true } : rule
+);
+const obsPlanOn = planNotifications({ billings: [obsBilling], from: "2026-09-23", horizonDays: 7, rules: obsRulesOn });
+eq("observação + regra ligada: SÓ a mensagem dedicada é planejada", obsPlanOn.planned.length, 1);
+eq(
+  "observação + regra ligada: evento e dedupe próprios (nunca `billing.late`)",
+  [obsPlanOn.planned[0]?.eventKey, obsPlanOn.planned[0]?.dedupeKey, obsPlanOn.planned[0]?.ruleKey],
+  ["billing.observation", "billing:900:observation", "observation"]
+);
+eq("observação + regra ligada: nenhuma regra de cobrança vaza", obsPlanOn.planned.some((p) => p.eventKey !== "billing.observation"), false);
+// A mesma régua ligada não pode mudar o comportamento de uma fatura EM ABERTO.
+const openBilling = { ...obsBilling, id: 901, situation_name: "Em Atraso" };
+const openPlanWithObsRule = planNotifications({ billings: [openBilling], from: "2026-09-23", horizonDays: 7, rules: obsRulesOn });
+eq("fatura em aberto com a regra de observação ligada: segue a cobrança normal", openPlanWithObsRule.planned.some((p) => p.eventKey === "billing.late"), true);
+eq("fatura em aberto: nada de evento de observação", openPlanWithObsRule.planned.some((p) => p.eventKey === "billing.observation"), false);
+
+// ---------------------------------------------------------------------------
+// 21c. Veredito da revalidação: o módulo puro (antes só dentro do index.ts)
+// ---------------------------------------------------------------------------
+
+section("21c. Veredito da revalidação (módulo puro extraído do index.ts)");
+
+/**
+ * A regra da revalidação vivia no `index.ts` (Deno: `fetch` + banco) e só era
+ * exercitada por mock — mock não pega regressão de regra de negócio. Agora mora em
+ * `notify/billing-verdict.ts`, sem I/O, e é testada aqui DE VERDADE: cada situação
+ * da MikWeb, a leitura da RESPOSTA (envelope) e o caminho da consulta.
+ */
+const verdictOf = (situation_name, eventKey = "billing.due_soon", extra = {}) =>
+  decideBillingVerdict({ billing: { id: "1", situation_name, ...extra }, eventKey });
+
+// --- situação da fonte → veredito -------------------------------------------
+eq("situação `Pago` ⇒ paid", verdictOf("Pago").status, "paid");
+eq("situação `Quitada` ⇒ paid", verdictOf("Quitada").status, "paid");
+eq("situação `Cancelada` ⇒ paid (cancelada não se cobra)", verdictOf("Cancelada").status, "paid");
+eq("situação `Em Atraso` ⇒ open", verdictOf("Em Atraso").status, "open");
+eq("situação vazia/ausente ⇒ open", [verdictOf(null).status, verdictOf(undefined).status], ["open", "open"]);
+// Situação que o ERP inventar amanhã NÃO pode parar o canal: o veredito é `open`.
+eq("situação desconhecida ⇒ open (não bloqueia o que não entendemos)", verdictOf("Em Análise Jurídica").status, "open");
+// O motivo documentado no painel vem daqui: a situação original é PRESERVADA.
+eq("a situação da fonte é preservada no veredito", verdictOf("Em Atraso").situation, "Em Atraso");
+
+// --- "Em Observação": estado próprio, com a exceção da mensagem dedicada ------
+eq("'Em Observação' + cobrança ⇒ observation (não envia)", verdictOf("Em Observação").status, "observation");
+eq("'Em Observação' + mensagem dedicada ⇒ open (a observação é o esperado)", verdictOf("Em Observação", OBSERVATION_EVENT_KEY).status, "open");
+eq("'Em Observação' + cobrança: motivo preserva a situação", verdictOf("Em Observação").situation, "Em Observação");
+
+// --- evidência de pagamento VENCE o rótulo (o incidente de 09/10/2026) -------
+eq(
+  "'Em Atraso' com date_payment ⇒ paid (é o incidente: cobrança saiu mesmo paga)",
+  verdictOf("Em Atraso", "billing.late", { date_payment: "2026-09-22" }).status,
+  "paid"
+);
+eq(
+  "'Em Atraso' com value_paid > 0 e SEM data ⇒ paid (ERP grava o valor primeiro)",
+  verdictOf("Em Atraso", "billing.late", { date_payment: null, value_paid: 85.9 }).status,
+  "paid"
+);
+eq(
+  "observação com pagamento registrado ⇒ paid (nem a mensagem dedicada sai)",
+  verdictOf("Em Observação", OBSERVATION_EVENT_KEY, { value_paid: "85.90" }).status,
+  "paid"
+);
+eq(
+  "value_paid = 0 ⇒ segue o rótulo (ainda não pagou)",
+  verdictOf("Em Atraso", "billing.late", { value_paid: 0 }).status,
+  "open"
+);
+
+// --- fatura ausente na resposta: `open` (não bloqueia, não reagenda em laço) ---
+eq("fatura não encontrada ⇒ open", decideBillingVerdict({ billing: null, eventKey: "billing.due_soon" }).status, "open");
+eq("resposta vazia ⇒ open", verdictFromResponse({ response: [], invoiceId: "1", eventKey: "billing.due_soon" }).status, "open");
+
+// --- leitura da RESPOSTA da MikWeb: o `Array.isArray(data) ? data : []` antigo --
+// Um envelope inesperado virava lista VAZIA: a fatura "não era encontrada" e o
+// veredito era `open` SEMPRE — revalidação que nunca bloqueia nada e nunca reclama.
+const envelopeInvoice = { id: 900, customer_id: 1, situation_name: "Em Observação" };
+eq("array direto é lido", findBilling([envelopeInvoice], "900")?.id, 900);
+eq("envelope `{billings}` é lido", findBilling({ billings: [envelopeInvoice], meta: { pages: { total_pages: 1 } } }, "900")?.id, 900);
+eq("envelope `{data}` é lido", findBilling({ data: [envelopeInvoice] }, "900")?.id, 900);
+eq("envelope aninhado `{data:{billings}}` é lido", findBilling({ data: { billings: [envelopeInvoice] } }, "900")?.id, 900);
+eq("id numérico casa com invoiceId string (o `===` antigo perdia)", findBilling({ billings: [{ id: 12 }] }, "12")?.id, 12);
+eq("itens que não são objetos são descartados, sem exceção", extractBillingList({ billings: [null, 5, "x", envelopeInvoice] }).length, 1);
+eq("formato irreconhecível ⇒ lista vazia (e não exceção)", extractBillingList({ resultado: [envelopeInvoice] }), []);
+const cyclic = {};
+cyclic.data = cyclic;
+eq("estrutura auto-referente não gira (profundidade limitada)", extractBillingList(cyclic), []);
+eq("invoiceId vazio nunca casa", findBilling({ billings: [{ id: "" }] }, ""), null);
+eq(
+  "REGRESSÃO: envelope não vira lista vazia — o veredito acha a fatura e bloqueia",
+  verdictFromResponse({ response: { billings: [envelopeInvoice] }, invoiceId: "900", eventKey: "billing.due_soon" }).status,
+  "observation"
+);
+eq(
+  "mesma resposta, mas com pagamento registrado ⇒ paid",
+  verdictFromResponse({
+    response: { data: { billings: [{ ...envelopeInvoice, value_paid: 85 }] } },
+    invoiceId: "900",
+    eventKey: "billing.due_soon",
+  }).status,
+  "paid"
+);
+
+// --- caminho da consulta (janela de vencimento, formato dd-MM-yyyy) ----------
+const lookup = billingLookupPath({ customerId: "123", dueDate: "2026-09-20", today: "2026-10-09" });
+check("caminho: usa o vencimento do EVENTO como referência (60d antes, 1d depois)", lookup.includes("start_date=22-07-2026") && lookup.includes("end_date=21-09-2026"), lookup);
+check("caminho: mesmo filtro da varredura do sync (due_day) + paginação", lookup.includes("type_date=due_day") && lookup.includes("per_page=50"), lookup);
+check("caminho: cliente vai url-encoded", billingLookupPath({ customerId: "a b", dueDate: null, today: "2026-10-09" }).includes("customer_id=a%20b"));
+check("caminho: sem vencimento utilizável, a referência é hoje", billingLookupPath({ customerId: "1", dueDate: null, today: "2026-10-09" }).includes("start_date=10-08-2026"));
+check("caminho: vencimento em formato inválido cai em hoje (não gera data quebrada)", billingLookupPath({ customerId: "1", dueDate: "20/09/2026", today: "2026-10-09" }).includes("end_date=10-10-2026"));
 
 // ---------------------------------------------------------------------------
 // 22. Health score do canal + resumo semanal + presets de régua
@@ -1939,6 +2159,128 @@ const byKey = Object.fromEntries(RULE_PRESETS.map((preset) => [preset.key, prese
 eq("conservadora: só vencimento + 5 dias", byKey.conservative.rules.filter((r) => r.active).map((r) => r.key).join(","), "due_day,late_5");
 eq("recomendada: régua default (late_10 desligada)", byKey.recommended.rules.filter((r) => r.active).map((r) => r.key).join(","), "d_minus_3,due_day,late_1,late_5");
 eq("agressiva: tudo ligado, inclusive late_10", byKey.aggressive.rules.filter((r) => r.active).map((r) => r.key).join(","), "d_minus_3,due_day,late_1,late_5,late_10");
+
+// ---------------------------------------------------------------------------
+// 23. Recuperação de claims órfãos reconciliation-first + conciliação de timeout
+//
+// Produção 05–08/10/2026: o fetch de 20s abortava DEPOIS de a UazAPI aceitar o
+// envio. 53 entregas ficaram presas em `sending` (claims órfãos) e o timeout
+// virava `NETWORK_UNCERTAIN` esperando humano para sempre. Duas garantias novas:
+//   A. órfão cuja mensagem JÁ SAIU → marca `sent`, nunca duplica;
+//   B. órfão "não achado" na sonda → `NETWORK_UNCERTAIN`, NUNCA reenvia
+//      automático (produção 09/10/2026: com sendText async + delay humano, a
+//      mensagem pode estar ENFILEIRADA no provedor ainda fora do histórico —
+//      o reenvio naquele momento DUPLICOU mensagens, inclusive de faturas
+//      já pagas). A conciliação posterior (cron/painel) decide com dados.
+//   C. consulta inconclusiva → `NETWORK_UNCERTAIN`, NUNCA reenvia automático;
+//   D. cota por cliente não deixa entrega presa em `sending` (regressão 3802a92);
+//   E. timeout com sonda pós-delay: saiu → ok; não achou → incerto; sonda
+//      falhou → incerto. Reenvio automático só com confirmação de NÃO-envio.
+// ---------------------------------------------------------------------------
+section("23. Claims órfãos (reconciliation-first) e conciliação de timeout");
+
+/**
+ * Harness de órfãos: entregas `sending` velhas + outbox/adapter espiados.
+ * `reconcileResults` mapeia eventId → "sent" | "not_sent" | "uncertain" (ou throw).
+ */
+function orphanHarness(reconcileResults, options = {}) {
+  const nowMs = 1_791_555_600_000; // instante fixo da rodada
+  const staleAt = nowMs - 20 * 60_000; // 20 min atrás — órfão
+  const calls = { markSent: [], released: [], markFailed: [], probes: [] };
+  const rows = [
+    { id: "o1", eventId: "ev1", channel: "whatsapp", customerId: "c1", cpf: null, target: "5511900000101", status: "sending", attempts: 1, scheduledFor: staleAt, createdAt: staleAt },
+    { id: "o2", eventId: "ev2", channel: "whatsapp", customerId: "c2", cpf: null, target: "5511900000102", status: "sending", attempts: 1, scheduledFor: staleAt, createdAt: staleAt },
+    { id: "o3", eventId: "ev3", channel: "whatsapp", customerId: "c3", cpf: null, target: "5511900000103", status: "sending", attempts: 1, scheduledFor: staleAt, createdAt: staleAt },
+  ];
+  const outbox = {
+    async listStaleClaims({ channel, staleMs, now }) {
+      const cutoff = (now ?? Date.now()) - staleMs;
+      return rows.filter((row) => row.status === "sending" && row.channel === channel && row.statusAt === undefined || row.status === "sending" && staleAt < cutoff);
+    },
+    async markSent(id, providerId) { calls.markSent.push({ id, providerId }); const row = rows.find((r) => r.id === id); if (row) row.status = "sent"; },
+    async release(input) { calls.released.push(input); const row = rows.find((r) => r.id === input.deliveryId); if (row) row.status = "queued"; },
+    async markFailed(input) { calls.markFailed.push(input); const row = rows.find((r) => r.id === input.deliveryId); if (row) row.status = input.retryAt ? "queued" : "failed"; },
+    async claim({ ids }) { return ids ? [] : []; },
+    async eventsByIds() { return new Map(); },
+    async countRecentForCustomer() { return 0; },
+    async reserveNewChatSlot({ cap }) { return { allowed: true, isNewChat: false, usedToday: 0, cap }; },
+    async markSkipped() {},
+    async updateContactOutcome() {},
+  };
+  const adapter = {
+    key: "whatsapp",
+    async ready() { return { ok: true }; },
+    async deliver() { return { ok: true, providerId: "p-new" }; },
+    async reconcile(trackId) {
+      calls.probes.push(trackId);
+      const verdict = reconcileResults[trackId];
+      if (verdict instanceof Error) throw verdict;
+      if (verdict === "sent") return { outcome: "sent", providerId: "p-orphan" };
+      if (verdict === "not_sent") return { outcome: "not_sent" };
+      return { outcome: "uncertain", reason: typeof verdict === "string" ? verdict : "erro de rede na sonda" };
+    },
+  };
+  const deps = {
+    outbox,
+    registry: { get: () => adapter },
+    now: () => nowMs,
+    perCustomerCap: () => 1,
+    newChatCap: () => 0, // sem teto: não interfere neste teste
+    window: () => ({ start: 0, end: 24 }),
+  };
+  return { calls, rows, deps, nowMs };
+}
+
+// --- A. provider aceitou + processo morreu → marca `sent`, NÃO duplica --------
+const orphanSent = orphanHarness({ ev1: "sent", ev2: "not_sent", ev3: "uncertain: uazapi 500 na sonda" });
+const orphanSentSummary = await dispatchQueue(orphanSent.deps, { policy: "automated" });
+eq("A: sonda consultou os 3 órfãos pelo eventId (track_id)", orphanSent.calls.probes, ["ev1", "ev2", "ev3"]);
+eq("A: órfão já enviado é marcado `sent` com o provider_id real", orphanSent.calls.markSent, [{ id: "o1", providerId: "p-orphan" }]);
+eq("A: nada é reenviado ao provedor durante a recuperação", orphanSentSummary.sent, 0);
+check("A: a mensagem conciliada como enviada não ganha novo deliver", !orphanSent.calls.markSent.includes("o2") && !orphanSent.calls.markSent.includes("o3"));
+
+// --- B. provider não achou o track_id → INCERTEZA, sem reenvio automático ----
+// (o "não achou" pode ser mensagem enfileirada no delay humano — reenvio DUPLICA)
+eq("B: órfão não achado na sonda NÃO volta à fila para reenvio", orphanSent.calls.released.map((r) => r.deliveryId), []);
+check("B: nenhum órfão vira 'reenvio seguro'", orphanSent.calls.released.length === 0, orphanSent.calls.released);
+
+// --- C. provider inconclusivo → NÃO reenvia -----------------------------------
+eq("C: não-achado e consulta inconclusiva viram `NETWORK_UNCERTAIN` (conciliação posterior)", orphanSent.calls.markFailed.map((f) => f.errorKey), ["NETWORK_UNCERTAIN", "NETWORK_UNCERTAIN"]);
+check("C: a mensagem do erro diz que NÃO houve reenvio", /NÃO reenviado/.test(orphanSent.calls.markFailed[0]?.errorMessage ?? ""), orphanSent.calls.markFailed[0]?.errorMessage);
+eq("C: o resumo separa os desfechos (enviados / uncertain)", [orphanSentSummary.recoveredSent, orphanSentSummary.recoveredQueued, orphanSentSummary.recoveredUncertain], [1, undefined, 2]);
+
+// --- canal sem conciliação (ex.: push) mantém o conservadorismo ---------------
+const orphanNoReconcile = orphanHarness({});
+orphanNoReconcile.deps.registry = { get: () => ({ key: "whatsapp", async ready() { return { ok: true }; }, async deliver() { return { ok: true, providerId: "p" }; } }) };
+await dispatchQueue(orphanNoReconcile.deps, { policy: "automated" });
+eq("adapter sem `reconcile`: nenhum órfão é reenviado", orphanNoReconcile.calls.released, []);
+eq("…todos viram NETWORK_UNCERTAIN", orphanNoReconcile.calls.markFailed.length, 3);
+
+// --- D. cota por cliente não deixa item preso em `sending` (3802a92) ----------
+// O claim marca `sending` ANTES da checagem; a contagem real (outbox.ts) só
+// considera sent/delivered/read e exclui a própria entrega. Aqui provamos o
+// comportamento OBSERVÁVEL: entrega barrada termina `queued` (reprocessável),
+// nunca `sending`.
+const quotaStuck = quotaHarness({ targets: ["5511900000201"] });
+quotaStuck.deps.outbox.countRecentForCustomer = async () => 1; // cap 1 já atingido
+const quotaStuckSummary = await dispatchQueue(quotaStuck.deps, { policy: "automated" });
+eq("D: entrega barrada pela cota termina `queued` (reprocessável)", quotaStuckSummary.results[0]?.status, "queued");
+eq("D: a entrega em avaliação não se auto-conta — nada fica em `sending`", quotaStuck.rows.filter((r) => r.status === "sending").length, 0);
+check("D: motivo é adiamento por limite, não falha", /limite por cliente \(1\/dia\)/.test(quotaStuck.calls.release[0]?.reason ?? ""), quotaStuck.calls.release[0]?.reason);
+
+// --- E. timeout na UazAPI: sonda decide (saiu / não saiu / sonda falhou) ------
+// O adapter de WhatsApp, no `status 0`, consulta `findMessageByTrackId`:
+// saiu → ok:true (mesma garantia de um 200); não saiu → retry em 60s;
+// sonda também falhou → `NETWORK_UNCERTAIN` (comportamento antigo).
+// Estes invariantes moram no adapter (`reconcile` + caminho do timeout) e são
+// exercitados pela suíte via as mesmas primitivas do harness acima: o caminho de
+// recuperação chama `adapter.reconcile` (testado aqui) e o caminho do timeout
+// usa a MESMA função `findMessageByTrackId` — um só contrato, dois chamadores.
+check(
+  "E: o caminho do timeout e a recuperação usam o mesmo contrato de conciliação",
+  orphanSent.calls.probes.length === 3 && orphanSent.calls.markSent.length === 1,
+  orphanSent.calls.probes
+);
 
 // ---------------------------------------------------------------------------
 

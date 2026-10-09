@@ -35,8 +35,19 @@ export interface ReminderRule {
 }
 
 /**
+ * Evento da MENSAGEM DEDICADA de observação. Não é cobrança: é o aviso de que existe
+ * um acordo/agendamento ativo para a fatura. Fica num evento próprio para nunca ser
+ * confundido com `billing.late`/`due_*` na fila, no revalidador ou no painel.
+ */
+export const OBSERVATION_EVENT_KEY = "billing.observation";
+
+/**
  * Regras default propostas em `LEMBRETES-WHATSAPP.md` §6.
  * `late_10` fica desligada de propósito: só liga depois de validar `late_5`.
+ *
+ * `observation` também nasce DESLIGADA: fatura em observação (acordo pedido pelo
+ * cliente) não deve ser cobrada por padrão. Ligar a regra na régua troca o silêncio
+ * pela mensagem dedicada — nunca por cobrança, porque ela aponta para outro evento.
  */
 export const DEFAULT_RULES: ReminderRule[] = [
   { key: "d_minus_3", eventKey: "billing.due_soon", offsetDays: -3, active: true, sortOrder: 30, label: "3 dias antes do vencimento" },
@@ -44,6 +55,7 @@ export const DEFAULT_RULES: ReminderRule[] = [
   { key: "late_1", eventKey: "billing.late", offsetDays: 1, active: true, sortOrder: 20, label: "1 dia de atraso" },
   { key: "late_5", eventKey: "billing.late", offsetDays: 5, active: true, sortOrder: 40, label: "5 dias de atraso" },
   { key: "late_10", eventKey: "billing.late", offsetDays: 10, active: false, sortOrder: 50, label: "10 dias de atraso" },
+  { key: "observation", eventKey: OBSERVATION_EVENT_KEY, offsetDays: 0, active: false, sortOrder: 5, label: "Aviso de acordo (fatura em observação)" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -72,6 +84,8 @@ export interface PlanCounts {
   billingsOpen: number;
   billingsPaid: number;
   billingsCanceled: number;
+  /** Faturas "Em Observação" (acordo ativo) — fora da cobrança por definição. */
+  billingsObservation: number;
   billingsUnknownSituation: number;
   billingsInvalidDueDate: number;
   billingsInactiveCustomer: number;
@@ -100,7 +114,12 @@ export interface PlanInput {
 }
 
 export function planNotifications(input: PlanInput): PlanResult {
-  const rules = (input.rules ?? DEFAULT_RULES).filter((rule) => rule.active);
+  const activeRules = (input.rules ?? DEFAULT_RULES).filter((rule) => rule.active);
+  // Duas réguas SEPARADAS: a de cobrança e a mensagem dedicada de observação. Uma
+  // fatura em observação nunca entra na régua de cobrança, e as regras de cobrança
+  // nunca pegam uma fatura em observação.
+  const billingRules = activeRules.filter((rule) => rule.eventKey !== OBSERVATION_EVENT_KEY);
+  const observationRules = activeRules.filter((rule) => rule.eventKey === OBSERVATION_EVENT_KEY);
   const skipInactive = input.skipInactiveCustomers ?? true;
   const to = addDays(input.from, Math.max(0, input.horizonDays - 1));
 
@@ -109,6 +128,7 @@ export function planNotifications(input: PlanInput): PlanResult {
     billingsOpen: 0,
     billingsPaid: 0,
     billingsCanceled: 0,
+    billingsObservation: 0,
     billingsUnknownSituation: 0,
     billingsInvalidDueDate: 0,
     billingsInactiveCustomer: 0,
@@ -119,6 +139,7 @@ export function planNotifications(input: PlanInput): PlanResult {
 
   const planned: PlannedNotification[] = [];
   const staleBillingIds: string[] = [];
+  const maxOffset = Math.max(...billingRules.map((rule) => rule.offsetDays), 0);
 
   for (const billing of input.billings) {
     counts.billingsScanned++;
@@ -137,7 +158,17 @@ export function planNotifications(input: PlanInput): PlanResult {
       counts.billingsUnknownSituation++;
       continue;
     }
-    counts.billingsOpen++;
+
+    // "Em Observação" = acordo/agendamento pedido pelo cliente. Por PADRÃO não dispara
+    // cobrança: a régua de observação nasce desligada, então a fatura só é contada e
+    // fica de fora. Com a regra ligada, gera APENAS a mensagem dedicada — nunca a cobrança.
+    if (state === "observation") {
+      counts.billingsObservation++;
+      if (observationRules.length === 0) continue;
+    } else {
+      counts.billingsOpen++;
+    }
+    const applicableRules = state === "observation" ? observationRules : billingRules;
 
     const dueDate = billing.due_day;
     if (!isCivilDate(dueDate)) {
@@ -154,16 +185,16 @@ export function planNotifications(input: PlanInput): PlanResult {
 
     const overdueDays = diffDays(input.from, dueDate);
     // Fatura muito antiga: as regras de atraso já passaram e não queremos
-    // disparar uma rajada retroativa no primeiro dia de operação.
-    const maxOffset = Math.max(...rules.map((rule) => rule.offsetDays), 0);
-    if (overdueDays > maxOffset + input.horizonDays) {
+    // disparar uma rajada retroativa no primeiro dia de operação. Vale só para a
+    // cobrança — a mensagem de observação não é uma rajada de atraso.
+    if (state !== "observation" && overdueDays > maxOffset + input.horizonDays) {
       staleBillingIds.push(String(billing.id));
     }
 
     const reference = String(billing.reference ?? billing.id ?? "");
     const situation = String(billing.situation_name ?? "");
 
-    for (const rule of rules) {
+    for (const rule of applicableRules) {
       counts.rulesEvaluated++;
       const sendDate = addDays(dueDate, rule.offsetDays);
 
@@ -192,7 +223,7 @@ export function planNotifications(input: PlanInput): PlanResult {
     }
   }
 
-  planned.sort(comparePlanned(rules));
+  planned.sort(comparePlanned(activeRules));
   return { planned, counts, staleBillingIds };
 }
 

@@ -153,6 +153,16 @@ export interface OutboxApi {
    * tentativa faria um cliente barrado pela cota esgotar as tentativas sem falha.
    */
   release(input: { deliveryId: string; scheduledFor: number; reason: string }): Promise<void>;
+  /**
+   * Órfãos de claim: entregas marcadas `sending` há mais de `staleMs` (o processo
+   * que reservou morreu no meio do envio — timeout, restart do isolate). O
+   * dispatcher NÃO dá requeue cego: cada órfão é conciliado com o provedor
+   * (reconciliation-first) — quem já saiu vira `sent`, quem não saiu volta à
+   * fila, e consulta inconclusiva vira `NETWORK_UNCERTAIN` para conciliação
+   * posterior. Sem isto, um crash no meio do lote prende as entregas para
+   * sempre (53 presas em produção em 05–08/10/2026).
+   */
+  listStaleClaims(input: { channel: Channel; staleMs: number; now?: number }): Promise<DeliveryRow[]>;
   eventsByIds(ids: string[]): Promise<Map<string, OutboxEvent>>;    markSent(
       deliveryId: string,
       providerId: string | null,
@@ -276,6 +286,21 @@ export function createOutbox(db: () => SupabaseLike): OutboxApi {
       if (error) throw new Error(`claim_notification_deliveries falhou: ${error.message ?? error}`);
       const rows = Array.isArray(data) ? data : [];
       return rows.map((row: Record<string, unknown>) => toClaimed(row));
+    },
+
+    async listStaleClaims({ channel, staleMs, now }) {
+      const cutoff = (now ?? Date.now()) - staleMs;
+      // `status_at` é gravado no claim — é a hora em que foi reservado.
+      const { data, error } = await db()
+        .from("notification_deliveries")
+        .select("*")
+        .eq("status", "sending")
+        .eq("channel", channel)
+        .lt("status_at", cutoff)
+        .order("status_at", { ascending: true })
+        .limit(100);
+      if (error) throw new Error(`listStaleClaims falhou: ${error.message ?? error}`);
+      return ((data ?? []) as Record<string, unknown>[]).map(toDeliveryRow);
     },
 
     async release({ deliveryId, scheduledFor, reason }) {

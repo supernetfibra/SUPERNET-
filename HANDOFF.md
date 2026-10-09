@@ -54,8 +54,8 @@ rotacionar essas credenciais e limpar o documento (ver §10).
 npm run dev                 # Vite local
 npm run build               # tsc -b + vite build + version.json (o que vai para a Vercel)
 npm run deploy:functions    # npx supabase functions deploy api --no-verify-jwt
-npm run verify:notify       # typecheck:notify + check:notify + check:sql + typecheck:api
-npm run check:notify        # 316 verificações do pipeline de notificações (Node roda TS direto)
+npm run verify:notify       # typecheck:notify + check:notify + check:sql + check:referrals + typecheck:api
+npm run check:notify        # 447 verificações do pipeline de notificações (Node roda TS direto)
 npm run check:sql           # 37 verificações de SQL
 npm run check:referrals     # 22 verificações do programa de indicação (PGlite, migration 011)
 npm run simulate            # CLI do simulador de lembretes (scripts/simulate-reminders.ts)

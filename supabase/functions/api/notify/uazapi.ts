@@ -108,8 +108,23 @@ export class UazapiError extends Error {
   }
 }
 
+/** Resultado de `findMessageByTrackId`: a mensagem foi localizada (ou não) pelo track_id. */
+export interface FindMessageResult {
+  found: boolean;
+  providerId: string | null;
+  raw: unknown;
+}
+
 export interface UazapiClient {
   sendText(input: SendTextInput): Promise<SendTextResult>;
+  /**
+   * Conciliação de envios de resultado incerto: procura a mensagem enviada pelo
+   * `track_id` que passamos no sendText (`POST /message/find`). Se ela EXISTE, o
+   * envio aconteceu apesar do timeout — repetir cego geraria duplicata. Se NÃO
+   * existe, o reenvio é seguro. (A UazAPI guarda mensagens enviadas por API
+   * pelos últimos 7 dias — janela de sobra para o dispatcher.)
+   */
+  findMessageByTrackId(trackId: string): Promise<FindMessageResult>;
   instanceStatus(): Promise<InstanceStatus>;
   connect(input?: { phone?: string }): Promise<{ qrCode: string | null; pairCode: string | null; raw: unknown }>;
   messageLimits(): Promise<MessageLimits | null>;
@@ -353,6 +368,23 @@ export function createUazapiClient(options: UazapiOptions): UazapiClient {
       const parsed = await request("GET", "/instance/status");
       const state = parseNormalizedState(parsed);
       return { state, connected: state === "connected", raw: parsed };
+    },
+
+    async findMessageByTrackId(trackId) {
+      const parsed = asRecord(
+        await request("POST", "/message/find", { track_id: trackId, limit: 1, offset: 0 })
+      );
+      // A resposta pode vir como lista direta ou embrulhada (`data`/`messages`).
+      const list = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.data)
+          ? (parsed.data as unknown[])
+          : Array.isArray(asRecord(parsed.response).data)
+            ? (asRecord(parsed.response).data as unknown[])
+            : [];
+      const first = asRecord(list[0]);
+      const providerId = stringOrNull(first.messageid) ?? stringOrNull(first.id) ?? stringOrNull(first.messageId);
+      return { found: list.length > 0, providerId, raw: parsed };
     },
 
     async connect(input) {

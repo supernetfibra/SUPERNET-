@@ -127,6 +127,7 @@ export interface SimReport {
     billingsOpen: number;
     billingsPaid: number;
     billingsCanceled: number;
+    billingsObservation: number;
     billingsUnknownSituation: number;
     billingsInvalidDueDate: number;
     billingsInactiveCustomer: number;

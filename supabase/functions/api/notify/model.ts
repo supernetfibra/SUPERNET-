@@ -242,7 +242,7 @@ export function maskCpf(cpf?: string | null): string {
 // Situação da fatura / status do cliente
 // ---------------------------------------------------------------------------
 
-export type BillingState = "open" | "paid" | "canceled" | "unknown";
+export type BillingState = "open" | "paid" | "canceled" | "observation" | "unknown";
 
 function stripAccents(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -253,22 +253,44 @@ function stripAccents(value: string): string {
  * `unknown` em vez de assumir "pendente" — o simulador precisa saber quando não
  * entendeu a situação, para não tratar desconhecido como "em aberto" e mandar
  * cobrança indevida.
+ *
+ * `observation` ("Em Observação") NÃO é `open`: a situação indica que o admin fez um
+ * acordo/agendamento a pedido do cliente, então a fatura está fora da cobrança de
+ * propósito. Tratá-la como desconhecida seria pior (o `unknown` bloqueia por falta de
+ * entendimento); aqui o bloqueio é intencional e tem estado próprio para a régua
+ * poder disparar uma mensagem dedicada quando o admin ligar essa regra.
  */
 export function classifyBilling(situationName?: string | null): BillingState {
   const name = stripAccents(String(situationName ?? "").trim());
   if (!name) return "unknown";
   if (name.includes("cansel") || name.includes("cancel")) return "canceled";
   if (name.includes("efetuad") || name.includes("quitad") || name.includes("pag") || name.includes("baixad")) return "paid";
+  // Antes do grupo `open`: "observação" é estado próprio, não fatura em aberto cobrável.
+  if (name.includes("observa")) return "observation";
   if (
     name.includes("aberto") ||
     name.includes("atras") ||
     name.includes("vencid") ||
-    name.includes("observa") ||
     name.includes("pendent")
   ) {
     return "open";
   }
   return "unknown";
+}
+
+/**
+ * A fatura tem EVIDÊNCIA de pagamento registrado? Vale `date_payment` OU `value_paid`
+ * — um pagamento lançado sem data preenchida ainda é pagamento, e cobrar por ele é
+ * exatamente o erro que o incidente de 09/10/2026 expôs. Usar os DOIS campos fecha
+ * o caso de ERP que grava o valor pago primeiro e a data depois.
+ */
+export function hasPaymentEvidence(billing: {
+  date_payment?: string | null;
+  value_paid?: number | string | null;
+}): boolean {
+  if (billing.date_payment) return true;
+  const paid = Number(billing.value_paid ?? 0);
+  return Number.isFinite(paid) && paid > 0;
 }
 
 const INACTIVE_RE = /(inativ|inactive|cancel|suspend|bloquead|blocked|cortad|encerrad)/;

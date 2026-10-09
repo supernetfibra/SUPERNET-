@@ -18,7 +18,7 @@
 import { humanDelayMs, createUazapiClient, UazapiError, type UazapiClient } from "../uazapi.ts";
 import type { WhatsAppConfig } from "../config.ts";
 import type { OutboxApi } from "../outbox.ts";
-import type { ChannelAdapter, ChannelDeliveryResult, ChannelReadiness, DeliveryContext, Rendered } from "../channel.ts";
+import type { ChannelAdapter, ChannelDeliveryResult, ChannelReadiness, DeliveryContext } from "../channel.ts";
 
 export interface WhatsAppAdapterDeps {
   /** Lê a config a cada uso — o toggle do admin precisa valer na hora. */
@@ -168,8 +168,42 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
           return { ok: false, errorKey: "UNKNOWN", errorMessage: String(error), uncertain: true };
         }
 
-        // status 0 = falha de rede/timeout do nosso lado: resultado incerto.
+        // status 0 = falha de rede/timeout do nosso lado. Antes de declarar
+        // "resultado incerto" (que trava a entrega esperando humano), pergunta à
+        // UazAPI se a mensagem saiu: o envio é `async: true` e a resposta pode ter
+        // sido abortada DEPOIS de a UazAPI já ter aceito/enfileirado a mensagem
+        // (confirmado em produção 05–08/10/2026 — 39 lembretes saíram "invisíveis").
+        //   achou por track_id → OK (mesma garantia de um 200);
+        //   não achou        → o reenvio é SEGURO, vira erro transitório com retry.
         if (error.status === 0) {
+          if (ctx.eventId) {
+            // O sendText sai com `delay` humano (sendGapSeconds, async): a UazAPI
+            // SÓ registra a mensagem no histórico DEPOIS do envio real. Sondar
+            // antes disso devolve "não encontrada" para uma mensagem que ESTÁ
+            // enfileirada — reenviar nessa janela DUPLICA (reproduzido em
+            // 09/10/2026). Espera o delay passar (+buffer) antes de perguntar.
+            const min = typeof deps.minDelayMs === "function" ? await deps.minDelayMs() : deps.minDelayMs;
+            const max = typeof deps.maxDelayMs === "function" ? await deps.maxDelayMs() : deps.maxDelayMs;
+            const settleMs = Math.max(Number(min) || 0, Number(max) || 0) + 15_000;
+            try {
+              if (settleMs > 0) await new Promise((resolve) => setTimeout(resolve, settleMs));
+              const probe = await client.findMessageByTrackId(ctx.eventId);
+              if (probe.found) {
+                return { ok: true, providerId: probe.providerId };
+              }
+              // NÃO achou mesmo depois do settling: pode ser a UazAPI demorando
+              // a indexar. Reenvio automático aqui já provou que duplica — o
+              // conservador é INCERTEZA (conciliação por cron/humano depois).
+              return {
+                ok: false,
+                uncertain: true,
+                errorKey: "NETWORK_UNCERTAIN",
+                errorMessage: `${error.message} — sonda pós-delay não encontrou a mensagem; aguardando conciliação por track_id, NÃO reenviado`,
+              };
+            } catch {
+              // A sonda também falhou: mantém o comportamento conservador.
+            }
+          }
           return {
             ok: false,
             errorKey: "NETWORK_UNCERTAIN",
@@ -193,6 +227,21 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): ChannelAdapter
           errorKey: error.errorKey ?? `HTTP_${error.status}`,
           errorMessage: error.message,
           retryAt: error.retryAt ?? now() + 10 * 60_000,
+        };
+      }
+    },
+
+    async reconcile(trackId) {
+      if (!trackId) return { outcome: "uncertain", reason: "sem track_id para consultar" };
+      try {
+        const config = await deps.getConfig();
+        const probe = await clientFactory(config).findMessageByTrackId(trackId);
+        if (probe.found) return { outcome: "sent", providerId: probe.providerId };
+        return { outcome: "not_sent" };
+      } catch (error) {
+        return {
+          outcome: "uncertain",
+          reason: error instanceof Error ? error.message : String(error),
         };
       }
     },

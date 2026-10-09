@@ -25,7 +25,7 @@ import { buildPushPayload, type PushSubscription as WebPushSubscription, type Pu
 
 // Núcleo puro dos lembretes de fatura (dry-run) — sem I/O, compartilhado com a CLI
 // `scripts/simulate-reminders.ts`. Ver `LEMBRETES-WHATSAPP.md`.
-import { addDays, classifyBilling, civilToday, isCivilDate, normalizeBrMobile, pickCustomerPhone, toMikwebDate, type PhoneFailure } from "./notify/model.ts";
+import { addDays, civilToday, isCivilDate, normalizeBrMobile, pickCustomerPhone, type PhoneFailure } from "./notify/model.ts";
 import { generateDemoBase, type DemoScenario } from "./notify/demo-data.ts";
 import { loadRealBase, loadSyncBase, MikWebNotConfigured, type LoadedBase } from "./notify/sources.ts";
 import { describeSync } from "./notify/sync.ts";
@@ -33,6 +33,7 @@ import { runSimulation } from "./notify/simulate.ts";
 import { buildPayload, renderFor, EVENT_URL, type ChannelTemplate } from "./notify/templates.ts";
 import { applyOverrides } from "./notify/settings-store.ts";
 import { loadNotificationSettings } from "./notify/settings-store.ts";
+import { billingLookupPath, verdictFromResponse, type BillingVerdict } from "./notify/billing-verdict.ts";
 import { MAX_RULES, RULE_EVENT_KEYS, defaultDocument } from "./notify/settings.ts";
 import { maskToken } from "./notify/config.ts";
 import type { ChannelTemplate } from "./notify/templates.ts";
@@ -42,8 +43,6 @@ import { handleUazapiWebhook } from "./notify/webhook.ts";
 import { toDeliveryView, RULE_KEY_LABELS } from "./notify/deliveries-view.ts";
 import {
   activeConnections,
-  describePerConnection,
-  failedSlugs,
   nextSlug,
   parsePrefixedCustomerId,
   prefixedCustomerId,
@@ -774,28 +773,6 @@ function mikwebErrorDetails(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function mikwebApiGet<T>(path: string, override?: { baseUrl?: string; token?: string }): Promise<T> {
-  const config = override?.baseUrl && override?.token
-    ? { baseUrl: override.baseUrl, token: override.token }
-    : (await activeMikWebConnections())[0];
-  if (!config) throw new Error("MikWeb API não configurada.");
-
-  const url = `${config.apiUrl.replace(/\/$/, "")}${path}`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${config.apiToken}`,
-      "Content-Type": "application/json",
-    },
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`MikWeb API error (${response.status}): ${body.slice(0, 200) || response.statusText}`);
-  }
-  const parsed: Record<string, unknown> = await response.json();
-  const dataKey = Object.keys(parsed).find((k) => k !== "meta");
-  return (dataKey ? parsed[dataKey] : parsed) as T;
-}
-
 /** GET autenticado numa CONTA específica — a forma da era multi-conta. */
 async function mikwebApiGetFullFor<T>(
   connection: MikWebConnection,
@@ -816,14 +793,6 @@ async function mikwebApiGetFullFor<T>(
   const meta = parsed.meta as { pages?: { total_pages?: number } } | undefined;
   const dataKey = Object.keys(parsed).find((k) => k !== "meta");
   return { data: (dataKey ? parsed[dataKey] : parsed) as T, meta };
-}
-
-async function mikwebApiGetFull<T>(
-  path: string
-): Promise<{ data: T; meta?: { pages?: { total_pages?: number } } }> {
-  const connection = (await activeMikWebConnections())[0];
-  if (!connection) throw new Error("MikWeb API não configurada.");
-  return mikwebApiGetFullFor(connection, path);
 }
 
 // ---------------------------------------------------------------------------
@@ -1892,16 +1861,20 @@ function whatsappRuntime() {
  * Revalida a situação da fatura na MikWeb ANTES do envio (chamada pelo dispatcher
  * com cache por lote — uma consulta por fatura, não por lembrete).
  *
- * Regras do veredito:
- *   - paga/cancelada (situação reconhecida OU `date_payment` presente) → `paid`
- *     → o dispatcher cancela o lembrete com o motivo documentado;
- *   - em aberto / situação desconhecida → `open` (situação que não sabemos
- *     classificar NÃO bloqueia — o mesmo conservadorismo ao contrário seria
- *     parar o canal por causa de uma situação nova do ERP);
- *   - fatura não encontrada na janela → `open`: as guardas de data do dispatcher
- *     (`scheduleMismatch`) já protegem o resto, e dados que sumiram da consulta
- *     não podem virar laço de adiamento;
- *   - rede/ERP fora do ar → `unknown` → o dispatcher ADIA sem gastar tentativa.
+ * A REGRA do veredito não mora aqui: ela é o módulo puro `notify/billing-verdict.ts`
+ * (`decideBillingVerdict` / `verdictFromResponse`), coberto por teste real em
+ * `scripts/check-notification-settings.mjs`. Sobrou para esta função só o
+ * TRANSPORTE, porque transporte é a única parte que não dá para testar sem rede:
+ *
+ *   - escolher a conexão MikWeb (a do evento, ou a primeira ativa);
+ *   - montar o caminho da consulta (`billingLookupPath`, também puro e testado);
+ *   - fazer o GET e traduzir exceção em `unknown` → o dispatcher ADIA sem gastar
+ *     tentativa em vez de enviar às cegas.
+ *
+ * Antes disto o `Array.isArray(data) ? data : []` vivia aqui: resposta com envelope
+ * inesperado virava lista vazia, a fatura "não era encontrada" e o veredito era
+ * `open` SEMPRE — revalidação que nunca bloqueia nada e nunca reclama. Ler a
+ * resposta agora é `extractBillingList`/`findBilling`, com teste de cada formato.
  */
 async function revalidateBilling(input: {
   connection: string | null;
@@ -1909,7 +1882,7 @@ async function revalidateBilling(input: {
   invoiceId: string;
   dueDate: string | null;
   eventKey: string;
-}): Promise<{ status: "open"; situation?: string | null } | { status: "paid"; situation?: string | null } | { status: "unknown"; error: string }> {
+}): Promise<BillingVerdict> {
   const connections = await activeMikWebConnections();
   const connection = (input.connection ? connections.find((c) => c.slug === input.connection) : undefined) ?? connections[0];
   if (!connection) return { status: "unknown", error: "nenhuma conta MikWeb ativa" };
@@ -1917,23 +1890,12 @@ async function revalidateBilling(input: {
   const { rawId: rawCustomerId } = parsePrefixedCustomerId(input.customerId);
   if (!rawCustomerId) return { status: "open" };
 
-  // Janela de vencimento ao redor do vencimento do evento (mesmo filtro da
-  // varredura do sync): fatura paga continua listada na janela dela.
-  const ref = isCivilDate(input.dueDate) ? input.dueDate! : civilToday();
-  const path =
-    `/billings?customer_id=${encodeURIComponent(rawCustomerId)}` +
-    `&type_date=due_day&start_date=${toMikwebDate(addDays(ref, -60))}&end_date=${toMikwebDate(addDays(ref, 1))}&per_page=50`;
+  const path = billingLookupPath({ customerId: rawCustomerId, dueDate: input.dueDate, today: civilToday() });
 
   try {
-    const { data } = await mikwebApiGetFullFor<MikWebBilling[]>(connection, path);
-    const list = Array.isArray(data) ? data : [];
-    const billing = list.find((b) => String(b?.id ?? "") === input.invoiceId);
-    if (!billing) return { status: "open" };
-
-    if (billing.date_payment) return { status: "paid", situation: billing.situation_name };
-    const state = classifyBilling(billing.situation_name);
-    if (state === "paid" || state === "canceled") return { status: "paid", situation: billing.situation_name };
-    return { status: "open", situation: billing.situation_name };
+    // `unknown`: o formato é lido por `verdictFromResponse`, não por um cast aqui.
+    const { data } = await mikwebApiGetFullFor<unknown>(connection, path);
+    return verdictFromResponse({ response: data, invoiceId: input.invoiceId, eventKey: input.eventKey });
   } catch (error) {
     return { status: "unknown", error: error instanceof Error ? error.message : String(error) };
   }
@@ -3228,7 +3190,7 @@ app.post("/admin/whatsapp/test", async (c) => {
   // previsível: o que chega aqui é o que sairia para o cliente naquele evento.
   const requestedEventKey = typeof body.eventKey === "string" ? body.eventKey : "test";
   const isReminderTest = requestedEventKey !== "test";
-  let eventKey = requestedEventKey;
+  const eventKey = requestedEventKey;
   let ruleLabel: string | null = null;
   if (isReminderTest) {
     const { settings } = await runtime.getSettings();
@@ -4428,7 +4390,7 @@ app.get("/public/referral/:code", async (c) => {
  * Catálogo público das recompensas ATIVAS (para a página do cliente). Campos
  * de gestão (sort_order, created_at) não saem daqui.
  */
-app.get("/public/referral-catalog", async (c) => {
+app.get("/public/referral-catalog", async () => {
   const config = await getReferralConfig();
   if (config.migrationPending) return json({ migrationPending: true, rewards: [], enabled: false });
   try {
@@ -4611,7 +4573,7 @@ app.post("/push/test", async (c) => {
 // ---------------------------------------------------------------------------
 // Fallback 404
 // ---------------------------------------------------------------------------
-app.notFound((c) => jsonError("Rota não encontrada.", 404));
+app.notFound(() => jsonError("Rota não encontrada.", 404));
 
 Deno.serve(app.fetch);
 

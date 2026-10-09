@@ -115,8 +115,8 @@ abaixo cobrem tudo que pode quebrar no deploy:
 npm run verify:notify      # roda os quatro abaixo em sequência (o portão único)
 npm run typecheck:notify   # núcleo puro dos lembretes + CLI do simulador (tsc strict)
 npm run typecheck:api      # empacota a Edge Function e procura nome indefinido
-npm run check:notify       # configuração persistida, cotas e sync (131 verificações)
-npm run check:sql          # as migrations contra um Postgres de verdade (30 verificações)
+npm run check:notify       # configuração persistida, cotas e sync (447 verificações)
+npm run check:sql          # as migrations contra um Postgres de verdade (37 verificações)
 npm run build              # typecheck do frontend + build do Vite
 ```
 

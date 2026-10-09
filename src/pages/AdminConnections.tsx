@@ -1424,6 +1424,7 @@ export default function AdminConnections() {
                         { eventKey: "billing.due_soon", label: "fatura a vencer" },
                         { eventKey: "billing.due_today", label: "vence hoje" },
                         { eventKey: "billing.late", label: "em atraso" },
+                        { eventKey: "billing.observation", label: "acordo ativo" },
                       ]
                   ).map(({ eventKey, label }) => (
                     <SelectItem key={eventKey} value={eventKey} className="text-xs">

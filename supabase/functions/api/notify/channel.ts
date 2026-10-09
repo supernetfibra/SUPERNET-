@@ -65,10 +65,25 @@ export interface ChannelAdapter {
   /** O canal está operante agora? (VAPID configurado / instância conectada) */
   ready(): Promise<ChannelReadiness>;
   deliver(target: string, rendered: Rendered, ctx: DeliveryContext): Promise<ChannelDeliveryResult>;
+  /**
+   * Conciliação de um envio de resultado desconhecido (claim órfão): pergunta
+   * ao provedor se a mensagem com esse track_id (`ctx.eventId`) EXISTE.
+   *   `"sent"`      → a mensagem saiu — o dispatcher marca `sent`, nunca reenvia;
+   *   `"not_sent"`  → confirmado que NÃO saiu — reenvio seguro;
+   *   `"uncertain"` → consulta falhou/inconclusiva — NUNCA reenvia automático.
+   * Adapter sem conciliação (ex.: push) devolve `null` — o dispatcher mantém o
+   * comportamento conservador (vira `NETWORK_UNCERTAIN`, sem requeue cego).
+   */
+  reconcile?(trackId: string): Promise<ChannelReconciliation | null>;
   onPermanentFailure?(target: string, result: ChannelDeliveryResult): Promise<void>;
   /** Provedor pediu pausa global (time-lock): registra e interrompe o lote. */
   onGlobalPause?(until: number, reason: string): Promise<void>;
 }
+
+export type ChannelReconciliation =
+  | { outcome: "sent"; providerId?: string | null }
+  | { outcome: "not_sent" }
+  | { outcome: "uncertain"; reason: string };
 
 export interface ChannelRegistry {
   get(key: Channel): ChannelAdapter | null;

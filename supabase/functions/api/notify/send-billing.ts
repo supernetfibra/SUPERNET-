@@ -141,8 +141,13 @@ export async function sendBillingReminder(
   // Cobrar fatura paga é o pior erro possível deste botão: o valor cobrado
   // contradiz o que o cliente já fez. A guarda fica aqui, no servidor — a UI só
   // esconde o botão, e esconder não é impedir.
+  //
+  // "Em Observação" também bloqueia a COBRANÇA — é um acordo pedido pelo cliente —,
+  // mas a mensagem dedicada (`billing.observation`) é justamente o que se quer nessa
+  // situação, então ela passa.
   const state = classifyBilling(input.billing.situation_name);
-  if (state !== "open") {
+  const isObservationMessage = eventKey === "billing.observation";
+  if (state !== "open" && !(state === "observation" && isObservationMessage)) {
     return {
       ...base,
       reason:
@@ -150,7 +155,9 @@ export async function sendBillingReminder(
           ? "esta fatura consta como paga — nenhum lembrete foi enviado"
           : state === "canceled"
             ? "esta fatura está cancelada — nenhum lembrete foi enviado"
-            : `situação da fatura não reconhecida (${input.billing.situation_name ?? "vazia"}) — confirme antes de cobrar`,
+            : state === "observation"
+              ? "esta fatura está em observação (acordo pedido pelo cliente) — nenhuma cobrança foi enviada"
+              : `situação da fatura não reconhecida (${input.billing.situation_name ?? "vazia"}) — confirme antes de cobrar`,
     };
   }
 

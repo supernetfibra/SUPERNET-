@@ -45,6 +45,7 @@ Pecinhas que já existem e serão reaproveitadas:
 4. **Sem retry cego.** Timeout é resultado incerto: o envio pode ter saído. Retentativa
    só com reconciliação por `messageid`/webhook (política da própria doc).
 5. **Revalidar antes de enviar.** Fatura paga entre o agendamento e o envio ⇒ cancela.
+   Fatura **em observação** (acordo pedido pelo cliente) também não é cobrada.
 6. **Consentimento explícito + opt-out fácil.** 🔸 (ver §9)
 
 ## 3. Como usamos a UazAPI
@@ -187,6 +188,13 @@ entrega duplicada p/ (evento,canal)? . sim → skipped
 A revalidação da fatura é uma chamada MikWeb por envio — aceitável no volume de um
 ISP; se virar gargalo, dá para revalidar em lote antes do lote.
 
+O **veredito** dessa revalidação (paga / em observação / em aberto / fonte fora do ar)
+mora em `notify/billing-verdict.ts` — módulo puro, coberto pela seção 21c do
+`check:notify`. No `index.ts` sobra só o transporte: escolher a conta, montar a consulta
+e traduzir erro em `unknown` (que adia sem gastar tentativa). A leitura da resposta também
+é do módulo, porque resposta com envelope inesperado virava lista vazia e a revalidação
+passava a nunca bloquear nada — em silêncio.
+
 **C. Webhook (`POST /api/webhooks/uazapi`)** — público, mas validado por secret na
 query/header. Atualiza `delivered`/`read`/`failed`, captura "PARAR/SAIR/CANCELAR"
 como opt-out (grava em `notification_preferences`), e eventos de `connection` para
@@ -207,8 +215,13 @@ no painel. A partir do primeiro salvamento, a régua em vigor é a que está em
 | `late_1` | 1 dia após | aviso de atraso |
 | `late_5` | 5 dias após | último aviso antes do bloqueio 🔸 |
 | `late_10` | 10 dias após | desligada de propósito: só liga depois de validar `late_5` |
+| `observation` | fatura com situação "Em Observação" | aviso neutro de acordo (sem cobrança) — desligada por padrão |
 
 Cada regra para de disparar assim que a fatura é paga (revalidação do estágio B).
+"Em Observação" (acordo/agendamento pedido pelo cliente) **também não recebe cobrança**:
+a revalidação cancela o lembrete com o motivo. A mensagem dedicada do acordo só sai se o
+provedor ligar a regra `observation` (evento `billing.observation`) — é aviso, não
+cobrança, e nunca menciona juros.
 
 ## 7. Formato da mensagem
 

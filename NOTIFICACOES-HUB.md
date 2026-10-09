@@ -126,6 +126,7 @@ export interface ChannelAdapter {
 | `billing.due_soon` | nome, valor, vencimento, link, pix | whatsapp → push | primary | marketing |
 | `billing.due_today` | idem | whatsapp → push | primary | marketing |
 | `billing.late` | idem + dias_atraso | whatsapp → push | primary | marketing |
+| `billing.observation` | nome, referencia, vencimento, valor, link | whatsapp (só com a regra `observation` ligada) | primary | marketing |
 | `billing.paid` | nome, referencia | push | broadcast | transactional |
 | `install.received` | nome, protocolo | push (admins) | broadcast | transactional |
 | `install.approved` | nome, protocolo | whatsapp + push | broadcast | transactional |

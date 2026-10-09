@@ -22,7 +22,7 @@ import {
   type RawBilling,
   type RawCustomer,
 } from "./model.ts";
-import { planNotifications, type PlanCounts, type PlannedNotification } from "./rules.ts";
+import { planNotifications, type PlanCounts } from "./rules.ts";
 import {
   activeRules,
   defaultDocument,
@@ -463,7 +463,7 @@ export function summarize(report: SimulationReport): HumanSummary {
   }
   lines.push(`janela simulada .... ${report.window.from} → ${report.window.to} (${report.window.days} dias, execução às ${report.window.runAtHour}h)`);
   lines.push(`base ............... ${report.source.kind}/${report.source.strategy}: ${report.source.billingsScanned} faturas, ${report.source.customersScanned} clientes${report.source.truncated ? " (truncada)" : ""}`);
-  lines.push(`faturas ............ ${report.plan.billingsOpen} em aberto | ${report.plan.billingsPaid} pagas | ${report.plan.billingsCanceled} canceladas | ${report.plan.billingsUnknownSituation} situação desconhecida | ${report.plan.billingsInvalidDueDate} vencimento inválido`);
+  lines.push(`faturas ............ ${report.plan.billingsOpen} em aberto | ${report.plan.billingsPaid} pagas | ${report.plan.billingsCanceled} canceladas | ${report.plan.billingsObservation} em observação (acordo) | ${report.plan.billingsUnknownSituation} situação desconhecida | ${report.plan.billingsInvalidDueDate} vencimento inválido`);
   lines.push(`alcance ............ ${report.reach.withWhatsappOptIn} com opt-in de WhatsApp (${report.reach.withValidPhone} com celular válido) | ${report.reach.withPush} com push`);
   lines.push(`candidatos ......... ${t.candidates} avisos no horizonte`);
   lines.push(`seriam enviados .... ${t.wouldSend} (${t.whatsapp} WhatsApp, ${t.push} push) | ${t.deferred} adiados | ${t.skipped} ignorados`);

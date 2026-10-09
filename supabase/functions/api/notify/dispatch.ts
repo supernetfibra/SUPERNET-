@@ -43,21 +43,19 @@ import {
   type ChannelTemplate,
   type TemplatePayload,
 } from "./templates.ts";
-import { parsePrefixedCustomerId } from "./connections.ts";
-import type { ChannelRegistry, Rendered } from "./channel.ts";
+import { parseBillingDedupeKey, parsePrefixedCustomerId } from "./connections.ts";
+import type { ChannelReconciliation, ChannelRegistry, Rendered } from "./channel.ts";
+import type { BillingVerdict } from "./billing-verdict.ts";
 import type { ClaimedDelivery, OutboxApi, OutboxEvent } from "./outbox.ts";
 
 /**
  * Veredito da revalidação da fatura na fonte (MikWeb), feita na hora do envio.
- *   "open"    → segue para o envio;
- *   "paid"    → a fatura foi quitada (ou cancelada) depois do agendamento: cancela;
- *   "unknown" → a fonte não respondeu: ADIA (nunca envia sem saber, nunca marca
- *               como falha — erro de rede do ERP não é culpa do lembrete).
+ *
+ * O tipo é do módulo puro `billing-verdict.ts` — o dispatcher só o consome. Manter
+ * uma cópia da união aqui era o outro lado do problema: a regra podia mudar lá e o
+ * tipo daqui continuar "verdadeiro", escondendo a divergência do compilador.
  */
-export type BillingRevalidation =
-  | { status: "open"; situation?: string | null }
-  | { status: "paid"; situation?: string | null }
-  | { status: "unknown"; error: string };
+export type BillingRevalidation = BillingVerdict;
 
 export interface DispatchDeps {
   outbox: OutboxApi;
@@ -160,6 +158,16 @@ export interface DispatchSummary {
   revalidated?: number;
   /** Envios cancelados POR CAUSA da revalidação: fatura já paga/cancelada. */
   canceledPaid?: number;
+  /** Envios cancelados por a fatura estar "Em Observação" (acordo do cliente). */
+  canceledObservation?: number;
+  /** Entregas órfãs em `sending` devolvidas à fila no início da rodada. */
+  recovered?: number;
+  /** Órfãos conciliados como JÁ ENVIADOS no provedor (marcados `sent`, sem reenvio). */
+  recoveredSent?: number;
+  /** Órfãos confirmados como NÃO enviados (devolvidos à fila). */
+  recoveredQueued?: number;
+  /** Órfãos com consulta inconclusiva (viram `NETWORK_UNCERTAIN`, sem reenvio). */
+  recoveredUncertain?: number;
   results: DispatchItemResult[];
 }
 
@@ -332,6 +340,67 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
     }
   }
 
+  // Recuperação de claims órfãos RECONCILIATION-FIRST (antes do claim desta
+  // rodada): uma entrega `sending` há mais de 15 min ficou presa porque o
+  // processo morreu no meio do envio. Requeue cego aqui DUPLICARIA mensagem —
+  // o provedor pode já ter aceitado/enviado. Para cada órfão:
+  //   provedor TEM a mensagem → marca `sent` (com provider_id), nunca reenvia;
+  //   provedor NÃO tem      → volta à fila sem gastar tentativa (reenvio seguro);
+  //   consulta falhou       → vira `NETWORK_UNCERTAIN` (conciliação posterior),
+  //                           NUNCA reenvia automático. Nada fica preso em `sending`.
+  // Com `ids` explícitos (envio manual de um humano) a varredura é pulada.
+  if (!options.ids) {
+    try {
+      const stale = await deps.outbox.listStaleClaims({ channel, staleMs: 15 * 60_000, now: now() });
+      for (const orphan of stale) {
+        let verdict: ChannelReconciliation;
+        try {
+          verdict = (await adapter.reconcile?.(orphan.eventId)) ?? {
+            outcome: "uncertain" as const,
+            reason: "canal sem conciliação",
+          };
+        } catch (error) {
+          verdict = { outcome: "uncertain", reason: error instanceof Error ? error.message : String(error) };
+        }
+        if (verdict.outcome === "sent") {
+          summary.recoveredSent = (summary.recoveredSent ?? 0) + 1;
+          await deps.outbox.markSent(orphan.id, verdict.providerId ?? null);
+          log("órfão conciliado: já saiu no provedor", { deliveryId: orphan.id, providerId: verdict.providerId ?? null });
+        } else if (verdict.outcome === "not_sent") {
+          // "Não achou" na sonda NÃO prova que não saiu: com sendText async +
+          // delay humano, a mensagem pode estar ENFILEIRADA no provedor e ainda
+          // fora do histórico (duplicado em massa em 09/10/2026). Reenvio cego
+          // aqui DUPLICA. Conservador: INCERTEZA — conciliação posterior decide.
+          summary.recoveredUncertain = (summary.recoveredUncertain ?? 0) + 1;
+          await deps.outbox.markFailed({
+            deliveryId: orphan.id,
+            errorKey: "NETWORK_UNCERTAIN",
+            errorMessage: `claim órfão conciliado como "não achado" — pode estar enfileirado no provedor; NÃO reenviado automaticamente`,
+            permanent: true,
+          });
+          log("órfão conciliado: não achado na sonda — incerto, sem reenvio", { deliveryId: orphan.id });
+        } else {
+          summary.recoveredUncertain = (summary.recoveredUncertain ?? 0) + 1;
+          await deps.outbox.markFailed({
+            deliveryId: orphan.id,
+            errorKey: "NETWORK_UNCERTAIN",
+            errorMessage: `claim órfão com consulta inconclusiva (${verdict.reason}) — aguardando conciliação, NÃO reenviado`,
+            permanent: true,
+          });
+          log("órfão inconclusivo — sem reenvio automático", { deliveryId: orphan.id, reason: verdict.reason });
+        }
+      }
+      if (stale.length > 0) {
+        summary.recovered = stale.length;
+        log("varredura de claims órfãos concluída", { total: stale.length });
+      }
+    } catch (error) {
+      // Best-effort: falhar aqui não pode impedir a rodada normal. Os órfãos
+      // continuam `sending` e a próxima rodada tenta de novo.
+      log("recuperação de claims órfãos falhou", { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   let claimed: ClaimedDelivery[] = [];
   try {
     claimed = await deps.outbox.claim({ limit, channel, now: now(), ids: options.ids });
@@ -424,16 +493,39 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
     // ainda estava na fila). Antes disto, a proteção era só o sync enfileirar um
     // dia por vez; agora a janela de risco é a rodada de dispatch, não o dia.
     if (deps.revalidateBilling && event.eventKey.startsWith("billing.")) {
-      const invoiceId = typeof event.payload[EVENT_INVOICE_ID] === "string" ? (event.payload[EVENT_INVOICE_ID] as string) : "";
-      const customerIdRaw = typeof event.payload[EVENT_CUSTOMER_ID] === "string" ? (event.payload[EVENT_CUSTOMER_ID] as string) : "";
-      if (invoiceId) {
+      const payloadInvoiceId = typeof event.payload[EVENT_INVOICE_ID] === "string" ? (event.payload[EVENT_INVOICE_ID] as string) : "";
+      const payloadCustomerId = typeof event.payload[EVENT_CUSTOMER_ID] === "string" ? (event.payload[EVENT_CUSTOMER_ID] as string) : "";
+      // Eventos enfileirados ANTES do metadado `__invoiceId` (fila de 30/09–05/10/2026)
+      // não carregam a fatura no payload. O guard antigo (`if (invoiceId)`) PULAVA a
+      // revalidação nesses casos e o lembrete saía para fatura já paga — foi o que
+      // aconteceu em 09/10/2026. Reconstrói o que falta: a fatura vem da dedupe_key
+      // (`billing:<slug>:<id>:<regra>`) e o cliente, do próprio evento.
+      const fromDedupe = parseBillingDedupeKey(event.dedupeKey);
+      const invoiceId = payloadInvoiceId || fromDedupe?.billingId || "";
+      const customerIdRaw = payloadCustomerId || event.customerId || "";
+      if (!invoiceId || !customerIdRaw) {
+        // Sem como identificar a fatura (ou o cliente dela) NÃO se envia às cegas:
+        // um lembrete para fatura já paga é pior que um lembrete a menos. Bloqueia
+        // e fica visível no painel (skipped com motivo), nunca num laço de
+        // reagendamento — e nunca "open" silencioso por dado ausente.
+        const missing = !invoiceId ? "id da fatura" : "cliente da fatura";
+        summary.skipped++;
+        push({ ok: false, status: "skipped", reason: `evento de fatura sem ${missing} para revalidar — envio bloqueado (segurança)` });
+        await deps.outbox.markSkipped(delivery.id, `evento de fatura sem ${missing} para revalidar — envio bloqueado por segurança`);
+        continue;
+      }
+      {
         const { slug } = parsePrefixedCustomerId(customerIdRaw);
-        const cacheKey = `${slug ?? ""}:${invoiceId}`;
+        const connectionSlug = slug ?? fromDedupe?.slug ?? null;
+        // A fatura entra na chave com o EVENTO: o veredito de uma fatura em observação
+        // depende de ser (ou não) a mensagem dedicada, então cachear só por fatura
+        // faria um evento cobrar o que o outro deveria silenciar.
+        const cacheKey = `${connectionSlug ?? ""}:${invoiceId}:${event.eventKey}`;
         let verdict = revalidationCache.get(cacheKey);
         if (!verdict) {
           try {
             verdict = await deps.revalidateBilling({
-              connection: slug,
+              connection: connectionSlug,
               customerId: customerIdRaw,
               invoiceId,
               dueDate: dueDateIso,
@@ -450,6 +542,16 @@ export async function dispatchQueue(deps: DispatchDeps, options: DispatchOptions
           summary.skipped++;
           summary.canceledPaid = (summary.canceledPaid ?? 0) + 1;
           const reason = `fatura paga — lembrete cancelado (situação na fonte: ${verdict.situation || "paga"})`;
+          push({ ok: false, status: "skipped", reason });
+          await deps.outbox.markSkipped(delivery.id, reason);
+          continue;
+        }
+        if (verdict.status === "observation") {
+          // Fatura em observação = acordo pedido pelo cliente. Cobrar aqui é o erro que
+          // o admin pediu para eliminar: cancela com motivo, do mesmo jeito que a paga.
+          summary.skipped++;
+          summary.canceledObservation = (summary.canceledObservation ?? 0) + 1;
+          const reason = `fatura em observação — lembrete de cobrança cancelado (situação na fonte: ${verdict.situation || "em observação"})`;
           push({ ok: false, status: "skipped", reason });
           await deps.outbox.markSkipped(delivery.id, reason);
           continue;

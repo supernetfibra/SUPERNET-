@@ -20,6 +20,8 @@ export const RULE_KEY_LABELS: Record<string, string> = {
   late_1: "1 dia de atraso",
   late_5: "5 dias de atraso",
   late_10: "10 dias de atraso",
+  // Não é cobrança: aviso de acordo ativo, enviado só se o admin ligar a regra.
+  observation: "aviso de acordo (fatura em observação)",
 };
 
 /** Campos da entrega usados para compor o motivo (o resto da linha passa reto). */

@@ -183,6 +183,32 @@ export function extractRuleKeyFromDedupe(dedupeKey: string | null | undefined): 
   return match ? (match[2] ?? null) : null;
 }
 
+/**
+ * Reconstrói (slug, id da fatura, regra) de uma `dedupe_key` de fatura — nos DOIS
+ * formatos, com conta e legado sem conta:
+ *   `billing:a:123:late_5` → { slug: "a", billingId: "123", ruleKey: "late_5" }
+ *   `billing:123:late_5`   → { slug: null, billingId: "123", ruleKey: "late_5" }
+ *
+ * Existe porque o payload de eventos enfileirados ANTES do metadado `__invoiceId`
+ * (fila de 30/09–05/10/2026) não carrega a fatura — e o dispatcher, sem ela, PULAVA
+ * a revalidação e enviava o lembrete para fatura já paga (produção 09/10/2026).
+ * A dedupe_key sempre teve a fatura; aqui ela volta a ser legível.
+ */
+export function parseBillingDedupeKey(
+  dedupeKey: string | null | undefined
+): { slug: string | null; billingId: string; ruleKey: string } | null {
+  if (!dedupeKey || !dedupeKey.startsWith("billing:")) return null;
+  const parts = dedupeKey.split(":");
+  // `billing:<...>:<idDaFatura>:<regra>` — a regra é o ÚLTIMO segmento e o id da
+  // fatura é o penúltimo; o que sobra entre "billing" e o id é o slug da conta.
+  if (parts.length < 3) return null;
+  const ruleKey = parts[parts.length - 1] ?? "";
+  const billingId = parts[parts.length - 2] ?? "";
+  const slug = parts.length >= 4 ? parts.slice(1, parts.length - 2).join(":") : "";
+  if (!billingId || !ruleKey) return null;
+  return { slug: slug || null, billingId, ruleKey };
+}
+
 // ---------------------------------------------------------------------------
 // Varredura por conta — agregação tolerante a falha
 // ---------------------------------------------------------------------------

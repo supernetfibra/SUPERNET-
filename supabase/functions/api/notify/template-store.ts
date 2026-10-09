@@ -19,11 +19,11 @@ import type { SupabaseLike } from "./outbox.ts";
 import {
   DEFAULT_TEMPLATES,
   renderTemplate,
-  buildPayload,
   type ChannelTemplate,
   type TemplatePayload,
 } from "./templates.ts";
 import { SETTINGS_TABLE, SETTINGS_KEY } from "./settings.ts";
+import { OBSERVATION_EVENT_KEY } from "./rules.ts";
 
 /** Chave dentro do documento `settings` da linha onde os templates moram. */
 export const TEMPLATES_DOC_KEY = "templates";
@@ -33,7 +33,7 @@ export const TEMPLATE_CHANNELS = ["whatsapp", "push"] as const;
 export type TemplateChannel = (typeof TEMPLATE_CHANNELS)[number];
 
 /** Eventos que a régua pode gerar — um template por evento/canal. */
-export const TEMPLATE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late", "referral.approved"] as const;
+export const TEMPLATE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late", OBSERVATION_EVENT_KEY, "referral.approved"] as const;
 export type TemplateEventKey = (typeof TEMPLATE_EVENT_KEYS)[number];
 
 /**
@@ -45,6 +45,8 @@ const EDITABLE_PAIRS: Array<{ channel: TemplateChannel; eventKey: TemplateEventK
   ...(["whatsapp", "push"] as const).flatMap((channel) =>
     (["billing.due_soon", "billing.due_today", "billing.late"] as const).map((eventKey) => ({ channel, eventKey } as const))
   ),
+  // A mensagem de observação é um aviso de acordo, não cobrança — só WhatsApp.
+  { channel: "whatsapp", eventKey: OBSERVATION_EVENT_KEY },
   { channel: "whatsapp", eventKey: "referral.approved" },
 ];
 

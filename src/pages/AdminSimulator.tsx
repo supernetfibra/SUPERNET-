@@ -736,6 +736,7 @@ export default function AdminSimulator() {
                   <p>{report.plan.billingsOpen} em aberto</p>
                   <p>{report.plan.billingsPaid} pagas</p>
                   <p>{report.plan.billingsCanceled} canceladas</p>
+                  <p>{report.plan.billingsObservation} em observação (acordo)</p>
                   <p>{report.plan.billingsUnknownSituation} situação desconhecida</p>
                   <p>{report.plan.billingsInvalidDueDate} vencimento inválido</p>
                   <p>{report.plan.staleBillings} antigas (fora do alcance)</p>

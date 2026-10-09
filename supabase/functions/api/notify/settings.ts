@@ -23,7 +23,7 @@
  * Sintaxe: apenas "erasable syntax" (sem enum/namespace/parameter properties).
  */
 
-import { DEFAULT_RULES, type ReminderRule } from "./rules.ts";
+import { DEFAULT_RULES, OBSERVATION_EVENT_KEY, type ReminderRule } from "./rules.ts";
 import { DEFAULT_TEMPLATES, type ChannelTemplate } from "./templates.ts";
 import { DEFAULT_ADMIN_ALERTS, normalizeAdminAlerts, type AdminAlertsConfig } from "./admin-alerts.ts";
 
@@ -50,7 +50,7 @@ const MAX_HORIZON_DAYS = 60;
 const MAX_CAPS = 100_000;
 
 /** Eventos que possuem template. Regra que aponta para outra coisa não renderiza. */
-export const RULE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late"] as const;
+export const RULE_EVENT_KEYS = ["billing.due_soon", "billing.due_today", "billing.late", OBSERVATION_EVENT_KEY] as const;
 export type RuleEventKey = (typeof RULE_EVENT_KEYS)[number];
 
 export function isRuleEventKey(value: unknown): value is RuleEventKey {

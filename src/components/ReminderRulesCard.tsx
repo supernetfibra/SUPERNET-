@@ -39,6 +39,20 @@ import {
 
 // Admin auth (token + fetch) vem de src/lib/api-config.ts
 
+/**
+ * Regra da MENSAGEM DEDICADA de "Em Observação" — evento próprio
+ * (`billing.observation`), nunca cobrança. Ela não nasce na régua salva: o admin a
+ * liga no cartão abaixo. Desligada (padrão), a fatura em observação não recebe NADA.
+ */
+const OBSERVATION_RULE: SimRule = {
+  key: "observation",
+  eventKey: "billing.observation",
+  offsetDays: 0,
+  sortOrder: 5,
+  label: "Aviso de acordo (fatura em observação)",
+  active: true,
+};
+
 export function ReminderRulesCard() {
   const [baseline, setBaseline] = useState<SimSettings | null>(null);
   const [rules, setRules] = useState<SimRule[]>([]);
@@ -110,6 +124,17 @@ export function ReminderRulesCard() {
 
   const updateRule = (index: number, patch: Partial<SimRule>) =>
     setRules((current) => current.map((rule, position) => (position === index ? { ...rule, ...patch } : rule)));
+
+  // Liga/desliga a MENSAGEM DE ACORDO. Ligar adiciona a regra `observation` à régua
+  // (que o botão Salvar persiste); desligar só a desativa — nada é apagado.
+  const observationRule = rules.find((rule) => rule.eventKey === "billing.observation");
+  const observationOn = Boolean(observationRule?.active);
+  const toggleObservation = (checked: boolean) =>
+    setRules((current) => {
+      const existing = current.find((rule) => rule.eventKey === "billing.observation");
+      if (existing) return current.map((rule) => (rule === existing ? { ...rule, active: checked } : rule));
+      return checked ? [...current, { ...OBSERVATION_RULE }] : current;
+    });
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -213,6 +238,26 @@ export function ReminderRulesCard() {
         ) : null}
         {loading ? <p className="text-xs text-muted-foreground">Carregando…</p> : null}
 
+        {/* Fatura em observação (acordo do cliente) NÃO entra na cobrança. Este switch
+            liga o único aviso permitido nessa situação: a mensagem de acordo. */}
+        <div className="flex items-center justify-between gap-3 rounded-sm border border-dashed px-3 py-2.5">
+          <div className="min-w-0">
+            <p className={`text-xs font-medium ${observationOn ? "text-foreground" : "text-muted-foreground"}`}>
+              Mensagem de acordo (fatura em observação)
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {observationOn
+                ? "Faturas em observação recebem o aviso de acordo no vencimento — nunca cobrança."
+                : "Desligado: faturas em observação não recebem nada (acordo pedido pelo cliente)."}
+            </p>
+          </div>
+          <Switch
+            checked={observationOn}
+            onCheckedChange={toggleObservation}
+            className="cursor-pointer shrink-0"
+          />
+        </div>
+
         {/* Visão SIMPLES: um cartão por regra, com toggle e descrição em português */}
         <div className="space-y-2">
           {rules.map((rule, index) => {
@@ -229,7 +274,9 @@ export function ReminderRulesCard() {
                   ? "Lembrete do dia"
                   : rule.eventKey === "billing.late"
                     ? "Aviso de atraso"
-                    : rule.eventKey;
+                    : rule.eventKey === "billing.observation"
+                      ? "Aviso de acordo (não cobra)"
+                      : rule.eventKey;
             return (
               <div
                 key={`${rule.key}-${index}`}
