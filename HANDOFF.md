@@ -36,7 +36,7 @@ rotacionar essas credenciais e limpar o documento (ver §10).
 ## 2. Como retomar de onde parou (checklist de sessão)
 
 1. Ler este documento e `git log --oneline -10`.
-2. Verificar saúde: `npm run verify:notify` (typechecks + 316 checks + 37 SQL + 22 referrals + bundle da função) e `npm run build`.
+2. Verificar saúde: `npm run verify:notify` (typechecks + 447 checks + 152 do portal + 37 SQL + 22 referrals + bundle da função) e `npm run build`.
 3. Ver produção direto no banco (CLI logado): `npx supabase db query --linked "..."`.
 4. Ver cron ativo: `npx supabase db query --linked "SELECT jobname, schedule, active FROM cron.job;"`.
 5. Deploy de mudanças no backend: `npm run deploy:functions`. Deploy de migrations: SQL Editor ou `npx supabase db push` — **e registrar no histórico** (Local = Remote).
@@ -54,8 +54,9 @@ rotacionar essas credenciais e limpar o documento (ver §10).
 npm run dev                 # Vite local
 npm run build               # tsc -b + vite build + version.json (o que vai para a Vercel)
 npm run deploy:functions    # npx supabase functions deploy api --no-verify-jwt
-npm run verify:notify       # typecheck:notify + check:notify + check:sql + check:referrals + typecheck:api
+npm run verify:notify       # typecheck:notify + check:notify + check:portal + check:sql + check:referrals + typecheck:api
 npm run check:notify        # 447 verificações do pipeline de notificações (Node roda TS direto)
+npm run check:portal        # 152 verificações do status/rótulos das faturas na área do cliente
 npm run check:sql           # 37 verificações de SQL
 npm run check:referrals     # 22 verificações do programa de indicação (PGlite, migration 011)
 npm run simulate            # CLI do simulador de lembretes (scripts/simulate-reminders.ts)
@@ -247,7 +248,7 @@ O webhook da instância na UazAPI precisa ter o evento **`messages` inscrito** (
 
 ## 12. Suíte de testes (`scripts/check-notification-settings.mjs`)
 
-316 verificações em 16 seções, rodando os módulos TS reais no Node (sem framework, sem banco — DB mocks por seção):
+447 verificações, rodando os módulos TS reais no Node (sem framework, sem banco — DB mocks por seção):
 1 normalização do documento · 2 fingerprint · 3 persistência · 4 overrides · 5 janela no dispatcher ·
 6 régua decide o template · 7 relatório carrega config · 8 painel/servidor concordam · 9 cota diária ·
 10 sync régua→fila · 11 filtro de data MikWeb · 12 templates do editor · 13 botões de ação ·
@@ -256,6 +257,16 @@ O webhook da instância na UazAPI precisa ter o evento **`messages` inscrito** (
 
 Para acrescentar comportamento novo: nova seção numerada no fim, com mock mínimo; rode `npm run check:notify`
 e `npm run verify:notify` antes de commitar. Convenção de dados: datas civis ISO, epoch ms para instantes, fuso UTC-3.
+
+Suíte irmã `scripts/check-portal-billing.mjs` (`npm run check:portal`, incluída no `verify:notify`, 152
+verificações): fixa o mapeamento situação→status da área do cliente (`mapStatus`) e prova que o portal e o
+pipeline de lembretes CONCORDAM sobre a mesma situação, inclusive nas variações de grafia e com texto
+extra ("em observação"/"EM OBSERVACAO" e "Em Observação - Acordo" continuam acordo; "Em Observação -
+Quitado" continua pago) — o que evita o portal cobrar um acordo que o lembretes já cancelou. A detecção
+mora numa FONTE ÚNICA, `supabase/functions/api/notify/situation.ts` (módulo puro): `mapStatus` e
+`classifyBilling` são só projeções do mesmo estado detalhado, então os dois lados não podem mais divergir.
+Também cobre os rótulos exibidos (`statusBadge`/`statusConfig`) e o texto do card (`getSmartLabel`). Roda os módulos TS direto no Node, por isso os rótulos vivem num
+módulo puro (`src/lib/billing-labels.ts`, sem React).
 
 Suíte irmã `scripts/check-referrals.mjs` (`npm run check:referrals`, incluída no `verify:notify`): prova as
 garantias plpgsql da migration 011 contra PGlite — crédito idempotente (unique parcial), débito atômico com saldo

@@ -4,7 +4,16 @@
  * Extracted from use-billings.ts to break the circular dependency between
  * use-billings.ts (hook → context) and billing-context.tsx (context → hook).
  * Both files import from here for types and pure helpers.
+ *
+ * `mapStatus` NÃO define a regra de situação: ela vem da fonte única
+ * `supabase/functions/api/notify/situation.ts` (mesmo módulo usado pelo pipeline de
+ * lembretes), importado com extensão explícita para o Node rodar os checks sem build.
  */
+
+import {
+  classifySituation,
+  type SituationKind,
+} from "../../supabase/functions/api/notify/situation.ts";
 
 // ---------------------------------------------------------------------------
 // Types — mapped from MikWeb API response to frontend-friendly format
@@ -15,7 +24,7 @@ export interface BillingSummary {
   competencia: string;
   vencimento: string;
   valor: number;
-  status: "pendente" | "pago" | "vencido" | "cancelado";
+  status: "pendente" | "pago" | "vencido" | "cancelado" | "observacao";
   data_pagamento?: string;
   valor_pago?: number;
   linha_digitavel?: string;
@@ -64,18 +73,32 @@ export interface RawBilling {
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-/** Map MikWeb API situation names to frontend status */
+/**
+ * Projeção do estado detalhado (fonte única em `situation.ts`) para o vocabulário
+ * do portal. O portal preserva `pending` × `overdue` ("Em Aberto" × "Em Atraso"/
+ * "Vencido"), que a fonte única entrega separados; o pipeline colapsa os dois em
+ * `open`. `unknown` vira `pendente` — aqui é a tela de exibição, que precisa mostrar
+ * alguma coisa; o pipeline bloqueia o envio.
+ */
+const PORTAL_STATUS_OF_SITUATION: Record<SituationKind, BillingSummary["status"]> = {
+  pending: "pendente",
+  overdue: "vencido",
+  paid: "pago",
+  canceled: "cancelado",
+  observation: "observacao",
+  unknown: "pendente",
+};
+
+/**
+ * Map MikWeb API situation names to frontend status.
+ *
+ * A detecção vem da FONTE ÚNICA `supabase/functions/api/notify/situation.ts`,
+ * compartilhada com o pipeline de lembretes (`classifyBilling`) — antes era um
+ * espelho mantido à mão aqui, e qualquer edição de um lado só reabria a divergência
+ * em que o portal cobrava um acordo que os lembretes já cancelaram.
+ */
 export function mapStatus(situationName: string): BillingSummary["status"] {
-  const map: Record<string, BillingSummary["status"]> = {
-    "Em Aberto": "pendente",
-    "Efetuado": "pago",
-    "Pago": "pago",
-    "Em Atraso": "vencido",
-    "Vencido": "vencido",
-    "Cancelado": "cancelado",
-    "Em Observação": "pendente",
-  };
-  return map[situationName] || "pendente";
+  return PORTAL_STATUS_OF_SITUATION[classifySituation(situationName)];
 }
 
 /** Format date string from yyyy-MM-dd to dd/MM/yyyy */

@@ -112,10 +112,11 @@ A Edge Function (`supabase/functions/api/index.ts`) importa de `esm.sh` e por is
 abaixo cobrem tudo que pode quebrar no deploy:
 
 ```bash
-npm run verify:notify      # roda os quatro abaixo em sequência (o portão único)
+npm run verify:notify      # roda a suíte abaixo em sequência (o portão único)
 npm run typecheck:notify   # núcleo puro dos lembretes + CLI do simulador (tsc strict)
 npm run typecheck:api      # empacota a Edge Function e procura nome indefinido
 npm run check:notify       # configuração persistida, cotas e sync (447 verificações)
+npm run check:portal       # situação→status e rótulos das faturas na área do cliente (152 verificações)
 npm run check:sql          # as migrations contra um Postgres de verdade (37 verificações)
 npm run build              # typecheck do frontend + build do Vite
 ```
@@ -124,6 +125,20 @@ O `check:notify` roda os módulos TS direto no Node (sem build) e cobre o que er
 e em silêncio na configuração: documento parcial preservando a régua salva, fingerprint
 estável, janela de envio respeitada pelo dispatcher, cota diária de novas conversas
 reservada antes do envio e o painel concordando com o servidor sobre o que é override.
+
+O `check:portal` cobre o outro lado do produto, no mesmo estilo: o mapeamento
+da situação do ERP para o status do portal (`mapStatus`) e os rótulos exibidos
+(`statusConfig`/`statusBadge` e `getSmartLabel`). A DETECÇÃO em si mora numa fonte
+única, `supabase/functions/api/notify/situation.ts` (módulo puro importado pelo portal
+e pelo pipeline — o deploy da Edge Function empacota só a pasta da função, por isso a
+fonte única vive do lado do pipeline): `mapStatus` e `classifyBilling` são projeções do
+mesmo estado detalhado, então não podem mais divergir. O check fixa esse contrato e
+fecha cruzando os dois lados: para a mesma situação — "Em Observação" → `observacao`,
+"Em Observação - Quitado" → pago, inclusive em "em observação", "EM OBSERVACAO" e com
+texto extra como "Em Observação - Acordo" — `mapStatus` e `classifyBilling` têm de ler
+o MESMO estado, senão o portal cobra o que os lembretes já cancelaram (o portal
+mantém `vencido` onde o pipeline colapsa em `open`, e mostra "Pendente" onde o
+pipeline bloqueia por `unknown`).
 
 Na parte do sync (§15d do `LEMBRETES-WHATSAPP.md`), os dois lados são comparados: rodando
 o planejamento do sync e o do simulador sobre a **mesma base**, o conjunto enfileirado tem

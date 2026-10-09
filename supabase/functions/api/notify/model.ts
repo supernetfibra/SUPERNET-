@@ -7,15 +7,17 @@
  *   - `node scripts/simulate-reminders.ts` (dry-run local — Node 24 executa TS nativo)
  *   - testes
  *
- * Espelhos deliberados (o deploy de Edge Function empacota só a pasta da função,
- * então não é possível importar de `src/`):
- *   - classificação de situação → `src/lib/billing-utils.ts` (mapStatus)
- *   - normalização de telefone  → `src/lib/phone.ts` (normalizePhone)
- * Se um dos dois mudar, o espelho precisa mudar junto.
+ * Fontes compartilhadas com o portal (`src/`):
+ *   - classificação de situação → `./situation.ts` (FONTE ÚNICA importada também
+ *     por `src/lib/billing-utils.ts`; não há mais espelho de `mapStatus` aqui)
+ *   - normalização de telefone  → `src/lib/phone.ts` (normalizePhone) — espelho
+ *     deliberado, porque o frontend não pode importar daqui sem acoplar ao deploy.
  *
  * Sintaxe: apenas "erasable syntax" (sem enum, sem namespace, sem parameter
  * properties) — exigência do type stripping nativo do Node.
  */
+
+import { classifySituation, stripAccents, type SituationKind } from "./situation.ts";
 
 export type Channel = "whatsapp" | "push";
 
@@ -244,15 +246,13 @@ export function maskCpf(cpf?: string | null): string {
 
 export type BillingState = "open" | "paid" | "canceled" | "observation" | "unknown";
 
-function stripAccents(value: string): string {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
 /**
- * Espelho de `mapStatus()` de `src/lib/billing-utils.ts`, mas devolvendo também
- * `unknown` em vez de assumir "pendente" — o simulador precisa saber quando não
- * entendeu a situação, para não tratar desconhecido como "em aberto" e mandar
- * cobrança indevida.
+ * Projeção do estado detalhado (`./situation.ts`) para o vocabulário do pipeline.
+ *
+ * O pipeline colapsa `pending`/`overdue` em `open` (para a régua não faz diferença
+ * ser "Em Aberto" ou "Em Atraso") mas separa `unknown` — o simulador precisa saber
+ * quando NÃO entendeu a situação, para não tratar desconhecido como "em aberto" e
+ * mandar cobrança indevida.
  *
  * `observation` ("Em Observação") NÃO é `open`: a situação indica que o admin fez um
  * acordo/agendamento a pedido do cliente, então a fatura está fora da cobrança de
@@ -260,22 +260,22 @@ function stripAccents(value: string): string {
  * entendimento); aqui o bloqueio é intencional e tem estado próprio para a régua
  * poder disparar uma mensagem dedicada quando o admin ligar essa regra.
  */
+const BILLING_STATE_OF_SITUATION: Record<SituationKind, BillingState> = {
+  pending: "open",
+  overdue: "open",
+  paid: "paid",
+  canceled: "canceled",
+  observation: "observation",
+  unknown: "unknown",
+};
+
+/**
+ * Estado da fatura para o pipeline. Delega a detecção de situação à fonte única
+ * (`classifySituation`), que o portal também usa — os dois lados não podem mais
+ * divergir sobre o que a mesma situação significa.
+ */
 export function classifyBilling(situationName?: string | null): BillingState {
-  const name = stripAccents(String(situationName ?? "").trim());
-  if (!name) return "unknown";
-  if (name.includes("cansel") || name.includes("cancel")) return "canceled";
-  if (name.includes("efetuad") || name.includes("quitad") || name.includes("pag") || name.includes("baixad")) return "paid";
-  // Antes do grupo `open`: "observação" é estado próprio, não fatura em aberto cobrável.
-  if (name.includes("observa")) return "observation";
-  if (
-    name.includes("aberto") ||
-    name.includes("atras") ||
-    name.includes("vencid") ||
-    name.includes("pendent")
-  ) {
-    return "open";
-  }
-  return "unknown";
+  return BILLING_STATE_OF_SITUATION[classifySituation(situationName)];
 }
 
 /**

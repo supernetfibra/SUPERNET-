@@ -20,6 +20,7 @@ import {
   CopyCheck,
   ArrowLeft,
   CheckCircle2,
+  Handshake,
   Loader2,
   Smartphone,
 } from "lucide-react";
@@ -111,7 +112,9 @@ export default function InvoiceDetail() {
   // Updated value including late fees
   const hasFees = (billing.multa ?? 0) > 0 || (billing.juros ?? 0) > 0;
   const updatedValue = billing.valor + (billing.multa || 0) + (billing.juros || 0);
-  const showUpdatedValue = hasFees && billing.status !== "pago";
+  // Acordo (observação) está fora de cobrança: multa/juros não entram no valor
+  // exibido, senão o portal mostra uma dívida crescendo para quem está em acordo.
+  const showUpdatedValue = hasFees && billing.status !== "pago" && billing.status !== "observacao";
 
   // ── Customer action helpers — copy/open + audit log (fire-and-forget) ──
   const logCtx = {
@@ -395,6 +398,16 @@ export default function InvoiceDetail() {
                   <p className="text-sm font-medium text-foreground">Fatura paga</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Paga em {billing.data_pagamento}
+                  </p>
+                </div>
+              )}
+
+              {billing.status === "observacao" && (
+                <div className="text-center py-6">
+                  <Handshake className="h-10 w-10 text-sky-500 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-foreground">Fatura em acordo</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Esta fatura está em observação: não há cobrança em andamento.
                   </p>
                 </div>
               )}

@@ -13,9 +13,10 @@
     "typecheck:notify": "tsc -p tsconfig.notify.json",
     "typecheck:api": "node scripts/check-edge-function.mjs",
     "check:notify": "node scripts/check-notification-settings.mjs",
+    "check:portal": "node scripts/check-portal-billing.mjs",
     "check:sql": "node scripts/check-notifications-sql.mjs",
     "check:referrals": "node scripts/check-referrals.mjs",
-    "verify:notify": "npm run typecheck:notify && npm run check:notify && npm run check:sql && npm run check:referrals && npm run typecheck:api",
+    "verify:notify": "npm run typecheck:notify && npm run check:notify && npm run check:portal && npm run check:sql && npm run check:referrals && npm run typecheck:api",
     "deploy": "bash deploy.sh",
     "deploy:functions": "npx supabase functions deploy api --no-verify-jwt"
   },

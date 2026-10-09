@@ -213,6 +213,10 @@ function InvoiceCardInner({
   const isPending =
     billing.status === "pendente" || billing.status === "vencido";
 
+  // Acordo (observação) não é cobrança: nada de atalho de pagamento (linha
+  // digitável/PIX). O PDF do documento continua disponível.
+  const showPaymentCodes = billing.status !== "observacao";
+
   // ── Highlight variant ──
 
   if (variant === "highlight") {
@@ -500,7 +504,7 @@ function InvoiceCardInner({
 
         {/* Quick actions */}
         <div className="mt-2 pt-2 border-t border-border/50 flex items-center gap-1 flex-wrap">
-          {billing.linha_digitavel && (
+          {showPaymentCodes && billing.linha_digitavel && (
             <Button
               variant="ghost"
               size="sm"
@@ -518,7 +522,7 @@ function InvoiceCardInner({
               Linha digitável
             </Button>
           )}
-          {billing.pix_copiaecola && (
+          {showPaymentCodes && billing.pix_copiaecola && (
             <Button
               variant="ghost"
               size="sm"

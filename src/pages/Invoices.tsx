@@ -48,7 +48,7 @@ export default function Invoices() {
 
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "pendente" | "vencido" | "pago">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pendente" | "vencido" | "pago" | "observacao">("all");
 
   // Filter billings based on search and status
   const filteredBillings = useMemo(() => {
@@ -74,13 +74,16 @@ export default function Invoices() {
   const hasActiveFilter = searchQuery.trim() !== "" || statusFilter !== "all";
 
   // Separate unpaid and paid invoices
-  const { unpaid, paid, currentBilling } = useMemo(() => {
+  const { others, paid, currentBilling } = useMemo(() => {
     const allUnpaid = filteredBillings
       .filter((b: BillingSummary) => b.status !== "pago" && b.status !== "cancelado")
       .sort((a: BillingSummary, b: BillingSummary) => {
-        // Priority 1: overdue invoices always come before pending
-        const aOverdue = a.status === "vencido" ? 0 : 1;
-        const bOverdue = b.status === "vencido" ? 0 : 1;
+        // Prioridade: vencida → a vencer/pendente → acordo (observação, que não
+        // é cobrança, vai para o fim da lista em vez de liderar a fila)
+        const rank = (status: BillingSummary["status"]) =>
+          status === "vencido" ? 0 : status === "observacao" ? 2 : 1;
+        const aOverdue = rank(a.status);
+        const bOverdue = rank(b.status);
         if (aOverdue !== bOverdue) return aOverdue - bOverdue;
 
         const diasA = diasAteVencimento(a.vencimento) ?? 0;
@@ -107,14 +110,26 @@ export default function Invoices() {
         return dateB.getTime() - dateA.getTime();
       });
 
-    // The first unpaid is the "current" one
-    const current = allUnpaid.length > 0 ? allUnpaid[0] : null;
+    // O destaque é a primeira fatura COBRÁVEL. Acordo (observação) não vira o
+    // card "pague isto" — ele fica na lista, com o estado próprio.
+    const current = allUnpaid.find((b: BillingSummary) => b.status !== "observacao") ?? null;
+    const others = allUnpaid.filter((b: BillingSummary) => b !== current);
 
-    return { unpaid: allUnpaid, paid: allPaid, currentBilling: current };
-  }, [billings]);
+    return { others, paid: allPaid, currentBilling: current };
+    // `filteredBillings` no array de dependências: sem ele o memo não recomputava
+    // ao trocar busca/filtro e a lista seguia mostrando tudo — só o contador
+    // (que lê `filteredBillings` direto) dizia "1 resultado" com 7 cards na tela.
+  }, [filteredBillings]);
 
   // Calculate days until due for the current billing
   const currentDias = currentBilling ? diasAteVencimento(currentBilling.vencimento) : null;
+
+  // Rótulo da seção sem destaque: a lista pode conter só acordos.
+  const othersLabel = currentBilling
+    ? "Demais faturas"
+    : others.some((b) => b.status !== "observacao")
+    ? "Faturas abertas"
+    : "Em acordo";
 
   // Build a "vence em" text for the current billing
   const currentVenceText = useMemo(() => {
@@ -258,7 +273,7 @@ export default function Invoices() {
             )}
           </div>
           <div className="flex gap-1 flex-1 flex-wrap">
-            {(["all", "pendente", "vencido", "pago"] as const).map((status) => (
+            {(["all", "pendente", "vencido", "pago", "observacao"] as const).map((status) => (
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
@@ -270,11 +285,13 @@ export default function Invoices() {
                       ? "bg-red-500/15 text-red-600 dark:text-red-400"
                       : status === "pendente"
                       ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                      : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : status === "pago"
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : "bg-sky-500/15 text-sky-600 dark:text-sky-400"
                     : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
                 }`}
               >
-                {status === "all" ? "Todas" : status === "pendente" ? "A vencer" : status === "vencido" ? "Vencida" : "Paga"}
+                {status === "all" ? "Todas" : status === "pendente" ? "A vencer" : status === "vencido" ? "Vencida" : status === "pago" ? "Paga" : "Em acordo"}
               </button>
             ))}
             <button
@@ -372,19 +389,19 @@ export default function Invoices() {
             </div>
           )}
 
-          {/* ── Other unpaid invoices ── */}
-          {unpaid.length > 1 && (
+          {/* ── Demais faturas (inclui acordos em observação) ── */}
+          {others.length > 0 && (
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-px flex-1 bg-border/30" />
                 <span className="text-xs font-bold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
-                  {currentBilling ? "Demais faturas" : "Faturas abertas"}
+                  {othersLabel}
                 </span>
                 <div className="h-px flex-1 bg-border/30" />
               </div>
 
               <div className="space-y-2">
-                {(unpaid.slice(1)).map((billing: BillingSummary, index: number) => (
+                {others.map((billing: BillingSummary, index: number) => (
                   <div
                     key={billing.id}
                     className="animate-[slideUp_0.2s_ease-out]"

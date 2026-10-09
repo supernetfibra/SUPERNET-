@@ -432,6 +432,7 @@ npm run simulate -- --json > relatorio.json
 npm run typecheck:notify                           # valida o núcleo e a CLI
 npm run typecheck:api                              # nomes indefinidos no index.ts
 npm run check:notify                               # invariantes da configuração (§15b)
+npm run check:portal                               # status/rótulos das faturas na área do cliente
 npm run check:sql                                  # migrations contra Postgres real (§15c)
 npm run verify:notify                              # tudo acima em sequência
 ```

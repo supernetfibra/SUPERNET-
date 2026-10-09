@@ -262,6 +262,23 @@ export function getTestBillings() {
       our_number: "123459",
       integration_link: "https://boleto.exemplo.com/pdf/1006",
     },
+    // ── Acordo (observação): estado próprio no portal — não é cobrança ──
+    {
+      id: 1007,
+      customer_id: 999,
+      value: 129.90,
+      value_paid: null,
+      date_payment: null,
+      situation_id: 4,
+      situation_name: "Em Observação",
+      reference: "Setembro/2026",
+      type_billing: "Mensalidade",
+      due_day: "2026-09-15",
+      form_payment: "Boleto",
+      digitable_line: "34191.09012 34567.890123 45678.901234 5 12345678901238",
+      observation: "Acordo de pagamento em andamento.",
+      our_number: "123460",
+    },
   ];
 }
 

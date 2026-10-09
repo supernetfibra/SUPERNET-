@@ -60,7 +60,8 @@ export default function AppLayout() {
     const total = overdue + pending;
 
     const expiringSoon = billings.filter((b: BillingSummary) => {
-      if (b.status === "pago" || b.status === "cancelado") return false;
+      // Acordo (observação) também fica fora: não é cobrança a vencer.
+      if (b.status === "pago" || b.status === "cancelado" || b.status === "observacao") return false;
       const dias = diasAteVencimento(b.vencimento);
       return dias !== null && dias <= 3;
     }).length;
